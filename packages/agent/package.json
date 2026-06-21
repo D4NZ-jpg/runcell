@@ -1,0 +1,54 @@
+{
+  "name": "runcell",
+  "version": "0.0.0",
+  "description": "Run AI agents in an isolated sandbox cell with a structured output contract.",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "source": "./src/index.ts",
+  "files": [
+    "dist/**/*",
+    "src",
+    "!src/**/*.test.ts",
+    "README.md"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "del-cli dist && tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest --run"
+  },
+  "dependencies": {
+    "@ai-sdk/harness": "1.0.0-beta.20",
+    "@ai-sdk/provider-utils": "5.0.0-beta.49",
+    "@ai-sdk/sandbox-just-bash": "1.0.0-beta.20",
+    "@earendil-works/pi-coding-agent": "^0.79.0",
+    "@local/harness-pi-raw": "*",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "del-cli": "^6.0.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "sandbox",
+    "structured-output"
+  ]
+}

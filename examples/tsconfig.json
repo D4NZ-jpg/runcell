@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "runcell": ["../packages/agent/src/index.ts"]
+    }
+  },
+  "include": ["*.ts"],
+  "exclude": ["node_modules"]
+}

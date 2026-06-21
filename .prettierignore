@@ -1,0 +1,12 @@
+# Build output
+**/dist/**
+**/coverage/**
+
+# Dependencies
+**/node_modules/**
+
+# Vendored sources (not formatted by our gate)
+packages/harness-pi-raw/
+
+# Lockfiles
+package-lock.json

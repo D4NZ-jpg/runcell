@@ -1,0 +1,60 @@
+{
+  "name": "@local/harness-pi-raw",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "source": "./src/index.ts",
+  "files": [
+    "dist/**/*",
+    "src",
+    "!src/**/*.test.ts",
+    "!src/**/*.test-d.ts",
+    "!src/**/__snapshots__",
+    "!src/**/__fixtures__",
+    "CHANGELOG.md",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "npm run clean && tsup --tsconfig tsconfig.build.json",
+    "build:watch": "npm run clean && tsup --watch",
+    "clean": "del-cli dist *.tsbuildinfo",
+    "type-check": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test:vendored": "vitest --config vitest.node.config.js --run"
+  },
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@ai-sdk/harness": "1.0.0-beta.20",
+    "@ai-sdk/provider-utils": "5.0.0-beta.49",
+    "@earendil-works/pi-coding-agent": "^0.79.0",
+    "typebox": "^1.1.38",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "del-cli": "^6.0.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "ai",
+    "harness",
+    "pi",
+    "raw-pi"
+  ]
+}
