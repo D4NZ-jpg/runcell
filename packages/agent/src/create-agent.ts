@@ -5,6 +5,18 @@ import { defaultRuntime, type RuncellRuntime } from './runtime.js';
 import type { Agent, AgentOptions, RunOptions } from './types.js';
 import type { ZodTypeAny } from 'zod';
 
+const RESERVED_TOOL_NAMES = new Set([
+  'read',
+  'write',
+  'edit',
+  'bash',
+  'grep',
+  'glob',
+  'ls',
+  'submitResult',
+  'fileChange',
+]);
+
 /**
  * Internal, fully-validated configuration derived from {@link AgentOptions}.
  * Exposed for unit testing; not part of the public surface.
@@ -50,6 +62,14 @@ export function resolveAgentConfig(
   });
 
   const toolNames = Object.keys(options.tools ?? {});
+  const reservedToolName = toolNames.find(name =>
+    RESERVED_TOOL_NAMES.has(name),
+  );
+  if (reservedToolName) {
+    throw new InvalidOptionError(
+      `Tool name "${reservedToolName}" is reserved by runcell.`,
+    );
+  }
 
   return {
     model: options.model,

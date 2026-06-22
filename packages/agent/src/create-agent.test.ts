@@ -54,6 +54,51 @@ describe('resolveAgentConfig', () => {
     );
     expect(config.toolNames).toEqual(['lookup']);
   });
+
+  it.each([
+    'read',
+    'write',
+    'edit',
+    'bash',
+    'grep',
+    'glob',
+    'ls',
+    'submitResult',
+    'fileChange',
+  ])('rejects reserved tool name %s', name => {
+    expect(() =>
+      resolveAgentConfig(
+        {
+          model: 'm',
+          tools: {
+            [name]: {
+              description: 'Reserved tool',
+              schema: z.object({}),
+              execute: () => ({ ok: true }),
+            },
+          },
+        },
+        { nodeEnv: 'development' },
+      ),
+    ).toThrow(InvalidOptionError);
+  });
+
+  it('allows non-runtime tool names', () => {
+    const config = resolveAgentConfig(
+      {
+        model: 'm',
+        tools: {
+          webSearch: {
+            description: 'Search the web',
+            schema: z.object({ query: z.string() }),
+            execute: () => ({ ok: true }),
+          },
+        },
+      },
+      { nodeEnv: 'development' },
+    );
+    expect(config.toolNames).toEqual(['webSearch']);
+  });
 });
 
 describe('createAgent', () => {
