@@ -1,11 +1,6 @@
 import type { AuthBlob, CredentialStore } from 'runcell';
+import { runExample } from './_shared.js';
 
-/**
- * Minimal local/test store showing the CredentialStore shape.
- *
- * Production should use durable shared storage plus a real distributed lock
- * (for example Postgres advisory locks, Redis locks, or DynamoDB conditionals).
- */
 export function createInMemoryCredentialStore(
   initial?: AuthBlob,
 ): CredentialStore {
@@ -31,3 +26,27 @@ export function createInMemoryCredentialStore(
     },
   };
 }
+
+export async function runSharedCredentialStoreExample(): Promise<{
+  before: string[];
+  after: string[];
+}> {
+  const store = createInMemoryCredentialStore({
+    anthropic: { type: 'api_key', key: 'example-key' },
+  });
+
+  return store.withLock('demo-agent', current =>
+    Promise.resolve({
+      result: {
+        before: Object.keys(current ?? {}),
+        after: ['anthropic', 'openai'],
+      },
+      next: {
+        ...(current ?? {}),
+        openai: { type: 'api_key', key: 'example-openai-key' },
+      },
+    }),
+  );
+}
+
+runExample(import.meta.url, runSharedCredentialStoreExample);

@@ -1,32 +1,29 @@
 import { createAgent, type Agent, type CredentialStore } from 'runcell';
+import { z } from 'zod';
+import { exampleCredentials, exampleModel, runExample } from './_shared.js';
 
-export function createDefaultEnvAgent(): Agent {
-  return createAgent({
-    model: 'anthropic/claude-sonnet-4-5',
-    // Default: read provider credentials from process.env.
-    // If your app loads `.env`, those values are used automatically.
-  });
-}
+const credentialExampleSchema = z.object({
+  credentialMode: z.string(),
+  ready: z.literal(true),
+});
 
-export function createExplicitEnvAgent(): Agent {
+export function createDefaultLocalAgent(): Agent {
   return createAgent({
-    model: 'openai/gpt-5.1',
-    credentials: { type: 'env' },
-  });
-}
-
-export function createLocalDevAgent(): Agent {
-  return createAgent({
-    model: 'anthropic/claude-sonnet-4-5',
-    // Optional opt-in: reuse locally configured developer credentials.
+    model: exampleModel(),
     credentials: 'local',
+  });
+}
+
+export function createEnvAgent(): Agent {
+  return createAgent({
+    model: exampleModel(),
+    credentials: { type: 'env' },
   });
 }
 
 export function createExplicitApiKeyAgent(apiKey: string): Agent {
   return createAgent({
-    model: 'anthropic/claude-sonnet-4-5',
-    // Useful when your app already fetched the secret from its own vault.
+    model: exampleModel(),
     credentials: {
       type: 'apiKeys',
       keys: { anthropic: apiKey },
@@ -36,9 +33,7 @@ export function createExplicitApiKeyAgent(apiKey: string): Agent {
 
 export function createSharedOauthAgent(store: CredentialStore): Agent {
   return createAgent({
-    model: 'anthropic/claude-sonnet-4-5',
-    // For OAuth in multi-instance production deployments. The store must be
-    // durable and lockable so token refreshes are visible across instances.
+    model: exampleModel(),
     credentials: {
       type: 'shared',
       key: 'prod-agent-default',
@@ -46,3 +41,22 @@ export function createSharedOauthAgent(store: CredentialStore): Agent {
     },
   });
 }
+
+export async function runCredentialsExample(): Promise<
+  z.infer<typeof credentialExampleSchema>
+> {
+  const agent = createAgent({
+    model: exampleModel(),
+    credentials: exampleCredentials(),
+  });
+
+  const result = await agent.run({
+    prompt:
+      'Return credentialMode as "local-dev" and ready as true. Do not include secrets.',
+    schema: credentialExampleSchema,
+  });
+
+  return result.data;
+}
+
+runExample(import.meta.url, runCredentialsExample);

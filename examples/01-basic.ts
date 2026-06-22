@@ -1,5 +1,6 @@
 import { createAgent } from 'runcell';
 import { z } from 'zod';
+import { exampleCredentials, exampleModel, runExample } from './_shared.js';
 
 const summarySchema = z.object({
   summary: z.string(),
@@ -10,16 +11,23 @@ export async function runBasicExample(): Promise<
   z.infer<typeof summarySchema>
 > {
   const agent = createAgent({
-    model: 'anthropic/claude-sonnet-4-5',
-    // Credentials default to environment variables, so loading a .env file in
-    // your app is enough for local development.
+    model: exampleModel(),
+    credentials: exampleCredentials(),
   });
 
   const result = await agent.run({
-    prompt: 'Summarize what runcell is for in three bullets.',
+    prompt:
+      'Read runcell.txt and summarize what runcell is for in three short bullets.',
+    files: [
+      {
+        path: 'runcell.txt',
+        text: 'runcell runs AI agents in an isolated sandbox cell. It accepts files, host tools, event callbacks, and a Zod schema. The agent must submit its final structured result through a hidden submitResult tool.',
+      },
+    ],
     schema: summarySchema,
   });
 
-  // `data` is the validated, typed output. `text` is just streamed prose.
   return result.data;
 }
+
+runExample(import.meta.url, runBasicExample);

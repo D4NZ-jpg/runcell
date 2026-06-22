@@ -1,5 +1,6 @@
 import { createAgent, type ToolDefinition } from 'runcell';
 import { z } from 'zod';
+import { exampleCredentials, exampleModel, runExample } from './_shared.js';
 
 const customerSchema = z.object({
   customerName: z.string(),
@@ -10,7 +11,7 @@ const customerSchema = z.object({
 const lookupCustomerSchema = z.object({ id: z.string() });
 
 export async function answerWithHostTool(
-  customerId: string,
+  customerId = 'cus_123',
 ): Promise<z.infer<typeof customerSchema>> {
   const lookupCustomer = {
     description: 'Look up customer account details by customer id.',
@@ -23,8 +24,8 @@ export async function answerWithHostTool(
   } satisfies ToolDefinition<typeof lookupCustomerSchema>;
 
   const agent = createAgent({
-    model: 'anthropic/claude-sonnet-4-5',
-    credentials: { type: 'env' },
+    model: exampleModel(),
+    credentials: exampleCredentials(),
     tools: { lookupCustomer },
   });
 
@@ -35,3 +36,5 @@ export async function answerWithHostTool(
 
   return result.data;
 }
+
+runExample(import.meta.url, () => answerWithHostTool());

@@ -1,46 +1,51 @@
-import { readFile } from 'node:fs/promises';
 import { createAgent } from 'runcell';
 import { z } from 'zod';
+import { exampleCredentials, exampleModel, runExample } from './_shared.js';
 
 const auditSchema = z.object({
   codeSummary: z.string(),
-  invoiceTotal: z.string().optional(),
+  invoiceTotal: z.string(),
   screenshotFindings: z.array(z.string()),
 });
 
-export async function analyzeUploadedFiles(paths: {
-  sourceFile: string;
-  invoicePdf: string;
-  screenshotPng: string;
-}): Promise<z.infer<typeof auditSchema>> {
-  const [source, invoicePdf, screenshotPng] = await Promise.all([
-    readFile(paths.sourceFile, 'utf8'),
-    readFile(paths.invoicePdf),
-    readFile(paths.screenshotPng),
-  ]);
+const source = `
+export function calculateTotal(items: Array<{ price: number; quantity: number }>): number {
+  return items.reduce((total, item) => total + item.price * item.quantity, 0);
+}
+`;
 
+const invoice = `
+Invoice #1007
+Subtotal: $38.00
+Tax: $4.50
+Total: $42.50
+`;
+
+const screenshotNotes = `
+Screenshot notes: the checkout page shows a green success banner and a total of $42.50.
+`;
+
+export async function analyzeUploadedFiles(): Promise<
+  z.infer<typeof auditSchema>
+> {
   const agent = createAgent({
-    model: 'anthropic/claude-sonnet-4-5',
-    credentials: { type: 'env' },
+    model: exampleModel(),
+    credentials: exampleCredentials(),
+    maxRepairs: 2,
   });
 
   const result = await agent.run({
-    prompt: 'Review the source file, invoice PDF, and screenshot.',
+    prompt:
+      'Read src/index.ts, invoice.txt, and screenshot-notes.txt. Then call submitResult with codeSummary, invoiceTotal, and screenshotFindings. Do not stop after writing prose.',
     files: [
       { path: 'src/index.ts', text: source },
-      {
-        path: 'invoice.pdf',
-        bytes: invoicePdf,
-        mediaType: 'application/pdf',
-      },
-      {
-        path: 'screenshot.png',
-        bytes: screenshotPng,
-        mediaType: 'image/png',
-      },
+      { path: 'invoice.txt', text: invoice },
+      { path: 'screenshot-notes.txt', text: screenshotNotes },
     ],
     schema: auditSchema,
   });
 
   return result.data;
 }
+
+runExample(import.meta.url, analyzeUploadedFiles);
