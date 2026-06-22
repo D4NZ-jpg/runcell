@@ -1,6 +1,7 @@
 import { normalizeCredentials, type CredentialPlan } from './credentials.js';
-import { InvalidOptionError, NotImplementedError } from './errors.js';
+import { InvalidOptionError } from './errors.js';
 import { normalizeFiles } from './files.js';
+import { defaultRuntime, type RuncellRuntime } from './runtime.js';
 import type { Agent, AgentOptions, RunOptions } from './types.js';
 import type { ZodTypeAny } from 'zod';
 
@@ -88,21 +89,23 @@ export function validateRunOptions<TSchema extends ZodTypeAny>(
  */
 export function createAgent(
   options: AgentOptions,
-  context: { nodeEnv?: string | undefined } = {},
+  context: {
+    nodeEnv?: string | undefined;
+    runtime?: RuncellRuntime | undefined;
+  } = {},
 ): Agent {
   const nodeEnv =
     context.nodeEnv ??
     (typeof process !== 'undefined' ? process.env['NODE_ENV'] : undefined);
 
-  resolveAgentConfig(options, { nodeEnv });
+  const config = resolveAgentConfig(options, { nodeEnv });
+  const runtime = context.runtime ?? defaultRuntime;
 
   return {
     run(runOptions) {
       return Promise.resolve(runOptions).then(opts => {
         validateRunOptions(opts);
-        throw new NotImplementedError(
-          'runcell execution is not implemented yet.',
-        );
+        return runtime.run({ agentOptions: options, config, runOptions: opts });
       });
     },
   };
