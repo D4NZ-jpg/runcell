@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z, type ZodTypeAny } from 'zod';
 import type { ResolvedAgentConfig } from './create-agent.js';
+import type { AuthBlob, CredentialStore } from './credentials.js';
 import type { RuncellRuntime, RuntimeRunInput } from './runtime.js';
 import type {
   AgentEvents,
@@ -18,6 +19,10 @@ describe('defaultRuntime', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('creates the harness, seeds files and returns submitted data', async () => {
@@ -69,6 +74,135 @@ describe('defaultRuntime', () => {
       { path: '/work/assets/blob.bin', content: bytes },
     ]);
     expect(state.instances[0]?.session?.destroyCount).toBe(1);
+  });
+
+  it('maps environment credentials to Pi auth settings', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'env-anthropic');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://openai.example.test/v1');
+    vi.stubEnv('VERCEL_OIDC_TOKEN', 'env-oidc');
+    vi.stubEnv('IGNORED_TOKEN', 'ignored');
+    const state = installRuntimeMocks([
+      agent => {
+        agent.submit({ ok: true });
+        return [];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() }), {
+        config: { credentials: { mode: 'env' } },
+      }),
+    );
+
+    expect(state.piSettings[0]).toMatchObject({
+      auth: {
+        customEnv: {
+          ANTHROPIC_API_KEY: 'env-anthropic',
+          OPENAI_BASE_URL: 'https://openai.example.test/v1',
+          VERCEL_OIDC_TOKEN: 'env-oidc',
+        },
+      },
+    });
+    expect(state.piSettings[0]).not.toMatchObject({
+      auth: { customEnv: { IGNORED_TOKEN: 'ignored' } },
+    });
+  });
+
+  it('maps API key credentials to provider env vars', async () => {
+    const state = installRuntimeMocks([
+      agent => {
+        agent.submit({ ok: true });
+        return [];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() }), {
+        config: {
+          credentials: {
+            mode: 'apiKeys',
+            keys: {
+              anthropic: 'anthropic-key',
+              openai: 'openai-key',
+              'vercel-ai-gateway': 'gateway-key',
+            },
+          },
+        },
+      }),
+    );
+
+    expect(state.piSettings[0]).toMatchObject({
+      auth: {
+        customEnv: {
+          ANTHROPIC_API_KEY: 'anthropic-key',
+          OPENAI_API_KEY: 'openai-key',
+          AI_GATEWAY_API_KEY: 'gateway-key',
+        },
+      },
+    });
+  });
+
+  it('maps local and agentDir credentials to Pi agent dirs', async () => {
+    const state = installRuntimeMocks([
+      agent => {
+        agent.submit({ ok: true });
+        return [];
+      },
+      agent => {
+        agent.submit({ ok: true });
+        return [];
+      },
+    ]);
+    const runtime = await loadRuntime();
+    const schema = z.object({ ok: z.boolean() });
+
+    await runtime.run(
+      createRuntimeInput(schema, {
+        config: { credentials: { mode: 'local' } },
+      }),
+    );
+    await runtime.run(
+      createRuntimeInput(schema, {
+        config: { credentials: { mode: 'agentDir', path: '/custom-agent' } },
+      }),
+    );
+
+    expect(state.piSettings).toMatchObject([
+      { agentDir: '/agent-dir' },
+      { agentDir: '/custom-agent' },
+    ]);
+  });
+
+  it('maps shared credentials to Pi auth storage', async () => {
+    const store: CredentialStore = {
+      async withLock(_key, fn) {
+        const current: AuthBlob = {
+          anthropic: { type: 'api_key', key: 'stored-key' },
+        };
+        const { result } = await fn(current);
+        return result;
+      },
+    };
+    const state = installRuntimeMocks([
+      agent => {
+        agent.submit({ ok: true });
+        return [];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() }), {
+        config: { credentials: { mode: 'shared', key: 'tenant-a', store } },
+      }),
+    );
+
+    expect(state.authStorageBackends).toHaveLength(1);
+    expect(state.piSettings[0]).toMatchObject({
+      authStorage: { storage: state.authStorageBackends[0] },
+    });
   });
 
   it('forwards visible stream events and collects changed files', async () => {
@@ -267,6 +401,7 @@ function installRuntimeMocks(scripts: StreamScript[] = []): TestState {
   const state: TestState = {
     instances: [],
     piSettings: [],
+    authStorageBackends: [],
     sandboxSettings: [],
     sandboxSession: new TestSandboxSession(),
     scripts: [...scripts],
@@ -337,6 +472,7 @@ function installRuntimeMocks(scripts: StreamScript[] = []): TestState {
   vi.doMock('@earendil-works/pi-coding-agent', () => ({
     AuthStorage: {
       fromStorage(storage: unknown) {
+        state.authStorageBackends.push(storage);
         return { storage };
       },
     },
@@ -379,6 +515,7 @@ interface StreamPart {
 interface TestState {
   instances: TestHarnessAgent[];
   piSettings: unknown[];
+  authStorageBackends: unknown[];
   sandboxSettings: SandboxSettings[];
   sandboxSession: TestSandboxSession;
   scripts: StreamScript[];
