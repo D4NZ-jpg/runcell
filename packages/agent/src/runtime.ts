@@ -128,13 +128,17 @@ async function runWithHarness<TSchema extends ZodTypeAny>({
       }
 
       if (submitted !== undefined) {
-        const data: unknown = runOptions.schema.parse(submitted);
-        return {
-          data,
-          text,
-          files: [...changedFiles.values()],
-          sessionId: session.sessionId,
-        };
+        const parsed = runOptions.schema.safeParse(submitted);
+        if (parsed.success) {
+          const data: unknown = parsed.data;
+          return {
+            data,
+            text,
+            files: [...changedFiles.values()],
+            sessionId: session.sessionId,
+          };
+        }
+        submitted = undefined;
       }
     }
 

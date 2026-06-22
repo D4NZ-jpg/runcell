@@ -19,8 +19,7 @@ export interface ResolvedAgentConfig {
 }
 
 /**
- * Validate agent options eagerly and resolve them to a concrete config. This
- * runs synchronously at construction time so misconfiguration fails fast.
+ * Validate agent options eagerly and resolve them to a concrete config.
  */
 export function resolveAgentConfig(
   options: AgentOptions,
@@ -81,11 +80,6 @@ export function validateRunOptions<TSchema extends ZodTypeAny>(
 
 /**
  * Create an agent bound to a model, credentials, tools and event callbacks.
- *
- * @remarks
- * The option/run validation pipeline is implemented; the sandbox + harness
- * execution path is still being wired up and currently throws
- * {@link NotImplementedError} from {@link Agent.run}.
  */
 export function createAgent(
   options: AgentOptions,
