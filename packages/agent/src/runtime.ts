@@ -1,5 +1,4 @@
 import { HarnessAgent } from '@ai-sdk/harness/agent';
-import { createJustBashSandbox } from '@ai-sdk/sandbox-just-bash';
 import {
   tool,
   type Experimental_SandboxSession,
@@ -18,6 +17,7 @@ import type {
 import { IncompleteResultError } from './errors.js';
 import { normalizeFiles, type NormalizedFile } from './files.js';
 import { assertSafeWorkspacePath } from './paths.js';
+import { createSandboxProvider } from './sandbox.js';
 import type {
   AgentOptions,
   ChangedFile,
@@ -71,7 +71,7 @@ async function runWithHarness<TSchema extends ZodTypeAny>({
   const harnessAgent = new HarnessAgent({
     id: 'runcell',
     harness: createPi(createPiSettings(config.credentials, config.model)),
-    sandbox: createJustBashSandbox({ cwd: config.workspaceDir }),
+    sandbox: createSandboxProvider(config.sandbox),
     permissionMode: 'allow-all',
     instructions: joinSections(
       agentOptions.instructions,

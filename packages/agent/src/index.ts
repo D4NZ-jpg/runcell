@@ -19,6 +19,17 @@ export type {
 } from './files.js';
 
 export { normalizeCredentials } from './credentials.js';
+
+export { createSandboxProvider, resolveSandboxConfig } from './sandbox.js';
+export type {
+  SandboxOption,
+  SandboxConfig,
+  SandboxProvider,
+  VirtualSandboxOption,
+  HostSandboxOption,
+  CustomSandboxOption,
+} from './sandbox.js';
+
 export type {
   Credentials,
   CredentialPlan,

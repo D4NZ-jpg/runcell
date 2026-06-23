@@ -1,6 +1,7 @@
 import type { z, ZodTypeAny } from 'zod';
 import type { Credentials } from './credentials.js';
 import type { FileInput } from './files.js';
+import type { SandboxOption } from './sandbox.js';
 
 /**
  * A host-side tool the agent can call. The result is returned to the model.
@@ -71,8 +72,8 @@ export interface AgentOptions {
   tools?: Record<string, ToolDefinition>;
   /** Lifecycle callbacks. */
   events?: AgentEvents;
-  /** Sandbox working directory. Defaults to `/workspace`. */
-  workspaceDir?: string;
+  /** Where the agent runs. Defaults to `{ type: 'virtual' }`. */
+  sandbox?: SandboxOption;
   /**
    * Maximum number of repair turns allowed when the agent finishes without a
    * valid `submitResult` payload. Defaults to `1`.

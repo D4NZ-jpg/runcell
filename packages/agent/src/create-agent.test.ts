@@ -15,7 +15,7 @@ describe('resolveAgentConfig', () => {
       instructions: undefined,
       credentials: { mode: 'env' },
       toolNames: [],
-      workspaceDir: '/workspace',
+      sandbox: { type: 'virtual' },
       maxRepairs: 1,
     });
   });
@@ -32,10 +32,34 @@ describe('resolveAgentConfig', () => {
     );
   });
 
-  it('rejects a relative workspaceDir', () => {
+  it('rejects a relative host sandbox rootDir', () => {
     expect(() =>
-      resolveAgentConfig({ model: 'm', workspaceDir: 'workspace' }),
+      resolveAgentConfig({
+        model: 'm',
+        sandbox: {
+          type: 'host',
+          rootDir: 'workspace',
+          isolation: 'external',
+        },
+      }),
     ).toThrow(InvalidOptionError);
+  });
+
+  it('resolves a host sandbox rootDir', () => {
+    const config = resolveAgentConfig({
+      model: 'm',
+      sandbox: {
+        type: 'host',
+        rootDir: '/tmp/runcell-workspace',
+        isolation: 'external',
+      },
+    });
+
+    expect(config.sandbox).toEqual({
+      type: 'host',
+      rootDir: '/tmp/runcell-workspace',
+      isolation: 'external',
+    });
   });
 
   it('collects tool names', () => {

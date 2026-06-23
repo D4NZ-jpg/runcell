@@ -35,6 +35,7 @@ finishes, `runcell` validates the submitted payload and returns typed
 
 - Zod-validated structured output
 - sandbox file inputs and returned file outputs
+- virtual, host, and custom sandbox modes
 - host-side custom tools
 - text, tool, file-change, repair, finish, and error events
 - local, env, API key, agent directory, and shared credential modes
@@ -43,6 +44,31 @@ finishes, `runcell` validates the submitted payload and returns typed
 
 ```bash
 npm install runcell zod
+```
+
+## Sandbox modes
+
+The default mode is a virtual workspace:
+
+```ts
+const agent = createAgent({
+  model: 'anthropic/claude-sonnet-4-5',
+  sandbox: 'virtual',
+});
+```
+
+Use host mode only when the current process already runs inside a CI job,
+container, VM, or another external isolation boundary:
+
+```ts
+const agent = createAgent({
+  model: 'anthropic/claude-sonnet-4-5',
+  sandbox: {
+    type: 'host',
+    rootDir: process.env.GITHUB_WORKSPACE ?? process.cwd(),
+    isolation: 'external',
+  },
+});
 ```
 
 ## Credentials

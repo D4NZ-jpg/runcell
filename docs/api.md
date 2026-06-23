@@ -14,15 +14,52 @@ const agent = createAgent({
 });
 ```
 
-| Option         | Description                                         |
-| -------------- | --------------------------------------------------- |
-| `model`        | Provider/model id                                   |
-| `instructions` | Agent-level instructions applied to every run       |
-| `credentials`  | Credential source; defaults to `{ type: 'env' }`    |
-| `tools`        | Host functions exposed to the agent                 |
-| `events`       | Lifecycle callbacks                                 |
-| `workspaceDir` | Sandbox working directory; defaults to `/workspace` |
-| `maxRepairs`   | Repair turns for missing or invalid structured data |
+| Option         | Description                                      |
+| -------------- | ------------------------------------------------ |
+| `model`        | Provider/model id                                |
+| `instructions` | Agent-level instructions applied to every run    |
+| `credentials`  | Credential source; defaults to `{ type: 'env' }` |
+| `tools`        | Host functions exposed to the agent              |
+| `events`       | Lifecycle callbacks                              |
+| `sandbox`      | Sandbox mode; defaults to `virtual`              |
+| `maxRepairs`   | Repair turns for missing or invalid data         |
+
+## Sandbox modes
+
+The default mode is a virtual workspace:
+
+```ts
+const agent = createAgent({
+  model: 'anthropic/claude-sonnet-4-5',
+  sandbox: 'virtual',
+});
+```
+
+Use host mode when the current process already runs inside an external security
+boundary, such as a CI job, container, or ephemeral VM:
+
+```ts
+const agent = createAgent({
+  model: 'anthropic/claude-sonnet-4-5',
+  sandbox: {
+    type: 'host',
+    rootDir: process.env.GITHUB_WORKSPACE ?? process.cwd(),
+    isolation: 'external',
+  },
+});
+```
+
+Host mode maps the agent workspace onto `rootDir`. It does not isolate your
+machine by itself.
+
+Advanced integrations can provide their own sandbox provider:
+
+```ts
+const agent = createAgent({
+  model,
+  sandbox: { type: 'custom', provider },
+});
+```
 
 ## `agent.run(options)`
 

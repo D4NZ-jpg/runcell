@@ -154,6 +154,43 @@ const report = result.files.find(file => file.path === 'report.md');
 const reportText = report ? new TextDecoder().decode(report.bytes) : '';
 ```
 
+### Sandbox modes
+
+By default, `runcell` runs in a virtual sandbox workspace:
+
+```ts
+const agent = createAgent({
+  model: 'anthropic/claude-sonnet-4-5',
+  sandbox: 'virtual',
+});
+```
+
+Use host mode only when the current process is already isolated by something
+else, such as a CI job, container, or ephemeral VM:
+
+```ts
+const agent = createAgent({
+  model: 'anthropic/claude-sonnet-4-5',
+  sandbox: {
+    type: 'host',
+    rootDir: process.env.GITHUB_WORKSPACE ?? process.cwd(),
+    isolation: 'external',
+  },
+});
+```
+
+Host mode maps the agent workspace onto `rootDir`; `runcell` does not add an OS
+security boundary in this mode.
+
+Advanced users can pass a custom sandbox provider:
+
+```ts
+const agent = createAgent({
+  model,
+  sandbox: { type: 'custom', provider },
+});
+```
+
 ### Host tools
 
 Expose application functions the agent can call.

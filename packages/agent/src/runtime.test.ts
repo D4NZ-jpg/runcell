@@ -55,7 +55,7 @@ describe('defaultRuntime', () => {
       files: [],
       sessionId: 'test-session',
     });
-    expect(state.sandboxSettings).toEqual([{ cwd: '/workspace' }]);
+    expect(state.sandboxSettings).toEqual([undefined]);
     expect(state.piSettings[0]).toMatchObject({
       model: 'anthropic/test',
       auth: { customEnv: { ANTHROPIC_API_KEY: 'test-key' } },
@@ -385,7 +385,7 @@ function createRuntimeInput<TSchema extends ZodTypeAny>(
       instructions: agentOptions.instructions,
       credentials: { mode: 'apiKeys', keys: { anthropic: 'test-key' } },
       toolNames: Object.keys(agentOptions.tools ?? {}),
-      workspaceDir: '/workspace',
+      sandbox: { type: 'virtual' },
       maxRepairs: 1,
       ...overrides.config,
     },
@@ -456,7 +456,7 @@ function installRuntimeMocks(scripts: StreamScript[] = []): TestState {
   }));
 
   vi.doMock('@ai-sdk/sandbox-just-bash', () => ({
-    createJustBashSandbox(settings: SandboxSettings) {
+    createJustBashSandbox(settings?: SandboxSettings) {
       state.sandboxSettings.push(settings);
       return { settings };
     },
@@ -516,7 +516,7 @@ interface TestState {
   instances: TestHarnessAgent[];
   piSettings: unknown[];
   authStorageBackends: unknown[];
-  sandboxSettings: SandboxSettings[];
+  sandboxSettings: (SandboxSettings | undefined)[];
   sandboxSession: TestSandboxSession;
   scripts: StreamScript[];
 }
@@ -556,7 +556,7 @@ interface SandboxSessionRequest {
 }
 
 interface SandboxSettings {
-  cwd: string;
+  cwd?: string;
 }
 
 interface RunCommand {

@@ -2,6 +2,7 @@ import { normalizeCredentials, type CredentialPlan } from './credentials.js';
 import { InvalidOptionError } from './errors.js';
 import { normalizeFiles } from './files.js';
 import { defaultRuntime, type RuncellRuntime } from './runtime.js';
+import { resolveSandboxConfig, type SandboxConfig } from './sandbox.js';
 import type { Agent, AgentOptions, RunOptions } from './types.js';
 import type { ZodTypeAny } from 'zod';
 
@@ -26,7 +27,7 @@ export interface ResolvedAgentConfig {
   instructions: string | undefined;
   credentials: CredentialPlan;
   toolNames: string[];
-  workspaceDir: string;
+  sandbox: SandboxConfig;
   maxRepairs: number;
 }
 
@@ -50,12 +51,7 @@ export function resolveAgentConfig(
     );
   }
 
-  const workspaceDir = options.workspaceDir ?? '/workspace';
-  if (!workspaceDir.startsWith('/')) {
-    throw new InvalidOptionError(
-      `"workspaceDir" must be an absolute sandbox path, received: ${workspaceDir}`,
-    );
-  }
+  const sandbox = resolveSandboxConfig(options.sandbox);
 
   const credentials = normalizeCredentials(options.credentials, {
     nodeEnv: context.nodeEnv,
@@ -76,7 +72,7 @@ export function resolveAgentConfig(
     instructions: options.instructions,
     credentials,
     toolNames,
-    workspaceDir,
+    sandbox,
     maxRepairs,
   };
 }
