@@ -7,12 +7,8 @@
   "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "source": "./src/index.ts",
   "files": [
     "dist/**/*",
-    "src",
-    "!src/**/*.test.ts",
-    "!src/**/*.live.ts",
     "README.md"
   ],
   "exports": {
@@ -32,20 +28,22 @@
     "test": "vitest --run",
     "test:live": "vitest --run --config vitest.live.config.ts"
   },
+  "peerDependencies": {
+    "zod": "^4.0.0"
+  },
   "dependencies": {
     "@ai-sdk/harness": "1.0.0-beta.20",
     "@ai-sdk/provider-utils": "5.0.0-beta.49",
     "@ai-sdk/sandbox-just-bash": "1.0.0-beta.20",
-    "@earendil-works/pi-coding-agent": "^0.79.0",
-    "@local/harness-pi-raw": "*",
-    "zod": "3.25.76"
+    "@earendil-works/pi-coding-agent": "^0.79.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "del-cli": "^6.0.0",
     "tsup": "^8.5.1",
     "typescript": "^5.8.3",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "zod": "^4.4.3"
   },
   "keywords": [
     "ai",

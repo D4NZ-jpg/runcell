@@ -5,7 +5,7 @@ export default defineConfig({
   format: ['esm'],
   target: 'es2022',
   dts: true,
-  sourcemap: true,
+  sourcemap: false,
   clean: false,
   // Workspace + peer-ish deps are resolved by the consumer at runtime.
   external: [
@@ -13,7 +13,6 @@ export default defineConfig({
     '@ai-sdk/provider-utils',
     '@ai-sdk/sandbox-just-bash',
     '@earendil-works/pi-coding-agent',
-    '@local/harness-pi-raw',
     'zod',
   ],
 });
