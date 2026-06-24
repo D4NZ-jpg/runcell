@@ -29,6 +29,7 @@
     "test:live": "vitest --run --config vitest.live.config.ts"
   },
   "peerDependencies": {
+    "@ai-sdk/sandbox-vercel": "1.0.0-beta.20",
     "zod": "^4.0.0"
   },
   "dependencies": {
@@ -38,6 +39,7 @@
     "@earendil-works/pi-coding-agent": "^0.79.0"
   },
   "devDependencies": {
+    "@ai-sdk/sandbox-vercel": "1.0.0-beta.20",
     "@types/node": "^24.0.0",
     "del-cli": "^6.0.0",
     "tsup": "^8.5.1",
@@ -50,5 +52,10 @@
     "agent",
     "sandbox",
     "structured-output"
-  ]
+  ],
+  "peerDependenciesMeta": {
+    "@ai-sdk/sandbox-vercel": {
+      "optional": true
+    }
+  }
 }

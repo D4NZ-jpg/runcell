@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { z, type ZodTypeAny } from 'zod';
+import { z } from 'zod';
 import { createAgent, resolveAgentConfig } from './create-agent.js';
 import { InvalidOptionError } from './errors.js';
 import type { RuncellRuntime, RuntimeRunInput } from './runtime.js';
@@ -156,12 +156,12 @@ describe('createAgent', () => {
 
 function createRuntimeMock(
   result: { data: unknown } = { data: {} },
-): RuncellRuntime & { calls: RuntimeRunInput<ZodTypeAny>[] } {
-  const calls: RuntimeRunInput<ZodTypeAny>[] = [];
+): RuncellRuntime & { calls: RuntimeRunInput<z.ZodType>[] } {
+  const calls: RuntimeRunInput<z.ZodType>[] = [];
   return {
     calls,
-    run<TSchema extends ZodTypeAny>(input: RuntimeRunInput<TSchema>) {
-      calls.push(input as RuntimeRunInput<ZodTypeAny>);
+    run<TSchema extends z.ZodType>(input: RuntimeRunInput<TSchema>) {
+      calls.push(input);
       return Promise.resolve({
         data: result.data as z.infer<TSchema>,
         text: '',

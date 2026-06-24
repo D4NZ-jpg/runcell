@@ -6,6 +6,12 @@
 npm install runcell zod
 ```
 
+For Vercel Sandbox mode, also install the optional provider:
+
+```bash
+npm install @ai-sdk/sandbox-vercel
+```
+
 For this repository, install workspace dependencies first:
 
 ```bash

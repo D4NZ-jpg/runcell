@@ -9,6 +9,7 @@ const customerSchema = z.object({
 });
 
 const lookupCustomerSchema = z.object({ id: z.string() });
+type LookupCustomerInput = z.infer<typeof lookupCustomerSchema>;
 
 export async function answerWithHostTool(
   customerId = 'cus_123',
@@ -16,7 +17,7 @@ export async function answerWithHostTool(
   const lookupCustomer = {
     description: 'Look up customer account details by customer id.',
     schema: lookupCustomerSchema,
-    execute: ({ id }) => ({
+    execute: ({ id }: LookupCustomerInput) => ({
       id,
       name: id === customerId ? 'Acme Inc.' : 'Unknown customer',
       accountStatus: 'active',

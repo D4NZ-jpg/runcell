@@ -35,7 +35,7 @@ finishes, `runcell` validates the submitted payload and returns typed
 
 - Zod-validated structured output
 - sandbox file inputs and returned file outputs
-- virtual, host, and custom sandbox modes
+- virtual, host, Vercel, and custom sandbox modes
 - host-side custom tools
 - text, tool, file-change, repair, finish, and error events
 - local, env, API key, agent directory, and shared credential modes
@@ -44,6 +44,12 @@ finishes, `runcell` validates the submitted payload and returns typed
 
 ```bash
 npm install runcell zod
+```
+
+For Vercel Sandbox mode, install the optional sandbox provider too:
+
+```bash
+npm install runcell zod @ai-sdk/sandbox-vercel
 ```
 
 ## Sandbox modes
@@ -67,6 +73,20 @@ const agent = createAgent({
     type: 'host',
     rootDir: process.env.GITHUB_WORKSPACE ?? process.cwd(),
     isolation: 'external',
+  },
+});
+```
+
+Use Vercel Sandbox mode for cloud isolation. It requires Node.js 22+ and the
+optional `@ai-sdk/sandbox-vercel` peer dependency:
+
+```ts
+const agent = createAgent({
+  model: 'anthropic/claude-sonnet-4-5',
+  sandbox: {
+    type: 'vercel',
+    runtime: 'node24',
+    ports: [3000],
   },
 });
 ```

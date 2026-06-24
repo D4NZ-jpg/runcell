@@ -7,7 +7,7 @@ import {
 import { AuthStorage, getAgentDir } from '@earendil-works/pi-coding-agent';
 import { createPi, type PiHarnessSettings } from '@local/harness-pi-raw';
 import path from 'node:path';
-import { z, type ZodTypeAny } from 'zod';
+import { z } from 'zod';
 import type { ResolvedAgentConfig } from './create-agent.js';
 import type {
   AuthBlob,
@@ -26,14 +26,14 @@ import type {
   ToolDefinition,
 } from './types.js';
 
-export interface RuntimeRunInput<TSchema extends ZodTypeAny> {
+export interface RuntimeRunInput<TSchema extends z.ZodType> {
   agentOptions: AgentOptions;
   config: ResolvedAgentConfig;
   runOptions: RunOptions<TSchema>;
 }
 
 export interface RuncellRuntime {
-  run<TSchema extends ZodTypeAny>(
+  run<TSchema extends z.ZodType>(
     input: RuntimeRunInput<TSchema>,
   ): Promise<RunResult<z.infer<TSchema>>>;
 }
@@ -49,7 +49,7 @@ export const defaultRuntime: RuncellRuntime = {
   },
 };
 
-async function runWithHarness<TSchema extends ZodTypeAny>({
+async function runWithHarness<TSchema extends z.ZodType>({
   agentOptions,
   config,
   runOptions,
@@ -130,9 +130,8 @@ async function runWithHarness<TSchema extends ZodTypeAny>({
       if (submitted !== undefined) {
         const parsed = runOptions.schema.safeParse(submitted);
         if (parsed.success) {
-          const data: unknown = parsed.data;
           return {
-            data,
+            data: parsed.data,
             text,
             files: [...changedFiles.values()],
             sessionId: session.sessionId,
@@ -159,7 +158,7 @@ function createTools({
   onSubmit,
 }: {
   tools: AgentOptions['tools'];
-  schema: ZodTypeAny;
+  schema: z.ZodType;
   onSubmit: (value: unknown) => void;
 }): ToolSet {
   const out: ToolSet = {};

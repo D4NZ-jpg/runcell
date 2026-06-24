@@ -1,9 +1,13 @@
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { InvalidOptionError } from './errors.js';
 import { createSandboxProvider, resolveSandboxConfig } from './sandbox.js';
+
+afterEach(() => {
+  vi.doUnmock('@ai-sdk/sandbox-vercel');
+});
 
 describe('resolveSandboxConfig', () => {
   it('defaults to virtual sandbox mode', () => {
@@ -35,6 +39,28 @@ describe('resolveSandboxConfig', () => {
         isolation: 'external-ish',
       }),
     ).toThrow(InvalidOptionError);
+  });
+
+  it('accepts vercel sandbox settings', () => {
+    expect(
+      resolveSandboxConfig({
+        type: 'vercel',
+        runtime: 'node24',
+        ports: [3000],
+        timeout: 60_000,
+      }),
+    ).toEqual({
+      type: 'vercel',
+      runtime: 'node24',
+      ports: [3000],
+      timeout: 60_000,
+    });
+  });
+
+  it('rejects pre-created vercel sandboxes', () => {
+    expect(() => resolveSandboxConfig({ type: 'vercel', sandbox: {} })).toThrow(
+      InvalidOptionError,
+    );
   });
 
   it('rejects invalid custom providers', () => {
@@ -103,5 +129,43 @@ describe('host sandbox provider', () => {
     await expect(
       session.writeTextFile({ path: '/tmp/outside.txt', content: 'nope' }),
     ).rejects.toThrow('escapes rootDir');
+  });
+});
+
+describe('vercel sandbox provider', () => {
+  it('loads the optional provider only when a session starts', async () => {
+    const mockSession = { id: 'vercel-session' };
+    const createSession = vi.fn().mockResolvedValue(mockSession);
+    const resumeSession = vi.fn().mockResolvedValue(mockSession);
+    const createVercelSandbox = vi.fn(() => ({
+      specificationVersion: 'harness-sandbox-v1',
+      providerId: 'vercel-sandbox',
+      createSession,
+      resumeSession,
+    }));
+    vi.doMock('@ai-sdk/sandbox-vercel', () => ({ createVercelSandbox }));
+
+    const provider = createSandboxProvider({
+      type: 'vercel',
+      runtime: 'node24',
+      ports: [3000],
+      timeout: 60_000,
+    });
+
+    expect(createVercelSandbox).not.toHaveBeenCalled();
+    await expect(
+      provider.createSession({ sessionId: 'test-session' }),
+    ).resolves.toBe(mockSession);
+    expect(createVercelSandbox).toHaveBeenCalledWith({
+      runtime: 'node24',
+      ports: [3000],
+      timeout: 60_000,
+    });
+    expect(createSession).toHaveBeenCalledWith({ sessionId: 'test-session' });
+
+    await expect(
+      provider.resumeSession?.({ sessionId: 'test-session' }),
+    ).resolves.toBe(mockSession);
+    expect(resumeSession).toHaveBeenCalledWith({ sessionId: 'test-session' });
   });
 });

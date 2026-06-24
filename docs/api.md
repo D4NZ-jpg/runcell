@@ -52,6 +52,24 @@ const agent = createAgent({
 Host mode maps the agent workspace onto `rootDir`. It does not isolate your
 machine by itself.
 
+Use Vercel Sandbox mode for cloud isolation. It requires Node.js 22+ and the
+optional `@ai-sdk/sandbox-vercel` peer dependency:
+
+```bash
+npm install @ai-sdk/sandbox-vercel
+```
+
+```ts
+const agent = createAgent({
+  model: 'anthropic/claude-sonnet-4-5',
+  sandbox: {
+    type: 'vercel',
+    runtime: 'node24',
+    ports: [3000],
+  },
+});
+```
+
 Advanced integrations can provide their own sandbox provider:
 
 ```ts

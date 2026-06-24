@@ -4,7 +4,9 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "runcell": ["../packages/agent/src/index.ts"]
+      "runcell": ["../packages/agent/dist/index.d.ts"],
+      "zod": ["../packages/agent/node_modules/zod"],
+      "zod/*": ["../packages/agent/node_modules/zod/*"]
     }
   },
   "include": ["*.ts"],

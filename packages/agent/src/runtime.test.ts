@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { z, type ZodTypeAny } from 'zod';
+import { z } from 'zod';
 import type { ResolvedAgentConfig } from './create-agent.js';
 import type { AuthBlob, CredentialStore } from './credentials.js';
 import type { RuncellRuntime, RuntimeRunInput } from './runtime.js';
@@ -366,7 +366,7 @@ async function loadRuntime(): Promise<RuncellRuntime> {
   return defaultRuntime;
 }
 
-function createRuntimeInput<TSchema extends ZodTypeAny>(
+function createRuntimeInput<TSchema extends z.ZodType>(
   schema: TSchema,
   overrides: {
     agentOptions?: Partial<AgentOptions>;

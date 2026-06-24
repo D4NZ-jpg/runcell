@@ -4,7 +4,7 @@ import { normalizeFiles } from './files.js';
 import { defaultRuntime, type RuncellRuntime } from './runtime.js';
 import { resolveSandboxConfig, type SandboxConfig } from './sandbox.js';
 import type { Agent, AgentOptions, RunOptions } from './types.js';
-import type { ZodTypeAny } from 'zod';
+import type { z } from 'zod';
 
 const RESERVED_TOOL_NAMES = new Set([
   'read',
@@ -80,7 +80,7 @@ export function resolveAgentConfig(
 /**
  * Validate the options for a single run. Throws before any work starts.
  */
-export function validateRunOptions<TSchema extends ZodTypeAny>(
+export function validateRunOptions<TSchema extends z.ZodType>(
   options: RunOptions<TSchema>,
 ): void {
   if (

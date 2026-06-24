@@ -27,6 +27,7 @@ export type {
   SandboxProvider,
   VirtualSandboxOption,
   HostSandboxOption,
+  VercelSandboxOption,
   CustomSandboxOption,
 } from './sandbox.js';
 

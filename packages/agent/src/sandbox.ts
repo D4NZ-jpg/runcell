@@ -15,6 +15,7 @@ import type { Readable } from 'node:stream';
 import { InvalidOptionError } from './errors.js';
 
 const HOST_VIRTUAL_ROOT = '/workspace';
+const VERCEL_SANDBOX_PACKAGE = '@ai-sdk/sandbox-vercel';
 
 export type SandboxProvider = HarnessV1SandboxProvider;
 
@@ -22,6 +23,7 @@ export type SandboxOption =
   | 'virtual'
   | VirtualSandboxOption
   | HostSandboxOption
+  | VercelSandboxOption
   | CustomSandboxOption;
 
 export interface VirtualSandboxOption {
@@ -35,6 +37,16 @@ export interface HostSandboxOption {
   env?: Record<string, string | undefined>;
 }
 
+export interface VercelSandboxOption {
+  type: 'vercel';
+  runtime?: string;
+  ports?: readonly number[];
+  timeout?: number;
+  networkPolicy?: unknown;
+  name?: string;
+  [key: string]: unknown;
+}
+
 export interface CustomSandboxOption {
   type: 'custom';
   provider: SandboxProvider;
@@ -43,6 +55,7 @@ export interface CustomSandboxOption {
 export type SandboxConfig =
   | { type: 'virtual' }
   | HostSandboxOption
+  | VercelSandboxOption
   | CustomSandboxOption;
 
 export function resolveSandboxConfig(sandbox: unknown): SandboxConfig {
@@ -86,6 +99,14 @@ export function resolveSandboxConfig(sandbox: unknown): SandboxConfig {
       };
     }
 
+    case 'vercel':
+      if (sandbox['sandbox'] !== undefined) {
+        throw new InvalidOptionError(
+          'Vercel sandbox mode does not accept a pre-created sandbox. Use custom mode instead.',
+        );
+      }
+      return normalizeVercelSandboxConfig(sandbox);
+
     case 'custom': {
       const provider = sandbox['provider'];
       if (!isSandboxProvider(provider)) {
@@ -109,9 +130,89 @@ export function createSandboxProvider(config: SandboxConfig): SandboxProvider {
     case 'host':
       return new HostSandboxProvider(config);
 
+    case 'vercel':
+      return new LazyVercelSandboxProvider(config);
+
     case 'custom':
       return config.provider;
   }
+}
+
+function normalizeVercelSandboxConfig(
+  input: Record<string, unknown>,
+): VercelSandboxOption {
+  const out: VercelSandboxOption = { type: 'vercel' };
+
+  for (const [key, value] of Object.entries(input)) {
+    if (key !== 'type') {
+      out[key] = value;
+    }
+  }
+
+  return out;
+}
+
+interface VercelSandboxModule {
+  createVercelSandbox(settings?: Record<string, unknown>): SandboxProvider;
+}
+
+class LazyVercelSandboxProvider implements SandboxProvider {
+  readonly specificationVersion = 'harness-sandbox-v1';
+  readonly providerId = 'vercel-sandbox';
+
+  private providerPromise: Promise<SandboxProvider> | undefined;
+
+  constructor(private readonly settings: VercelSandboxOption) {}
+
+  createSession = async (options?: {
+    sessionId?: string;
+    abortSignal?: AbortSignal;
+    identity?: string;
+    onFirstCreate?: (
+      session: Experimental_SandboxSession,
+      opts: { abortSignal?: AbortSignal },
+    ) => Promise<void>;
+  }): Promise<HarnessV1NetworkSandboxSession> => {
+    return (await this.provider()).createSession(options);
+  };
+
+  resumeSession = async (options: {
+    sessionId: string;
+    abortSignal?: AbortSignal;
+  }): Promise<HarnessV1NetworkSandboxSession> => {
+    const provider = await this.provider();
+    if (provider.resumeSession) {
+      return provider.resumeSession(options);
+    }
+    return provider.createSession(options);
+  };
+
+  private provider(): Promise<SandboxProvider> {
+    this.providerPromise ??= loadVercelSandboxProvider(this.settings);
+    return this.providerPromise;
+  }
+}
+
+async function loadVercelSandboxProvider(
+  settings: VercelSandboxOption,
+): Promise<SandboxProvider> {
+  const imported: unknown = await import(VERCEL_SANDBOX_PACKAGE).catch(
+    (error: unknown) => {
+      throw new InvalidOptionError(
+        'sandbox.type "vercel" requires installing @ai-sdk/sandbox-vercel.',
+        { cause: error },
+      );
+    },
+  );
+
+  if (!isVercelSandboxModule(imported)) {
+    throw new InvalidOptionError(
+      '@ai-sdk/sandbox-vercel did not export createVercelSandbox.',
+    );
+  }
+
+  const { type: _type, ...vercelSettings } = settings;
+  return imported.createVercelSandbox(vercelSettings);
 }
 
 class HostSandboxProvider implements SandboxProvider {
@@ -422,6 +523,10 @@ function isSandboxProvider(value: unknown): value is SandboxProvider {
     value['specificationVersion'] === 'harness-sandbox-v1' &&
     typeof value['createSession'] === 'function'
   );
+}
+
+function isVercelSandboxModule(value: unknown): value is VercelSandboxModule {
+  return isRecord(value) && typeof value['createVercelSandbox'] === 'function';
 }
 
 function toOptionalStringRecord(

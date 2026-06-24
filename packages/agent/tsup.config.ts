@@ -12,6 +12,7 @@ export default defineConfig({
     '@ai-sdk/harness',
     '@ai-sdk/provider-utils',
     '@ai-sdk/sandbox-just-bash',
+    '@ai-sdk/sandbox-vercel',
     '@earendil-works/pi-coding-agent',
     'zod',
   ],

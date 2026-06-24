@@ -82,6 +82,12 @@ strict output contract:
 npm install runcell zod
 ```
 
+For Vercel Sandbox mode, install the optional sandbox provider too:
+
+```bash
+npm install runcell zod @ai-sdk/sandbox-vercel
+```
+
 For this repository, install workspace dependencies first:
 
 ```bash
@@ -181,6 +187,20 @@ const agent = createAgent({
 
 Host mode maps the agent workspace onto `rootDir`; `runcell` does not add an OS
 security boundary in this mode.
+
+Use Vercel Sandbox mode when you want cloud isolation. It requires Node.js 22+
+and the optional `@ai-sdk/sandbox-vercel` peer dependency:
+
+```ts
+const agent = createAgent({
+  model: 'anthropic/claude-sonnet-4-5',
+  sandbox: {
+    type: 'vercel',
+    runtime: 'node24',
+    ports: [3000],
+  },
+});
+```
 
 Advanced users can pass a custom sandbox provider:
 
