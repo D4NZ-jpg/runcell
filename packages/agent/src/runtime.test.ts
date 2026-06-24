@@ -6,6 +6,7 @@ import type { RuncellRuntime, RuntimeRunInput } from './runtime.js';
 import type {
   AgentEvents,
   AgentOptions,
+  AgentSchema,
   ChangedFile,
   FinishEvent,
   RepairEvent,
@@ -74,6 +75,36 @@ describe('defaultRuntime', () => {
       { path: '/work/assets/blob.bin', content: bytes },
     ]);
     expect(state.instances[0]?.session?.destroyCount).toBe(1);
+  });
+
+  it('accepts Standard Schema validators that are not Zod schemas', async () => {
+    const schema: AgentSchema<{ ok: boolean }> = {
+      '~standard': {
+        version: 1,
+        vendor: 'test-schema',
+        validate(value) {
+          if (
+            value != null &&
+            typeof value === 'object' &&
+            (value as { ok?: unknown }).ok === true
+          ) {
+            return { value: { ok: true } };
+          }
+          return { issues: [{ message: 'ok must be true' }] };
+        },
+      },
+    };
+    installRuntimeMocks([
+      agent => {
+        agent.submit({ ok: true });
+        return [];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    const result = await runtime.run(createRuntimeInput(schema));
+
+    expect(result.data).toEqual({ ok: true });
   });
 
   it('maps environment credentials to Pi auth settings', async () => {
@@ -366,7 +397,7 @@ async function loadRuntime(): Promise<RuncellRuntime> {
   return defaultRuntime;
 }
 
-function createRuntimeInput<TSchema extends z.ZodType>(
+function createRuntimeInput<TSchema extends AgentSchema>(
   schema: TSchema,
   overrides: {
     agentOptions?: Partial<AgentOptions>;

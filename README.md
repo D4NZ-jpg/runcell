@@ -15,10 +15,10 @@ _Run AI agents in an isolated sandbox cell and get back validated structured out
 `runcell` is a TypeScript package for running AI agents inside an isolated
 workspace and treating the result like application data, not model prose.
 
-You provide a task, optional files, optional host tools, and a Zod schema. The
-agent can inspect and modify the sandbox workspace, then it must submit a
-structured result. `runcell` validates that payload and returns typed
-`result.data`.
+You provide a task, optional files, optional host tools, and a Standard
+Schema-compatible schema. Zod works out of the box. The agent can inspect and
+modify the sandbox workspace, then it must submit a structured result. `runcell`
+validates that payload and returns typed `result.data`.
 
 ```ts
 const result = await agent.run({
@@ -77,6 +77,8 @@ strict output contract:
 ## Quick start
 
 ### Install
+
+Install `runcell` and your schema library. The examples use Zod:
 
 ```bash
 npm install runcell zod
@@ -140,8 +142,9 @@ const agent = createAgent({
 
 ### Structured results
 
-Every run has a schema. The agent must submit a payload matching that schema,
-and `runcell` validates it before returning.
+Every run has a Standard Schema-compatible schema. The agent must submit a
+payload matching that schema, and `runcell` validates it before returning. Zod 3
+and Zod 4 schemas are both supported.
 
 ```ts
 const schema = z.object({

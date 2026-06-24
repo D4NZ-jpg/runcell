@@ -26,14 +26,14 @@ console.log(result.data);
 
 ## What it does
 
-`runcell` gives an agent a sandbox workspace and a required Zod output contract.
-The agent can read/write files, call host-side tools, and stream events. When it
-finishes, `runcell` validates the submitted payload and returns typed
-`result.data`.
+`runcell` gives an agent a sandbox workspace and a required Standard
+Schema-compatible output contract. Zod works out of the box. The agent can
+read/write files, call host-side tools, and stream events. When it finishes,
+`runcell` validates the submitted payload and returns typed `result.data`.
 
 ## Highlights
 
-- Zod-validated structured output
+- schema-validated structured output
 - sandbox file inputs and returned file outputs
 - virtual, host, Vercel, and custom sandbox modes
 - host-side custom tools
@@ -41,6 +41,8 @@ finishes, `runcell` validates the submitted payload and returns typed
 - local, env, API key, agent directory, and shared credential modes
 
 ## Install
+
+Install `runcell` and your schema library. The examples use Zod:
 
 ```bash
 npm install runcell zod

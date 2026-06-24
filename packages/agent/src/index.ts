@@ -43,6 +43,8 @@ export type {
   Agent,
   AgentOptions,
   AgentEvents,
+  AgentSchema,
+  InferSchemaOutput,
   RunOptions,
   RunResult,
   ToolDefinition,

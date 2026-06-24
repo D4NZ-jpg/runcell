@@ -1,4 +1,4 @@
-import type { z } from 'zod';
+import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { Credentials } from './credentials.js';
 import type { FileInput } from './files.js';
 import type { SandboxOption } from './sandbox.js';
@@ -6,11 +6,15 @@ import type { SandboxOption } from './sandbox.js';
 /**
  * A host-side tool the agent can call. The result is returned to the model.
  */
-export interface ToolDefinition<TSchema extends z.ZodType = z.ZodType> {
+export type AgentSchema<TOutput = unknown> = StandardSchemaV1<unknown, TOutput>;
+export type InferSchemaOutput<TSchema extends AgentSchema> =
+  StandardSchemaV1.InferOutput<TSchema>;
+
+export interface ToolDefinition<TSchema extends AgentSchema = AgentSchema> {
   description: string;
   schema: TSchema;
   /** May return synchronously or as a promise. */
-  execute(input: z.infer<TSchema>): unknown;
+  execute(input: InferSchemaOutput<TSchema>): unknown;
 }
 
 /**
@@ -84,7 +88,7 @@ export interface AgentOptions {
 /**
  * Options for a single {@link Agent.run} call.
  */
-export interface RunOptions<TSchema extends z.ZodType> {
+export interface RunOptions<TSchema extends AgentSchema> {
   /** The task prompt. */
   prompt: string;
   /** Schema the agent must satisfy via the hidden `submitResult` tool. */
@@ -117,7 +121,7 @@ export interface RunResult<TData> {
  * An agent bound to a model, credentials, tools and event callbacks.
  */
 export interface Agent {
-  run<TSchema extends z.ZodType>(
+  run<TSchema extends AgentSchema>(
     options: RunOptions<TSchema>,
-  ): Promise<RunResult<z.infer<TSchema>>>;
+  ): Promise<RunResult<InferSchemaOutput<TSchema>>>;
 }

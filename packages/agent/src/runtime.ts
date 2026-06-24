@@ -1,13 +1,18 @@
 import { HarnessAgent } from '@ai-sdk/harness/agent';
 import {
+  jsonSchema,
   tool,
   type Experimental_SandboxSession,
+  type FlexibleSchema,
   type ToolSet,
 } from '@ai-sdk/provider-utils';
+import type {
+  StandardJSONSchemaV1,
+  StandardSchemaV1,
+} from '@standard-schema/spec';
 import { AuthStorage, getAgentDir } from '@earendil-works/pi-coding-agent';
 import { createPi, type PiHarnessSettings } from '@local/harness-pi-raw';
 import path from 'node:path';
-import { z } from 'zod';
 import type { ResolvedAgentConfig } from './create-agent.js';
 import type {
   AuthBlob,
@@ -20,22 +25,24 @@ import { assertSafeWorkspacePath } from './paths.js';
 import { createSandboxProvider } from './sandbox.js';
 import type {
   AgentOptions,
+  AgentSchema,
   ChangedFile,
+  InferSchemaOutput,
   RunOptions,
   RunResult,
   ToolDefinition,
 } from './types.js';
 
-export interface RuntimeRunInput<TSchema extends z.ZodType> {
+export interface RuntimeRunInput<TSchema extends AgentSchema> {
   agentOptions: AgentOptions;
   config: ResolvedAgentConfig;
   runOptions: RunOptions<TSchema>;
 }
 
 export interface RuncellRuntime {
-  run<TSchema extends z.ZodType>(
+  run<TSchema extends AgentSchema>(
     input: RuntimeRunInput<TSchema>,
-  ): Promise<RunResult<z.infer<TSchema>>>;
+  ): Promise<RunResult<InferSchemaOutput<TSchema>>>;
 }
 
 interface SandboxContext {
@@ -49,11 +56,11 @@ export const defaultRuntime: RuncellRuntime = {
   },
 };
 
-async function runWithHarness<TSchema extends z.ZodType>({
+async function runWithHarness<TSchema extends AgentSchema>({
   agentOptions,
   config,
   runOptions,
-}: RuntimeRunInput<TSchema>): Promise<RunResult<z.infer<TSchema>>> {
+}: RuntimeRunInput<TSchema>): Promise<RunResult<InferSchemaOutput<TSchema>>> {
   const files = normalizeFiles(runOptions.files ?? []);
   const changedFiles = new Map<string, ChangedFile>();
   let text = '';
@@ -128,7 +135,7 @@ async function runWithHarness<TSchema extends z.ZodType>({
       }
 
       if (submitted !== undefined) {
-        const parsed = runOptions.schema.safeParse(submitted);
+        const parsed = await validateAgentSchema(runOptions.schema, submitted);
         if (parsed.success) {
           return {
             data: parsed.data,
@@ -158,7 +165,7 @@ function createTools({
   onSubmit,
 }: {
   tools: AgentOptions['tools'];
-  schema: z.ZodType;
+  schema: AgentSchema;
   onSubmit: (value: unknown) => void;
 }): ToolSet {
   const out: ToolSet = {};
@@ -169,7 +176,7 @@ function createTools({
 
   out['submitResult'] = tool({
     description: 'Submit the final structured result for this run.',
-    inputSchema: schema,
+    inputSchema: toToolInputSchema(schema),
     execute(input) {
       onSubmit(input);
       return { ok: true };
@@ -182,11 +189,85 @@ function createTools({
 function createHostTool(definition: ToolDefinition): ToolSet[string] {
   return tool({
     description: definition.description,
-    inputSchema: definition.schema,
+    inputSchema: toToolInputSchema(definition.schema),
     execute(input) {
       return definition.execute(input);
     },
   });
+}
+
+function toToolInputSchema<TSchema extends AgentSchema>(
+  schema: TSchema,
+): FlexibleSchema<InferSchemaOutput<TSchema>> {
+  if (isZodSchema(schema) || hasStandardJsonSchema(schema)) {
+    return schema as unknown as FlexibleSchema<InferSchemaOutput<TSchema>>;
+  }
+
+  return jsonSchema<InferSchemaOutput<TSchema>>(
+    {},
+    {
+      validate: async value => {
+        const result = await validateAgentSchema(schema, value);
+        if (result.success) {
+          return { success: true, value: result.data };
+        }
+        return {
+          success: false,
+          error: new Error(formatStandardSchemaIssues(result.issues)),
+        };
+      },
+    },
+  );
+}
+
+async function validateAgentSchema<TSchema extends AgentSchema>(
+  schema: TSchema,
+  value: unknown,
+): Promise<
+  | { success: true; data: InferSchemaOutput<TSchema> }
+  | { success: false; issues: readonly StandardSchemaV1.Issue[] }
+> {
+  const result = await schema['~standard'].validate(value);
+  if ('value' in result) {
+    return { success: true, data: result.value as InferSchemaOutput<TSchema> };
+  }
+  return { success: false, issues: result.issues };
+}
+
+function isZodSchema(schema: AgentSchema): boolean {
+  return schema['~standard'].vendor === 'zod';
+}
+
+function hasStandardJsonSchema(
+  schema: AgentSchema,
+): schema is AgentSchema & StandardJSONSchemaV1 {
+  const standard = schema['~standard'] as StandardSchemaV1.Props & {
+    jsonSchema?: { input?: unknown };
+  };
+  return typeof standard.jsonSchema?.input === 'function';
+}
+
+function formatStandardSchemaIssues(
+  issues: readonly StandardSchemaV1.Issue[],
+): string {
+  if (issues.length === 0) {
+    return 'Schema validation failed.';
+  }
+  return issues
+    .map(issue => {
+      const path = issue.path?.map(formatPathSegment).join('.') ?? '';
+      return path.length > 0 ? `${path}: ${issue.message}` : issue.message;
+    })
+    .join('; ');
+}
+
+function formatPathSegment(
+  segment: PropertyKey | StandardSchemaV1.PathSegment,
+): string {
+  if (typeof segment === 'object' && 'key' in segment) {
+    return String(segment.key);
+  }
+  return String(segment);
 }
 
 async function seedFiles({

@@ -2,6 +2,9 @@
 
 ## Install
 
+Install `runcell` and a Standard Schema-compatible validation library. The
+examples use Zod:
+
 ```bash
 npm install runcell zod
 ```

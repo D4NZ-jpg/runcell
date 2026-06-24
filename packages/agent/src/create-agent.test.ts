@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createAgent, resolveAgentConfig } from './create-agent.js';
 import { InvalidOptionError } from './errors.js';
 import type { RuncellRuntime, RuntimeRunInput } from './runtime.js';
+import type { AgentSchema, InferSchemaOutput } from './types.js';
 
 describe('resolveAgentConfig', () => {
   it('resolves a minimal config with defaults', () => {
@@ -139,6 +140,19 @@ describe('createAgent', () => {
     expect(runtime.calls).toHaveLength(0);
   });
 
+  it('rejects schemas that do not implement Standard Schema', async () => {
+    const runtime = createRuntimeMock();
+    const agent = createAgent(
+      { model: 'anthropic/claude-sonnet-4-5' },
+      { nodeEnv: 'development', runtime },
+    );
+
+    await expect(
+      agent.run({ prompt: 'do a thing', schema: {} as never }),
+    ).rejects.toBeInstanceOf(InvalidOptionError);
+    expect(runtime.calls).toHaveLength(0);
+  });
+
   it('delegates valid runs to the runtime', async () => {
     const schema = z.object({ ok: z.boolean() });
     const runtime = createRuntimeMock({ data: { ok: true } });
@@ -156,14 +170,14 @@ describe('createAgent', () => {
 
 function createRuntimeMock(
   result: { data: unknown } = { data: {} },
-): RuncellRuntime & { calls: RuntimeRunInput<z.ZodType>[] } {
-  const calls: RuntimeRunInput<z.ZodType>[] = [];
+): RuncellRuntime & { calls: RuntimeRunInput<AgentSchema>[] } {
+  const calls: RuntimeRunInput<AgentSchema>[] = [];
   return {
     calls,
-    run<TSchema extends z.ZodType>(input: RuntimeRunInput<TSchema>) {
+    run<TSchema extends AgentSchema>(input: RuntimeRunInput<TSchema>) {
       calls.push(input);
       return Promise.resolve({
-        data: result.data as z.infer<TSchema>,
+        data: result.data as InferSchemaOutput<TSchema>,
         text: '',
         files: [],
         sessionId: input.runOptions.sessionId ?? 'test-session',

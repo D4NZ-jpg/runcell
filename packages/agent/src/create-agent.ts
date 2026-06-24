@@ -3,8 +3,7 @@ import { InvalidOptionError } from './errors.js';
 import { normalizeFiles } from './files.js';
 import { defaultRuntime, type RuncellRuntime } from './runtime.js';
 import { resolveSandboxConfig, type SandboxConfig } from './sandbox.js';
-import type { Agent, AgentOptions, RunOptions } from './types.js';
-import type { z } from 'zod';
+import type { Agent, AgentOptions, AgentSchema, RunOptions } from './types.js';
 
 const RESERVED_TOOL_NAMES = new Set([
   'read',
@@ -80,7 +79,7 @@ export function resolveAgentConfig(
 /**
  * Validate the options for a single run. Throws before any work starts.
  */
-export function validateRunOptions<TSchema extends z.ZodType>(
+export function validateRunOptions<TSchema extends AgentSchema>(
   options: RunOptions<TSchema>,
 ): void {
   if (
@@ -89,9 +88,26 @@ export function validateRunOptions<TSchema extends z.ZodType>(
   ) {
     throw new InvalidOptionError('run requires a non-empty "prompt".');
   }
+  if (!isAgentSchema(options.schema)) {
+    throw new InvalidOptionError(
+      'run requires a Standard Schema-compatible "schema".',
+    );
+  }
   if (options.files !== undefined) {
     normalizeFiles(options.files);
   }
+}
+
+function isAgentSchema(value: unknown): value is AgentSchema {
+  if (value == null || typeof value !== 'object') {
+    return false;
+  }
+  const standard = (value as { '~standard'?: unknown })['~standard'];
+  return (
+    standard != null &&
+    typeof standard === 'object' &&
+    typeof (standard as { validate?: unknown }).validate === 'function'
+  );
 }
 
 /**

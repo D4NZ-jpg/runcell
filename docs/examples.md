@@ -40,10 +40,10 @@ agentDir:/path/to/agent-dir
 
 1. seed `feedback.txt` into the sandbox;
 2. ask the agent to create `report.md`;
-3. validate structured data with Zod;
+3. validate structured data with a Standard Schema-compatible validator;
 4. find `report.md` in `result.files`;
 5. decode file bytes;
-6. parse a final object through another Zod schema.
+6. parse a final object through another schema.
 
 ```bash
 npm run example:08

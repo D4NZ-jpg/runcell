@@ -94,13 +94,13 @@ const result = await agent.run({
 });
 ```
 
-| Option         | Description                                     |
-| -------------- | ----------------------------------------------- |
-| `prompt`       | Task prompt                                     |
-| `schema`       | Zod schema for the required structured result   |
-| `files`        | Text or binary files to seed into the workspace |
-| `instructions` | Per-run instructions                            |
-| `signal`       | Abort signal                                    |
+| Option         | Description                                           |
+| -------------- | ----------------------------------------------------- |
+| `prompt`       | Task prompt                                           |
+| `schema`       | Standard Schema-compatible structured result contract |
+| `files`        | Text or binary files to seed into the workspace       |
+| `instructions` | Per-run instructions                                  |
+| `signal`       | Abort signal                                          |
 
 The result has this shape:
 
@@ -117,7 +117,7 @@ logic should rely on the schema-validated data.
 
 ## Structured output
 
-Every run requires a schema:
+Every run requires a Standard Schema-compatible schema. Zod 3 and Zod 4 work out of the box:
 
 ```ts
 const triageSchema = z.object({
@@ -132,6 +132,10 @@ const result = await agent.run({
   schema: triageSchema,
 });
 ```
+
+Schemas that can produce JSON Schema, including Zod, give the model the most
+precise tool contract. Bare Standard Schema validators are still accepted and
+used for final validation.
 
 If the agent finishes without a valid structured payload, `runcell` can run a
 repair turn. Configure that with `maxRepairs`.
