@@ -47,21 +47,21 @@ import type {
   AgentSchema,
   ChangedFile,
   InferSchemaOutput,
-  RunOptions,
+  RunOptionsBase,
   RunResult,
   ToolDefinition,
 } from './types.js';
 
-export interface RuntimeRunInput<TSchema extends AgentSchema> {
+type RuntimeRunOptions = RunOptionsBase & { schema?: AgentSchema };
+
+export interface RuntimeRunInput {
   agentOptions: AgentOptions;
   config: ResolvedAgentConfig;
-  runOptions: RunOptions<TSchema>;
+  runOptions: RuntimeRunOptions;
 }
 
 export interface RuncellRuntime {
-  run<TSchema extends AgentSchema>(
-    input: RuntimeRunInput<TSchema>,
-  ): Promise<RunResult<InferSchemaOutput<TSchema>>>;
+  run(input: RuntimeRunInput): Promise<RunResult<unknown>>;
 }
 
 interface SandboxContext {
@@ -75,23 +75,25 @@ export const defaultRuntime: RuncellRuntime = {
   },
 };
 
-async function runWithHarness<TSchema extends AgentSchema>({
+async function runWithHarness({
   agentOptions,
   config,
   runOptions,
-}: RuntimeRunInput<TSchema>): Promise<RunResult<InferSchemaOutput<TSchema>>> {
+}: RuntimeRunInput): Promise<RunResult<unknown>> {
   const files = normalizeFiles(runOptions.files ?? []);
   const changedFiles = new Map<string, ChangedFile>();
   let text = '';
+  let finishReason = 'stop';
   let sandboxContext: SandboxContext | undefined;
   let submitted: unknown;
 
+  const schema = runOptions.schema;
   const threadInternals = getThreadInternals(runOptions.thread);
   let succeeded = false;
 
   const tools = createTools({
     tools: agentOptions.tools,
-    schema: runOptions.schema,
+    schema,
     onSubmit: value => {
       submitted = value;
     },
@@ -127,7 +129,9 @@ async function runWithHarness<TSchema extends AgentSchema>({
     instructions: joinSections(
       agentOptions.instructions,
       runOptions.instructions,
-      'When the task is complete, call submitResult with the structured result.',
+      schema
+        ? 'When the task is complete, call submitResult with the structured result.'
+        : undefined,
     ),
     tools,
     onSandboxSession: async ({ session, sessionWorkDir, abortSignal }) => {
@@ -160,7 +164,8 @@ async function runWithHarness<TSchema extends AgentSchema>({
   });
 
   try {
-    for (let attempt = 0; attempt <= config.maxRepairs; attempt += 1) {
+    const maxAttempts = schema ? config.maxRepairs : 0;
+    for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
       if (attempt > 0) {
         agentOptions.events?.onRepair?.({
           attempt,
@@ -188,28 +193,40 @@ async function runWithHarness<TSchema extends AgentSchema>({
           appendText(delta) {
             text += delta;
           },
+          setFinishReason(reason) {
+            finishReason = reason;
+          },
         });
       }
 
+      // No schema: the turn's text is the output; return after one turn.
+      if (schema === undefined) {
+        recordThreadTurn(threadInternals, runOptions.prompt, text, undefined);
+        succeeded = true;
+        return {
+          data: undefined,
+          text,
+          files: [...changedFiles.values()],
+          finishReason,
+          sessionId: session.sessionId,
+        };
+      }
+
       if (submitted !== undefined) {
-        const parsed = await validateAgentSchema(runOptions.schema, submitted);
+        const parsed = await validateAgentSchema(schema, submitted);
         if (parsed.success) {
-          if (threadInternals) {
-            appendThreadMessage(threadInternals, {
-              role: 'user',
-              content: runOptions.prompt,
-            });
-            appendThreadMessage(threadInternals, {
-              role: 'agent',
-              content: text,
-              data: parsed.data,
-            });
-          }
+          recordThreadTurn(
+            threadInternals,
+            runOptions.prompt,
+            text,
+            parsed.data,
+          );
           succeeded = true;
           return {
             data: parsed.data,
             text,
             files: [...changedFiles.values()],
+            finishReason,
             sessionId: session.sessionId,
           };
         }
@@ -383,7 +400,7 @@ export function resolveRunSandbox({
   runOptions,
 }: {
   config: ResolvedAgentConfig;
-  runOptions: RunOptions<AgentSchema>;
+  runOptions: RuntimeRunOptions;
 }): {
   provider: SandboxProvider;
   sessionId: string | undefined;
@@ -409,13 +426,26 @@ export function resolveRunSandbox({
   };
 }
 
+function recordThreadTurn(
+  threadInternals: ReturnType<typeof getThreadInternals>,
+  prompt: string,
+  text: string,
+  data: unknown,
+): void {
+  if (!threadInternals) {
+    return;
+  }
+  appendThreadMessage(threadInternals, { role: 'user', content: prompt });
+  appendThreadMessage(threadInternals, { role: 'agent', content: text, data });
+}
+
 function createTools({
   tools,
   schema,
   onSubmit,
 }: {
   tools: AgentOptions['tools'];
-  schema: AgentSchema;
+  schema: AgentSchema | undefined;
   onSubmit: (value: unknown) => void;
 }): ToolSet {
   const out: ToolSet = {};
@@ -424,14 +454,16 @@ function createTools({
     out[name] = createHostTool(definition);
   }
 
-  out['submitResult'] = tool({
-    description: 'Submit the final structured result for this run.',
-    inputSchema: toToolInputSchema(schema),
-    execute(input) {
-      onSubmit(input);
-      return { ok: true };
-    },
-  });
+  if (schema) {
+    out['submitResult'] = tool({
+      description: 'Submit the final structured result for this run.',
+      inputSchema: toToolInputSchema(schema),
+      execute(input) {
+        onSubmit(input);
+        return { ok: true };
+      },
+    });
+  }
 
   return out;
 }
@@ -562,6 +594,7 @@ async function handleStreamPart({
   abortSignal,
   sessionId,
   appendText,
+  setFinishReason,
 }: {
   part: { type: string; [key: string]: unknown };
   events: AgentOptions['events'];
@@ -570,6 +603,7 @@ async function handleStreamPart({
   abortSignal?: AbortSignal;
   sessionId: string;
   appendText: (delta: string) => void;
+  setFinishReason: (reason: string) => void;
 }): Promise<void> {
   switch (part.type) {
     case 'text-delta': {
@@ -613,15 +647,15 @@ async function handleStreamPart({
       return;
     }
 
-    case 'finish':
-      events?.onFinish?.({
-        sessionId,
-        finishReason:
-          typeof part['finishReason'] === 'string'
-            ? part['finishReason']
-            : 'unknown',
-      });
+    case 'finish': {
+      const reason =
+        typeof part['finishReason'] === 'string'
+          ? part['finishReason']
+          : 'unknown';
+      setFinishReason(reason);
+      events?.onFinish?.({ sessionId, finishReason: reason });
       return;
+    }
 
     case 'error':
       events?.onError?.(part['error']);

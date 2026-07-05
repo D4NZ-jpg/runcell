@@ -65,6 +65,7 @@ export type {
   AgentSchema,
   InferSchemaOutput,
   RunOptions,
+  RunOptionsBase,
   RunResult,
   ToolDefinition,
   ChangedFile,

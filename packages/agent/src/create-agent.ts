@@ -5,7 +5,13 @@ import { defaultRuntime, type RuncellRuntime } from './runtime.js';
 import { resolveSandboxConfig, type SandboxConfig } from './sandbox.js';
 import { getSandboxInternals } from './sandbox-handle.js';
 import { getThreadInternals } from './thread.js';
-import type { Agent, AgentOptions, AgentSchema, RunOptions } from './types.js';
+import type {
+  Agent,
+  AgentOptions,
+  AgentSchema,
+  RunOptionsBase,
+  RunResult,
+} from './types.js';
 
 const RESERVED_TOOL_NAMES = new Set([
   'read',
@@ -81,8 +87,8 @@ export function resolveAgentConfig(
 /**
  * Validate the options for a single run. Throws before any work starts.
  */
-export function validateRunOptions<TSchema extends AgentSchema>(
-  options: RunOptions<TSchema>,
+export function validateRunOptions(
+  options: RunOptionsBase & { schema?: AgentSchema },
 ): void {
   if (
     typeof options.prompt !== 'string' ||
@@ -90,9 +96,9 @@ export function validateRunOptions<TSchema extends AgentSchema>(
   ) {
     throw new InvalidOptionError('run requires a non-empty "prompt".');
   }
-  if (!isAgentSchema(options.schema)) {
+  if (options.schema !== undefined && !isAgentSchema(options.schema)) {
     throw new InvalidOptionError(
-      'run requires a Standard Schema-compatible "schema".',
+      'run "schema" must be Standard Schema-compatible.',
     );
   }
   if (options.files !== undefined) {
@@ -144,12 +150,13 @@ export function createAgent(
   const config = resolveAgentConfig(options, { nodeEnv });
   const runtime = context.runtime ?? defaultRuntime;
 
-  return {
-    run(runOptions) {
-      return Promise.resolve(runOptions).then(opts => {
-        validateRunOptions(opts);
-        return runtime.run({ agentOptions: options, config, runOptions: opts });
-      });
-    },
-  };
+  const run = (
+    runOptions: RunOptionsBase & { schema?: AgentSchema },
+  ): Promise<RunResult<unknown>> =>
+    Promise.resolve(runOptions).then(opts => {
+      validateRunOptions(opts);
+      return runtime.run({ agentOptions: options, config, runOptions: opts });
+    });
+
+  return { run } as Agent;
 }

@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { createAgent, resolveAgentConfig } from './create-agent.js';
 import { InvalidOptionError } from './errors.js';
 import type { RuncellRuntime, RuntimeRunInput } from './runtime.js';
-import type { AgentSchema, InferSchemaOutput } from './types.js';
 
 describe('resolveAgentConfig', () => {
   it('resolves a minimal config with defaults', () => {
@@ -170,16 +169,17 @@ describe('createAgent', () => {
 
 function createRuntimeMock(
   result: { data: unknown } = { data: {} },
-): RuncellRuntime & { calls: RuntimeRunInput<AgentSchema>[] } {
-  const calls: RuntimeRunInput<AgentSchema>[] = [];
+): RuncellRuntime & { calls: RuntimeRunInput[] } {
+  const calls: RuntimeRunInput[] = [];
   return {
     calls,
-    run<TSchema extends AgentSchema>(input: RuntimeRunInput<TSchema>) {
+    run(input: RuntimeRunInput) {
       calls.push(input);
       return Promise.resolve({
-        data: result.data as InferSchemaOutput<TSchema>,
+        data: result.data,
         text: '',
         files: [],
+        finishReason: 'stop',
         sessionId: input.runOptions.sessionId ?? 'test-session',
       });
     },

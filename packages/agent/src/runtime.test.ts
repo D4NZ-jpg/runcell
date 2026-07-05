@@ -54,6 +54,7 @@ describe('defaultRuntime', () => {
       data: { ok: true },
       text: 'done',
       files: [],
+      finishReason: 'stop',
       sessionId: 'test-session',
     });
     expect(state.sandboxSettings).toEqual([undefined]);
@@ -340,6 +341,37 @@ describe('defaultRuntime', () => {
     expect(lookupInputs).toEqual([{ query: 'abc' }]);
   });
 
+  it('runs without a schema: no submitResult, text is the output', async () => {
+    const state = installRuntimeMocks([
+      () => [
+        { type: 'text-delta', text: 'hello world' },
+        { type: 'finish', finishReason: 'stop' },
+      ],
+    ]);
+    const runtime = await loadRuntime();
+
+    const result = await runtime.run({
+      agentOptions: { model: 'anthropic/test' },
+      config: {
+        model: 'anthropic/test',
+        instructions: undefined,
+        credentials: { mode: 'apiKeys', keys: { anthropic: 'test-key' } },
+        toolNames: [],
+        sandbox: { type: 'virtual' },
+        maxRepairs: 1,
+      },
+      runOptions: { prompt: 'say hi' },
+    });
+
+    expect(result.data).toBeUndefined();
+    expect(result.text).toBe('hello world');
+    expect(result.finishReason).toBe('stop');
+    // No hidden submitResult tool is registered without a schema.
+    expect(state.instances[0]?.settings.tools['submitResult']).toBeUndefined();
+    // A single turn only.
+    expect(state.instances[0]?.streamCalls).toHaveLength(1);
+  });
+
   it('replays prior thread turns and appends new ones', async () => {
     const { createThread, getThreadInternals } = await import('./thread.js');
     const thread = createThread({ id: 'chat' });
@@ -443,7 +475,7 @@ function createRuntimeInput<TSchema extends AgentSchema>(
     config?: Partial<ResolvedAgentConfig>;
     runOptions?: Partial<RunOptions<TSchema>>;
   } = {},
-): RuntimeRunInput<TSchema> {
+): RuntimeRunInput {
   const agentOptions: AgentOptions = {
     model: 'anthropic/test',
     ...overrides.agentOptions,

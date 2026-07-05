@@ -88,13 +88,12 @@ export interface AgentOptions {
 }
 
 /**
- * Options for a single {@link Agent.run} call.
+ * Options shared by every {@link Agent.run} call. Without a `schema` (see
+ * {@link RunOptions}) the run is a plain turn whose output is the model's text.
  */
-export interface RunOptions<TSchema extends AgentSchema> {
+export interface RunOptionsBase {
   /** The task prompt. */
   prompt: string;
-  /** Schema the agent must satisfy via the hidden `submitResult` tool. */
-  schema: TSchema;
   /** Files to seed into the workspace before the run starts. */
   files?: FileInput[];
   /**
@@ -118,15 +117,32 @@ export interface RunOptions<TSchema extends AgentSchema> {
 }
 
 /**
+ * Options for a run with a structured output contract. The agent must satisfy
+ * `schema` via the hidden `submitResult` tool, and {@link RunResult.data} is the
+ * validated payload.
+ */
+export interface RunOptions<
+  TSchema extends AgentSchema,
+> extends RunOptionsBase {
+  /** Schema the agent must satisfy via the hidden `submitResult` tool. */
+  schema: TSchema;
+}
+
+/**
  * The result of an {@link Agent.run} call.
  */
 export interface RunResult<TData> {
-  /** The validated structured output (authoritative). */
+  /**
+   * The validated structured output when a `schema` was given, otherwise
+   * `undefined` (the turn's output is {@link RunResult.text}).
+   */
   data: TData;
-  /** The model's free-form prose (non-authoritative). */
+  /** The model's free-form prose. Authoritative when there is no `schema`. */
   text: string;
   /** Files created or modified during the run. */
   files: ChangedFile[];
+  /** Why the final turn stopped, e.g. `"stop"`. */
+  finishReason: string;
   /** The session id (for resuming). */
   sessionId: string;
 }
@@ -135,7 +151,10 @@ export interface RunResult<TData> {
  * An agent bound to a model, credentials, tools and event callbacks.
  */
 export interface Agent {
+  /** Run with a structured output contract; `result.data` is validated. */
   run<TSchema extends AgentSchema>(
     options: RunOptions<TSchema>,
   ): Promise<RunResult<InferSchemaOutput<TSchema>>>;
+  /** Run a plain turn; `result.text` is the output and `result.data` is undefined. */
+  run(options: RunOptionsBase): Promise<RunResult<undefined>>;
 }
