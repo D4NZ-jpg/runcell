@@ -38,6 +38,14 @@ export function createPiModelResolver(
     const models = loadModels();
     const matches = (m: PiModel) =>
       m.id === effectiveId || m.name === effectiveId;
+    // A `provider/id` (or `provider/name`) form disambiguates ids that Pi's
+    // catalog lists under multiple providers (e.g. `gpt-5.5` exists under
+    // `openai-codex`, `azure-openai-responses`, and others). Without this a
+    // bare id resolves to whichever provider happens to come first, which may
+    // be one the caller has no credentials for.
+    const matchesQualified = (m: PiModel) =>
+      `${m.provider}/${m.id}` === effectiveId ||
+      `${m.provider}/${m.name}` === effectiveId;
 
     // When gateway creds are present, prefer the gateway-routed entry for the
     // given id. Pi's catalog lists the same model id under multiple providers
@@ -47,6 +55,7 @@ export function createPiModelResolver(
     return (
       (useGateway &&
         models.find(m => m.provider === 'vercel-ai-gateway' && matches(m))) ||
+      models.find(matchesQualified) ||
       models.find(matches)
     );
   };

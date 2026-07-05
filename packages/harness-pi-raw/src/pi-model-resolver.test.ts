@@ -46,6 +46,25 @@ describe('createPiModelResolver', () => {
     expect(resolve('My Model')).toEqual(sampleModel);
   });
 
+  it('disambiguates by provider-qualified id when an id is shared', () => {
+    const azure: PiModel = {
+      ...sampleModel,
+      id: 'gpt-5.5',
+      name: 'GPT-5.5',
+      provider: 'azure-openai-responses',
+    };
+    const codex: PiModel = {
+      ...sampleModel,
+      id: 'gpt-5.5',
+      name: 'GPT-5.5',
+      provider: 'openai-codex',
+    };
+    const resolve = createPiModelResolver(makeRegistry([azure, codex]), {});
+    expect(resolve('openai-codex/gpt-5.5')).toEqual(codex);
+    // A bare id still resolves to the first catalog entry.
+    expect(resolve('gpt-5.5')).toEqual(azure);
+  });
+
   it('looks up the gateway default when no id and AI_GATEWAY_API_KEY is set', () => {
     const resolve = createPiModelResolver(makeRegistry([defaultGatewayModel]), {
       AI_GATEWAY_API_KEY: 'sk-test',
