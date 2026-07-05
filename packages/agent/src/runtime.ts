@@ -58,6 +58,8 @@ export interface RuntimeRunInput {
   agentOptions: AgentOptions;
   config: ResolvedAgentConfig;
   runOptions: RuntimeRunOptions;
+  /** Optional sink for streamed text deltas (used by `agent.stream`). */
+  onTextDelta?: (delta: string) => void;
 }
 
 export interface RuncellRuntime {
@@ -79,6 +81,7 @@ async function runWithHarness({
   agentOptions,
   config,
   runOptions,
+  onTextDelta,
 }: RuntimeRunInput): Promise<RunResult<unknown>> {
   const files = normalizeFiles(runOptions.files ?? []);
   const changedFiles = new Map<string, ChangedFile>();
@@ -192,6 +195,7 @@ async function runWithHarness({
           sessionId: session.sessionId,
           appendText(delta) {
             text += delta;
+            onTextDelta?.(delta);
           },
           setFinishReason(reason) {
             finishReason = reason;

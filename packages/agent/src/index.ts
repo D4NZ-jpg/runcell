@@ -67,6 +67,7 @@ export type {
   RunOptions,
   RunOptionsBase,
   RunResult,
+  StreamRun,
   ToolDefinition,
   ChangedFile,
   ToolCallEvent,

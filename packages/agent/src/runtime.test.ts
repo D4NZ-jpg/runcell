@@ -341,6 +341,37 @@ describe('defaultRuntime', () => {
     expect(lookupInputs).toEqual([{ query: 'abc' }]);
   });
 
+  it('streams text deltas and resolves the final result', async () => {
+    installRuntimeMocks([
+      () => [
+        { type: 'text-delta', text: 'hel' },
+        { type: 'text-delta', text: 'lo' },
+        { type: 'finish', finishReason: 'stop' },
+      ],
+    ]);
+    const { createAgent } = await import('./create-agent.js');
+    const runtime = await loadRuntime();
+    const agent = createAgent(
+      { model: 'anthropic/test' },
+      {
+        nodeEnv: 'development',
+        runtime,
+        // apiKeys so the mocked Pi settings path is exercised
+      },
+    );
+
+    const { textStream, result } = agent.stream({ prompt: 'say hi' });
+    const deltas: string[] = [];
+    for await (const delta of textStream) {
+      deltas.push(delta);
+    }
+    const final = await result;
+
+    expect(deltas).toEqual(['hel', 'lo']);
+    expect(final.text).toBe('hello');
+    expect(final.data).toBeUndefined();
+  });
+
   it('runs without a schema: no submitResult, text is the output', async () => {
     const state = installRuntimeMocks([
       () => [

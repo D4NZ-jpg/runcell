@@ -148,6 +148,19 @@ export interface RunResult<TData> {
 }
 
 /**
+ * A streaming run. Iterate {@link StreamRun.textStream} to receive the model's
+ * text as it is generated, and await {@link StreamRun.result} for the final
+ * outcome. Tool calls, file changes, and other events are delivered through the
+ * agent's `events` callbacks.
+ */
+export interface StreamRun<TData> {
+  /** The model's text output, streamed delta by delta. */
+  textStream: AsyncIterable<string>;
+  /** Resolves with the final result once the run completes. Always await this. */
+  result: Promise<RunResult<TData>>;
+}
+
+/**
  * An agent bound to a model, credentials, tools and event callbacks.
  */
 export interface Agent {
@@ -157,4 +170,10 @@ export interface Agent {
   ): Promise<RunResult<InferSchemaOutput<TSchema>>>;
   /** Run a plain turn; `result.text` is the output and `result.data` is undefined. */
   run(options: RunOptionsBase): Promise<RunResult<undefined>>;
+  /** Stream a run with a structured output contract. */
+  stream<TSchema extends AgentSchema>(
+    options: RunOptions<TSchema>,
+  ): StreamRun<InferSchemaOutput<TSchema>>;
+  /** Stream a plain turn; `result.data` is undefined. */
+  stream(options: RunOptionsBase): StreamRun<undefined>;
 }
