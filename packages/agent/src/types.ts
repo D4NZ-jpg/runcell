@@ -3,6 +3,7 @@ import type { Credentials } from './credentials.js';
 import type { FileInput } from './files.js';
 import type { SandboxOption } from './sandbox.js';
 import type { Sandbox } from './sandbox-handle.js';
+import type { Thread } from './thread.js';
 
 /**
  * A host-side tool the agent can call. The result is returned to the model.
@@ -103,6 +104,11 @@ export interface RunOptions<TSchema extends AgentSchema> {
    * agent-level sandbox.
    */
   sandbox?: Sandbox | SandboxOption;
+  /**
+   * Conversation to continue. When provided, prior turns are replayed as
+   * context and the new user + agent turns are appended to it in place.
+   */
+  thread?: Thread;
   /** Per-run instructions appended to the agent-level instructions. */
   instructions?: string;
   /** Resume a previous session by id. */

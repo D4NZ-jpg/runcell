@@ -340,6 +340,45 @@ describe('defaultRuntime', () => {
     expect(lookupInputs).toEqual([{ query: 'abc' }]);
   });
 
+  it('replays prior thread turns and appends new ones', async () => {
+    const { createThread, getThreadInternals } = await import('./thread.js');
+    const thread = createThread({ id: 'chat' });
+    const state = installRuntimeMocks([
+      agent => {
+        agent.submit({ ok: true });
+        return [{ type: 'text-delta', text: 'one' }];
+      },
+      agent => {
+        agent.submit({ ok: true });
+        return [{ type: 'text-delta', text: 'two' }];
+      },
+    ]);
+    const runtime = await loadRuntime();
+    const schema = z.object({ ok: z.boolean() });
+
+    await runtime.run(
+      createRuntimeInput(schema, { runOptions: { prompt: 'first', thread } }),
+    );
+    await runtime.run(
+      createRuntimeInput(schema, { runOptions: { prompt: 'second', thread } }),
+    );
+
+    // First run has no prior context.
+    expect(state.instances[0]?.streamCalls[0]?.prompt).toBe('first');
+    // Second run replays the first turn, then the new prompt.
+    const secondPrompt = state.instances[1]?.streamCalls[0]?.prompt ?? '';
+    expect(secondPrompt).toContain('Conversation so far:');
+    expect(secondPrompt).toContain('User: first');
+    expect(secondPrompt).toContain('Assistant: one');
+    expect(secondPrompt.endsWith('second')).toBe(true);
+
+    expect(
+      getThreadInternals(thread)?.messages.map(
+        message => `${message.role}:${message.content}`,
+      ),
+    ).toEqual(['user:first', 'agent:one', 'user:second', 'agent:two']);
+  });
+
   it('repairs missing or invalid structured results', async () => {
     const repairs: RepairEvent[] = [];
     const state = installRuntimeMocks([

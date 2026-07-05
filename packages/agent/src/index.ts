@@ -32,6 +32,14 @@ export type {
   ExecResult,
   VirtualSandboxOptions,
 } from './sandbox-handle.js';
+
+export { createThread, threadFromJSON } from './thread.js';
+export type {
+  Thread,
+  ThreadState,
+  ThreadMessage,
+  ThreadProviderState,
+} from './thread.js';
 export type {
   SandboxOption,
   SandboxConfig,

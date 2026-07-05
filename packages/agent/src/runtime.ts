@@ -31,6 +31,11 @@ import {
   createReusedSandboxProvider,
   getSandboxInternals,
 } from './sandbox-handle.js';
+import {
+  appendThreadMessage,
+  getThreadInternals,
+  renderThreadContext,
+} from './thread.js';
 import type {
   AgentOptions,
   AgentSchema,
@@ -74,6 +79,11 @@ async function runWithHarness<TSchema extends AgentSchema>({
   let text = '';
   let sandboxContext: SandboxContext | undefined;
   let submitted: unknown;
+
+  const threadInternals = getThreadInternals(runOptions.thread);
+  const threadContext = threadInternals
+    ? renderThreadContext(threadInternals.messages)
+    : undefined;
 
   const tools = createTools({
     tools: agentOptions.tools,
@@ -126,7 +136,7 @@ async function runWithHarness<TSchema extends AgentSchema>({
         session,
         prompt:
           attempt === 0
-            ? runOptions.prompt
+            ? joinSections(threadContext, runOptions.prompt)
             : 'Call submitResult now with a valid structured result for the previous task.',
         ...(runOptions.signal ? { abortSignal: runOptions.signal } : {}),
       });
@@ -148,6 +158,17 @@ async function runWithHarness<TSchema extends AgentSchema>({
       if (submitted !== undefined) {
         const parsed = await validateAgentSchema(runOptions.schema, submitted);
         if (parsed.success) {
+          if (threadInternals) {
+            appendThreadMessage(threadInternals, {
+              role: 'user',
+              content: runOptions.prompt,
+            });
+            appendThreadMessage(threadInternals, {
+              role: 'agent',
+              content: text,
+              data: parsed.data,
+            });
+          }
           return {
             data: parsed.data,
             text,
