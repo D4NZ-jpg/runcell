@@ -2,6 +2,7 @@ import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { Credentials } from './credentials.js';
 import type { FileInput } from './files.js';
 import type { SandboxOption } from './sandbox.js';
+import type { Sandbox } from './sandbox-handle.js';
 
 /**
  * A host-side tool the agent can call. The result is returned to the model.
@@ -95,6 +96,13 @@ export interface RunOptions<TSchema extends AgentSchema> {
   schema: TSchema;
   /** Files to seed into the workspace before the run starts. */
   files?: FileInput[];
+  /**
+   * Where this run executes. Pass a live {@link Sandbox} handle to reuse an
+   * existing workspace you own (runcell will not destroy it), or a sandbox
+   * option for an ephemeral, runcell-managed sandbox. Defaults to the
+   * agent-level sandbox.
+   */
+  sandbox?: Sandbox | SandboxOption;
   /** Per-run instructions appended to the agent-level instructions. */
   instructions?: string;
   /** Resume a previous session by id. */

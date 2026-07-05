@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { createAgent, type ChangedFile, type Credentials } from './index.js';
+import {
+  createAgent,
+  createVirtualSandbox,
+  type ChangedFile,
+  type Credentials,
+} from './index.js';
 
 const live = process.env['RUNCELL_LIVE'] === '1' ? it : it.skip;
 const timeoutMs = Number(process.env['RUNCELL_LIVE_TIMEOUT_MS'] ?? 120_000);
@@ -45,6 +50,47 @@ describe('live runtime smoke', () => {
         'hello from sandbox',
       );
       expect(fileChanges.some(file => file.path === 'output.txt')).toBe(true);
+    },
+    timeoutMs,
+  );
+
+  live(
+    'reuses a caller-owned sandbox across runs without destroying it',
+    async () => {
+      const agent = createAgent({
+        model:
+          process.env['RUNCELL_LIVE_MODEL'] ?? 'anthropic/claude-sonnet-4-5',
+        credentials: credentialsFromEnv(),
+      });
+      const sandbox = await createVirtualSandbox();
+      try {
+        const first = await agent.run({
+          prompt:
+            'Create a file named memo.txt containing exactly "runcell-reuse" with no extra newline, then call submitResult with done true.',
+          schema: z.object({ done: z.literal(true) }),
+          sandbox,
+        });
+        expect(first.data.done).toBe(true);
+
+        // The caller-owned handle sees exactly what the agent wrote.
+        expect((await sandbox.readTextFile('memo.txt'))?.trim()).toBe(
+          'runcell-reuse',
+        );
+
+        // A second run on the same handle sees the first run's files.
+        const second = await agent.run({
+          prompt:
+            'Read memo.txt and call submitResult with contents set to its exact trimmed text.',
+          schema: z.object({ contents: z.string() }),
+          sandbox,
+        });
+        expect(second.data.contents.trim()).toBe('runcell-reuse');
+
+        // Still alive after both runs: runcell never destroyed it.
+        expect((await sandbox.exec('echo ok')).stdout.trim()).toBe('ok');
+      } finally {
+        await sandbox.destroy();
+      }
     },
     timeoutMs,
   );

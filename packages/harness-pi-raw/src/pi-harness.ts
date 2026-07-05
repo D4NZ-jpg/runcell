@@ -91,12 +91,19 @@ const PI_BUILTIN_TOOLS = {
   } as HarnessV1BuiltinTool,
 } as const satisfies Record<string, HarnessV1BuiltinTool<any, any>>;
 
+/**
+ * Harness identifier. The framework composes each session's working directory
+ * as `<defaultWorkingDirectory>/<harnessId>-<sessionId>`, so consumers that
+ * need to predict that path share this constant.
+ */
+export const HARNESS_ID = 'pi';
+
 export function createPi(
   settings: PiHarnessSettings = {},
 ): HarnessV1<typeof PI_BUILTIN_TOOLS> {
   return {
     specificationVersion: 'harness-v1',
-    harnessId: 'pi',
+    harnessId: HARNESS_ID,
     builtinTools: PI_BUILTIN_TOOLS,
     supportsBuiltinToolApprovals: true,
     lifecycleStateSchema: piResumeStateSchema,

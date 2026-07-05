@@ -3,6 +3,7 @@ import { InvalidOptionError } from './errors.js';
 import { normalizeFiles } from './files.js';
 import { defaultRuntime, type RuncellRuntime } from './runtime.js';
 import { resolveSandboxConfig, type SandboxConfig } from './sandbox.js';
+import { getSandboxInternals } from './sandbox-handle.js';
 import type { Agent, AgentOptions, AgentSchema, RunOptions } from './types.js';
 
 const RESERVED_TOOL_NAMES = new Set([
@@ -95,6 +96,13 @@ export function validateRunOptions<TSchema extends AgentSchema>(
   }
   if (options.files !== undefined) {
     normalizeFiles(options.files);
+  }
+  // A live sandbox handle is reused as-is; a sandbox option is validated eagerly.
+  if (
+    options.sandbox !== undefined &&
+    getSandboxInternals(options.sandbox) === undefined
+  ) {
+    resolveSandboxConfig(options.sandbox);
   }
 }
 

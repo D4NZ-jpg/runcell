@@ -6,7 +6,7 @@ import { createPi } from './pi-harness';
  */
 export const pi = createPi();
 
-export { createPi } from './pi-harness';
+export { createPi, HARNESS_ID } from './pi-harness';
 export type { PiHarnessSettings } from './pi-harness';
 export type { PiAuthOptions } from './pi-auth';
 export type { PiResourceLoaderOptions, PiSessionSettings } from './pi-session';

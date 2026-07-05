@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { HARNESS_ID } from '@local/harness-pi-raw';
 import {
+  createReusedSandboxProvider,
   createVirtualSandbox,
+  getSandboxInternals,
   restoreSandbox,
   type Sandbox,
 } from './sandbox-handle.js';
@@ -102,11 +105,61 @@ describe('createVirtualSandbox', () => {
   });
 });
 
+describe('agent reuse', () => {
+  it('places the workspace where the harness composes the session dir', async () => {
+    await withSandbox(async sandbox => {
+      const internals = getSandboxInternals(sandbox);
+      if (!internals) throw new Error('expected sandbox internals');
+      const pwd = await sandbox.exec('pwd');
+      // sessionWorkDir = `${defaultWorkingDirectory}/${harnessId}-${sessionId}`
+      expect(
+        pwd.stdout.trim().endsWith(`/${HARNESS_ID}-${internals.sessionToken}`),
+      ).toBe(true);
+    });
+  });
+
+  it('reuses the session without stopping or destroying it', async () => {
+    await withSandbox(async sandbox => {
+      const internals = getSandboxInternals(sandbox);
+      if (!internals) throw new Error('expected sandbox internals');
+      const provider = createReusedSandboxProvider(internals);
+      const guarded = await provider.createSession();
+
+      // The guarded session shares the underlying workspace...
+      await guarded.writeTextFile({
+        path: `${guarded.defaultWorkingDirectory}/shared.txt`,
+        content: 'from agent',
+      });
+      // ...and cleanup calls are no-ops, so the caller keeps ownership.
+      await guarded.stop();
+      await guarded.destroy?.();
+
+      const alive = await sandbox.exec('echo alive');
+      expect(alive.exitCode).toBe(0);
+      expect(alive.stdout.trim()).toBe('alive');
+      expect(
+        await sandbox.readTextFile(
+          `${guarded.defaultWorkingDirectory}/shared.txt`,
+        ),
+      ).toBe('from agent');
+    });
+  });
+
+  it('does not expose reuse state for foreign objects', () => {
+    expect(getSandboxInternals(undefined)).toBeUndefined();
+    expect(getSandboxInternals({ id: 'x' })).toBeUndefined();
+    expect(getSandboxInternals('virtual')).toBeUndefined();
+  });
+});
+
 describe('snapshot and restoreSandbox', () => {
   it('captures workspace files as a serializable snapshot', async () => {
     await withSandbox(async sandbox => {
       await sandbox.writeFile('a.txt', 'alpha');
       await sandbox.writeFile('nested/b.bin', new Uint8Array([1, 2, 3]));
+
+      // Internal agent journal files must never leak into snapshots.
+      await sandbox.writeFile('.pi-sessions/journal.jsonl', 'internal');
 
       const snapshot = await sandbox.snapshot();
       expect(snapshot.version).toBe(1);

@@ -22,7 +22,15 @@ import type {
 import { IncompleteResultError } from './errors.js';
 import { normalizeFiles, type NormalizedFile } from './files.js';
 import { assertSafeWorkspacePath } from './paths.js';
-import { createSandboxProvider } from './sandbox.js';
+import {
+  createSandboxProvider,
+  resolveSandboxConfig,
+  type SandboxProvider,
+} from './sandbox.js';
+import {
+  createReusedSandboxProvider,
+  getSandboxInternals,
+} from './sandbox-handle.js';
 import type {
   AgentOptions,
   AgentSchema,
@@ -75,10 +83,13 @@ async function runWithHarness<TSchema extends AgentSchema>({
     },
   });
 
+  const { provider: sandboxProvider, sessionId: pinnedSessionId } =
+    resolveRunSandbox({ config, runOptions });
+
   const harnessAgent = new HarnessAgent({
     id: 'runcell',
     harness: createPi(createPiSettings(config.credentials, config.model)),
-    sandbox: createSandboxProvider(config.sandbox),
+    sandbox: sandboxProvider,
     permissionMode: 'allow-all',
     instructions: joinSections(
       agentOptions.instructions,
@@ -98,7 +109,7 @@ async function runWithHarness<TSchema extends AgentSchema>({
   });
 
   const session = await harnessAgent.createSession({
-    ...(runOptions.sessionId ? { sessionId: runOptions.sessionId } : {}),
+    ...(pinnedSessionId ? { sessionId: pinnedSessionId } : {}),
     ...(runOptions.signal ? { abortSignal: runOptions.signal } : {}),
   });
 
@@ -157,6 +168,37 @@ async function runWithHarness<TSchema extends AgentSchema>({
   } finally {
     await session.destroy();
   }
+}
+
+/**
+ * Choose the sandbox provider and session id for a run. A live sandbox handle
+ * is reused (its lifecycle stays with the caller) and pins a stable session id
+ * so repeated runs share the same workspace; otherwise a provider is created
+ * from the per-run or agent-level sandbox option.
+ */
+export function resolveRunSandbox({
+  config,
+  runOptions,
+}: {
+  config: ResolvedAgentConfig;
+  runOptions: RunOptions<AgentSchema>;
+}): { provider: SandboxProvider; sessionId: string | undefined } {
+  const reused = getSandboxInternals(runOptions.sandbox);
+  if (reused) {
+    return {
+      provider: createReusedSandboxProvider(reused),
+      sessionId: reused.sessionToken,
+    };
+  }
+
+  const sandboxConfig =
+    runOptions.sandbox !== undefined
+      ? resolveSandboxConfig(runOptions.sandbox)
+      : config.sandbox;
+  return {
+    provider: createSandboxProvider(sandboxConfig),
+    sessionId: runOptions.sessionId,
+  };
 }
 
 function createTools({
