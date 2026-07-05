@@ -38,7 +38,7 @@ export type {
   Thread,
   ThreadState,
   ThreadMessage,
-  ThreadProviderState,
+  ThreadContinuation,
 } from './thread.js';
 export type {
   SandboxOption,

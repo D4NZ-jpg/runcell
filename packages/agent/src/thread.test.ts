@@ -42,16 +42,19 @@ describe('serialization', () => {
     expect(getThreadInternals(restored)).toBeDefined();
   });
 
-  it('preserves a reserved opaque providerState', () => {
+  it('preserves an opaque continuation', () => {
+    const continuation = {
+      engine: 'pi',
+      resume: { sessionFileName: 'x.jsonl' },
+      journalGz: 'AAAA',
+    };
     const restored = threadFromJSON({
       version: 1,
       id: 'chat-3',
       messages: [],
-      providerState: { sessionFileName: 'x.jsonl' },
+      continuation,
     });
-    expect(restored.toJSON().providerState).toEqual({
-      sessionFileName: 'x.jsonl',
-    });
+    expect(restored.toJSON().continuation).toEqual(continuation);
   });
 });
 

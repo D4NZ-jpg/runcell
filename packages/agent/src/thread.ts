@@ -16,11 +16,19 @@ export interface ThreadMessage {
 }
 
 /**
- * Opaque, engine-specific continuation token. Reserved for lossless resume; the
- * neutral message log is always the source of truth, and this is only ever used
- * as an optimization when it is present and still valid.
+ * Opaque, self-contained continuation state for lossless resume. Carries the
+ * (compressed) engine journal so a thread can resume its exact conversation in
+ * any sandbox, independent of where it originally ran. Never inspect this;
+ * render {@link ThreadMessage}s instead.
  */
-export type ThreadProviderState = Record<string, unknown>;
+export interface ThreadContinuation {
+  /** Engine that produced the journal. */
+  engine: string;
+  /** Engine-specific resume descriptor, passed back verbatim on resume. */
+  resume: unknown;
+  /** Base64 of the gzipped engine journal. */
+  journalGz: string;
+}
 
 /**
  * The serializable form of a {@link Thread}. Persist this wherever you like and
@@ -30,7 +38,7 @@ export interface ThreadState {
   version: 1;
   id: string;
   messages: ThreadMessage[];
-  providerState?: ThreadProviderState;
+  continuation?: ThreadContinuation;
 }
 
 /**
@@ -50,7 +58,7 @@ export interface Thread {
 
 interface ThreadInternalState {
   messages: ThreadMessage[];
-  providerState: ThreadProviderState | undefined;
+  continuation: ThreadContinuation | undefined;
 }
 
 const internalsRegistry = new WeakMap<Thread, ThreadInternalState>();
@@ -77,8 +85,8 @@ class ThreadHandle implements Thread {
       version: 1,
       id: this.id,
       messages: this.state.messages.map(message => ({ ...message })),
-      ...(this.state.providerState !== undefined
-        ? { providerState: { ...this.state.providerState } }
+      ...(this.state.continuation !== undefined
+        ? { continuation: { ...this.state.continuation } }
         : {}),
     };
   }
@@ -86,7 +94,7 @@ class ThreadHandle implements Thread {
 
 /** Create a new, empty conversation thread. */
 export function createThread(options: { id?: string } = {}): Thread {
-  const state: ThreadInternalState = { messages: [], providerState: undefined };
+  const state: ThreadInternalState = { messages: [], continuation: undefined };
   const thread = new ThreadHandle(options.id ?? randomUUID(), state);
   internalsRegistry.set(thread, state);
   return thread;
@@ -96,10 +104,8 @@ export function createThread(options: { id?: string } = {}): Thread {
 export function threadFromJSON(state: ThreadState): Thread {
   const internal: ThreadInternalState = {
     messages: state.messages.map(message => ({ ...message })),
-    providerState:
-      state.providerState !== undefined
-        ? { ...state.providerState }
-        : undefined,
+    continuation:
+      state.continuation !== undefined ? { ...state.continuation } : undefined,
   };
   const thread = new ThreadHandle(state.id, internal);
   internalsRegistry.set(thread, internal);

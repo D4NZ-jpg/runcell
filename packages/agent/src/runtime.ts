@@ -2,6 +2,8 @@ import {
   HarnessAgent,
   type HarnessAgentResumeSessionState,
 } from '@ai-sdk/harness/agent';
+import type { HarnessV1NetworkSandboxSession } from '@ai-sdk/harness';
+import { gzipSync, gunzipSync } from 'node:zlib';
 import {
   jsonSchema,
   tool,
@@ -38,7 +40,7 @@ import {
   appendThreadMessage,
   getThreadInternals,
   renderThreadContext,
-  type ThreadProviderState,
+  type ThreadContinuation,
 } from './thread.js';
 import type {
   AgentOptions,
@@ -85,7 +87,7 @@ async function runWithHarness<TSchema extends AgentSchema>({
   let submitted: unknown;
 
   const threadInternals = getThreadInternals(runOptions.thread);
-  let ended = false;
+  let succeeded = false;
 
   const tools = createTools({
     tools: agentOptions.tools,
@@ -95,21 +97,27 @@ async function runWithHarness<TSchema extends AgentSchema>({
     },
   });
 
-  const { provider: sandboxProvider, sessionId: pinnedSessionId } =
-    resolveRunSandbox({ config, runOptions });
+  const {
+    provider: baseProvider,
+    sessionId: pinnedSessionId,
+    ownsSandbox,
+  } = resolveRunSandbox({ config, runOptions });
 
-  // Lossless resume is only possible when a caller-owned sandbox still holds the
-  // journal we persisted for this thread. Otherwise fall back to neutral replay.
-  const reusedSandbox = getSandboxInternals(runOptions.sandbox);
-  const resumeToken = readPiResumeToken(threadInternals?.providerState);
-  const resumeFrom =
-    reusedSandbox && resumeToken?.sandboxToken === reusedSandbox.sessionToken
-      ? resumeToken.resume
-      : undefined;
+  // A thread carries its own compressed journal, so it can resume the exact
+  // conversation in any sandbox. Without one, fall back to neutral replay.
+  const continuation = readPiContinuation(threadInternals?.continuation);
+  const resumeFrom = continuation?.resume;
   const threadContext =
-    threadInternals && resumeFrom === undefined
+    threadInternals && continuation === undefined
       ? renderThreadContext(threadInternals.messages)
       : undefined;
+
+  // Capture the network session so an owned sandbox can be disposed after the
+  // journal is flushed on detach.
+  let sandboxSession: HarnessV1NetworkSandboxSession | undefined;
+  const sandboxProvider = withSessionCapture(baseProvider, captured => {
+    sandboxSession = captured;
+  });
 
   const harnessAgent = new HarnessAgent({
     id: 'runcell',
@@ -124,6 +132,15 @@ async function runWithHarness<TSchema extends AgentSchema>({
     tools,
     onSandboxSession: async ({ session, sessionWorkDir, abortSignal }) => {
       sandboxContext = { session, workDir: sessionWorkDir };
+      // Re-materialize the journal before Pi starts so a fresh sandbox resumes.
+      if (continuation) {
+        await writeJournal({
+          session,
+          workDir: sessionWorkDir,
+          continuation,
+          abortSignal,
+        });
+      }
       await seedFiles({
         session,
         workDir: sessionWorkDir,
@@ -133,8 +150,11 @@ async function runWithHarness<TSchema extends AgentSchema>({
     },
   });
 
+  const sessionId = continuation
+    ? continuationSessionId(continuation)
+    : pinnedSessionId;
   const session = await harnessAgent.createSession({
-    ...(pinnedSessionId ? { sessionId: pinnedSessionId } : {}),
+    ...(sessionId ? { sessionId } : {}),
     ...(resumeFrom ? { resumeFrom } : {}),
     ...(runOptions.signal ? { abortSignal: runOptions.signal } : {}),
   });
@@ -184,17 +204,8 @@ async function runWithHarness<TSchema extends AgentSchema>({
               content: text,
               data: parsed.data,
             });
-            // Persist the journal into the caller-owned sandbox and record an
-            // opaque token so the next run can resume this exact conversation.
-            if (reusedSandbox) {
-              const resume = await session.stop();
-              ended = true;
-              threadInternals.providerState = createPiResumeToken(
-                reusedSandbox.sessionToken,
-                resume,
-              );
-            }
           }
+          succeeded = true;
           return {
             data: parsed.data,
             text,
@@ -213,47 +224,152 @@ async function runWithHarness<TSchema extends AgentSchema>({
     agentOptions.events?.onError?.(error);
     throw error;
   } finally {
-    if (!ended) {
-      await session.destroy();
+    try {
+      if (succeeded && threadInternals) {
+        // Flush Pi's journal into the sandbox (leaves it running), capture it
+        // into the thread, then dispose the sandbox only if we own it.
+        const resume = await session.detach();
+        const journalGz = await readJournal(sandboxContext, resume);
+        if (journalGz) {
+          threadInternals.continuation = { engine: 'pi', resume, journalGz };
+        }
+        if (ownsSandbox && sandboxSession) {
+          await disposeSandbox(sandboxSession);
+        }
+      } else {
+        await session.destroy();
+      }
+    } catch {
+      // Teardown is best-effort: a failed detach just means the next run
+      // falls back to neutral replay.
     }
   }
 }
 
-interface PiResumeToken {
-  kind: 'pi';
-  sandboxToken: string;
+interface PiContinuation {
+  engine: 'pi';
   resume: HarnessAgentResumeSessionState;
-}
-
-function createPiResumeToken(
-  sandboxToken: string,
-  resume: HarnessAgentResumeSessionState,
-): ThreadProviderState {
-  const token: PiResumeToken = { kind: 'pi', sandboxToken, resume };
-  return token as unknown as ThreadProviderState;
+  journalGz: string;
 }
 
 /**
- * Read a Pi resume token out of a thread's opaque provider state, or
- * `undefined` when absent or malformed. Exported for testing.
+ * Read a Pi continuation from a thread's opaque state, or `undefined` when
+ * absent or malformed. Exported for testing.
  */
-export function readPiResumeToken(
-  state: ThreadProviderState | undefined,
-): PiResumeToken | undefined {
-  if (state === undefined) {
-    return undefined;
-  }
-  const kind = (state as { kind?: unknown }).kind;
-  const sandboxToken = (state as { sandboxToken?: unknown }).sandboxToken;
-  const resume = (state as { resume?: unknown }).resume;
-  if (kind === 'pi' && typeof sandboxToken === 'string' && resume != null) {
+export function readPiContinuation(
+  continuation: ThreadContinuation | undefined,
+): PiContinuation | undefined {
+  if (
+    continuation?.engine === 'pi' &&
+    typeof continuation.journalGz === 'string' &&
+    continuation.resume != null
+  ) {
     return {
-      kind: 'pi',
-      sandboxToken,
-      resume: resume as HarnessAgentResumeSessionState,
+      engine: 'pi',
+      resume: continuation.resume as HarnessAgentResumeSessionState,
+      journalGz: continuation.journalGz,
     };
   }
   return undefined;
+}
+
+function continuationSessionId(
+  continuation: PiContinuation,
+): string | undefined {
+  const sessionId = (continuation.resume as { sessionId?: unknown }).sessionId;
+  return typeof sessionId === 'string' ? sessionId : undefined;
+}
+
+function journalPath(
+  workDir: string,
+  resume: HarnessAgentResumeSessionState,
+): string | undefined {
+  const sessionFileName = (resume as { data?: { sessionFileName?: unknown } })
+    .data?.sessionFileName;
+  return typeof sessionFileName === 'string'
+    ? `${workDir}/.pi-sessions/${sessionFileName}`
+    : undefined;
+}
+
+async function writeJournal({
+  session,
+  workDir,
+  continuation,
+  abortSignal,
+}: {
+  session: Experimental_SandboxSession;
+  workDir: string;
+  continuation: PiContinuation;
+  abortSignal?: AbortSignal;
+}): Promise<void> {
+  const path = journalPath(workDir, continuation.resume);
+  if (!path) {
+    return;
+  }
+  await session.writeBinaryFile({
+    path,
+    content: gunzipFromBase64(continuation.journalGz),
+    ...(abortSignal ? { abortSignal } : {}),
+  });
+}
+
+async function readJournal(
+  sandboxContext: SandboxContext | undefined,
+  resume: HarnessAgentResumeSessionState,
+): Promise<string | undefined> {
+  if (!sandboxContext) {
+    return undefined;
+  }
+  const path = journalPath(sandboxContext.workDir, resume);
+  if (!path) {
+    return undefined;
+  }
+  const bytes = await sandboxContext.session.readBinaryFile({ path });
+  return bytes ? gzipToBase64(bytes) : undefined;
+}
+
+async function disposeSandbox(
+  session: HarnessV1NetworkSandboxSession,
+): Promise<void> {
+  if (session.destroy) {
+    await session.destroy();
+  } else {
+    await session.stop();
+  }
+}
+
+/**
+ * Wrap a provider so it exposes `resumeSession` (falling back to a fresh
+ * session) and reports each network session it hands out.
+ */
+function withSessionCapture(
+  provider: SandboxProvider,
+  onSession: (session: HarnessV1NetworkSandboxSession) => void,
+): SandboxProvider {
+  return {
+    specificationVersion: 'harness-sandbox-v1',
+    providerId: provider.providerId,
+    createSession: async options => {
+      const session = await provider.createSession(options);
+      onSession(session);
+      return session;
+    },
+    resumeSession: async options => {
+      const session = provider.resumeSession
+        ? await provider.resumeSession(options)
+        : await provider.createSession(options);
+      onSession(session);
+      return session;
+    },
+  };
+}
+
+function gzipToBase64(bytes: Uint8Array): string {
+  return gzipSync(bytes).toString('base64');
+}
+
+function gunzipFromBase64(data: string): Uint8Array {
+  return new Uint8Array(gunzipSync(Buffer.from(data, 'base64')));
 }
 
 /**
@@ -268,12 +384,17 @@ export function resolveRunSandbox({
 }: {
   config: ResolvedAgentConfig;
   runOptions: RunOptions<AgentSchema>;
-}): { provider: SandboxProvider; sessionId: string | undefined } {
+}): {
+  provider: SandboxProvider;
+  sessionId: string | undefined;
+  ownsSandbox: boolean;
+} {
   const reused = getSandboxInternals(runOptions.sandbox);
   if (reused) {
     return {
       provider: createReusedSandboxProvider(reused),
       sessionId: reused.sessionToken,
+      ownsSandbox: false,
     };
   }
 
@@ -284,6 +405,7 @@ export function resolveRunSandbox({
   return {
     provider: createSandboxProvider(sandboxConfig),
     sessionId: runOptions.sessionId,
+    ownsSandbox: true,
   };
 }
 

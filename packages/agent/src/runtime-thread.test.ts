@@ -1,15 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { gunzipSync } from 'node:zlib';
 import { z } from 'zod';
 import type { ResolvedAgentConfig } from './create-agent.js';
 import type { AgentOptions, RunOptions } from './types.js';
-import type { Sandbox } from './sandbox-handle.js';
 import type { Thread } from './thread.js';
 
 /**
- * These tests exercise the thread resume lifecycle end-to-end. The harness and
- * Pi adapter are mocked, but the virtual sandbox is real so a caller-owned
- * handle flows through `resolveRunSandbox` exactly as in production.
+ * Exercises the thread continuation lifecycle end-to-end with a mocked harness.
+ * A fake in-memory sandbox stands in for the provider session so the journal
+ * capture (detach + read + gzip) and resume (inject + resumeFrom) paths run
+ * exactly as in production.
  */
+
+const JOURNAL_BYTES = new TextEncoder().encode('{"pi":"journal","turn":1}\n');
+const JOURNAL_PATH = '/work/.pi-sessions/session.jsonl';
 
 interface StreamPart {
   type: string;
@@ -24,15 +28,40 @@ interface TestState {
 
 let state: TestState;
 
+class FakeSandbox {
+  readonly files = new Map<string, Uint8Array>();
+
+  run(): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+  }
+  writeBinaryFile(input: { path: string; content: Uint8Array }): Promise<void> {
+    this.files.set(input.path, input.content);
+    return Promise.resolve();
+  }
+  writeTextFile(input: { path: string; content: string }): Promise<void> {
+    this.files.set(input.path, new TextEncoder().encode(input.content));
+    return Promise.resolve();
+  }
+  readBinaryFile(input: { path: string }): Promise<Uint8Array | null> {
+    return Promise.resolve(this.files.get(input.path) ?? null);
+  }
+}
+
 class MockSession {
-  stopCount = 0;
+  detachCount = 0;
   destroyCount = 0;
-  constructor(readonly sessionId: string) {}
-  stop(): Promise<unknown> {
-    this.stopCount += 1;
+  constructor(
+    readonly sessionId: string,
+    private readonly sandbox: FakeSandbox,
+  ) {}
+  detach(): Promise<unknown> {
+    this.detachCount += 1;
+    // Simulate Pi flushing its journal into the sandbox on detach.
+    this.sandbox.files.set(JOURNAL_PATH, JOURNAL_BYTES);
     return Promise.resolve({
       type: 'resume-session',
       harnessId: 'pi',
+      specificationVersion: 'harness-v1',
       sessionId: this.sessionId,
       data: { sessionFileName: 'session.jsonl' },
     });
@@ -46,26 +75,34 @@ class MockSession {
 class MockHarnessAgent {
   readonly settings: {
     tools: Record<string, { execute(input: unknown): unknown }>;
+    onSandboxSession?: (opts: {
+      session: FakeSandbox;
+      sessionWorkDir: string;
+      abortSignal?: AbortSignal;
+    }) => Promise<void>;
   };
   readonly streamCalls: { prompt: string }[] = [];
   readonly createSessionCalls: { sessionId?: string; resumeFrom?: unknown }[] =
     [];
+  readonly sandbox = new FakeSandbox();
   session: MockSession | undefined;
 
-  constructor(settings: {
-    tools: Record<string, { execute(input: unknown): unknown }>;
-  }) {
+  constructor(settings: MockHarnessAgent['settings']) {
     this.settings = settings;
     state.instances.push(this);
   }
 
-  createSession(options?: {
+  async createSession(options?: {
     sessionId?: string;
     resumeFrom?: unknown;
   }): Promise<MockSession> {
     this.createSessionCalls.push(options ?? {});
-    this.session = new MockSession(options?.sessionId ?? 'sess');
-    return Promise.resolve(this.session);
+    await this.settings.onSandboxSession?.({
+      session: this.sandbox,
+      sessionWorkDir: '/work',
+    });
+    this.session = new MockSession(options?.sessionId ?? 'sess', this.sandbox);
+    return this.session;
   }
 
   stream(input: {
@@ -126,99 +163,91 @@ function makeInput(
   };
 }
 
-describe('thread resume lifecycle', () => {
-  it('persists a resume token and resumes on the next run', async () => {
+function okScript(text: string): Script {
+  return agent => {
+    agent.submit({ ok: true });
+    return [{ type: 'text-delta', text }];
+  };
+}
+
+describe('thread continuation lifecycle', () => {
+  it('captures a compressed journal on success and detaches (not destroys)', async () => {
     installMocks();
-    const { defaultRuntime, readPiResumeToken } = await import('./runtime.js');
-    const { createVirtualSandbox, getSandboxInternals } =
-      await import('./sandbox-handle.js');
+    const { defaultRuntime, readPiContinuation } = await import('./runtime.js');
     const { createThread, getThreadInternals } = await import('./thread.js');
 
-    const sandbox: Sandbox = await createVirtualSandbox();
     const thread: Thread = createThread({ id: 'chat' });
-    state.scripts = [
-      agent => {
-        agent.submit({ ok: true });
-        return [{ type: 'text-delta', text: 'one' }];
-      },
-      agent => {
-        agent.submit({ ok: true });
-        return [{ type: 'text-delta', text: 'two' }];
-      },
-    ];
+    state.scripts = [okScript('one')];
 
-    try {
-      await defaultRuntime.run(makeInput('first', { sandbox, thread }));
+    await defaultRuntime.run(makeInput('first', { thread }));
 
-      const first = state.instances[0];
-      expect(first?.session?.stopCount).toBe(1);
-      expect(first?.session?.destroyCount).toBe(0);
+    const first = state.instances[0];
+    expect(first?.session?.detachCount).toBe(1);
+    expect(first?.session?.destroyCount).toBe(0);
 
-      const token = readPiResumeToken(
-        getThreadInternals(thread)?.providerState,
-      );
-      expect(token?.sandboxToken).toBe(
-        getSandboxInternals(sandbox)?.sessionToken,
-      );
-
-      await defaultRuntime.run(makeInput('second', { sandbox, thread }));
-
-      const second = state.instances[1];
-      // Second run resumes the Pi session instead of replaying neutral context.
-      expect(second?.createSessionCalls[0]?.resumeFrom).toEqual(token?.resume);
-      expect(second?.streamCalls[0]?.prompt).toBe('second');
-    } finally {
-      await sandbox.destroy();
-    }
+    const continuation = readPiContinuation(
+      getThreadInternals(thread)?.continuation,
+    );
+    expect(continuation?.engine).toBe('pi');
+    // The stored journal round-trips back to the original bytes.
+    expect(
+      gunzipSync(Buffer.from(continuation?.journalGz ?? '', 'base64')),
+    ).toEqual(Buffer.from(JOURNAL_BYTES));
   });
 
-  it('replays neutral context and keeps no token for an ephemeral sandbox', async () => {
+  it('resumes from the thread journal in a fresh sandbox on the next run', async () => {
     installMocks();
     const { defaultRuntime } = await import('./runtime.js');
     const { createThread, getThreadInternals } = await import('./thread.js');
 
     const thread = createThread({ id: 'chat' });
-    state.scripts = [
-      agent => {
-        agent.submit({ ok: true });
-        return [{ type: 'text-delta', text: 'one' }];
-      },
-      agent => {
-        agent.submit({ ok: true });
-        return [{ type: 'text-delta', text: 'two' }];
-      },
-    ];
+    state.scripts = [okScript('one'), okScript('two')];
 
     await defaultRuntime.run(makeInput('first', { thread }));
-    const first = state.instances[0];
-    expect(first?.session?.destroyCount).toBe(1);
-    expect(first?.session?.stopCount).toBe(0);
-    expect(getThreadInternals(thread)?.providerState).toBeUndefined();
+    const continuation = getThreadInternals(thread)?.continuation;
 
     await defaultRuntime.run(makeInput('second', { thread }));
     const second = state.instances[1];
-    expect(second?.streamCalls[0]?.prompt).toContain('Conversation so far:');
-    expect(second?.streamCalls[0]?.prompt.endsWith('second')).toBe(true);
+
+    // The second run resumes rather than replaying neutral context.
+    expect(second?.createSessionCalls[0]?.resumeFrom).toEqual(
+      continuation?.resume,
+    );
+    expect(second?.createSessionCalls[0]?.sessionId).toBe('sess');
+    expect(second?.streamCalls[0]?.prompt).toBe('second');
+
+    // The journal was re-materialized into the fresh sandbox before Pi started.
+    expect(second?.sandbox.files.get(JOURNAL_PATH)).toEqual(JOURNAL_BYTES);
+  });
+
+  it('destroys the session and stores nothing without a thread', async () => {
+    installMocks();
+    const { defaultRuntime } = await import('./runtime.js');
+    state.scripts = [okScript('one')];
+
+    await defaultRuntime.run(makeInput('first', {}));
+    const first = state.instances[0];
+    expect(first?.session?.destroyCount).toBe(1);
+    expect(first?.session?.detachCount).toBe(0);
   });
 });
 
-describe('readPiResumeToken', () => {
-  it('parses a valid Pi token', async () => {
+describe('readPiContinuation', () => {
+  it('parses a valid Pi continuation', async () => {
     installMocks();
-    const { readPiResumeToken } = await import('./runtime.js');
+    const { readPiContinuation } = await import('./runtime.js');
     const resume = { type: 'resume-session', data: { sessionFileName: 'x' } };
     expect(
-      readPiResumeToken({ kind: 'pi', sandboxToken: 'tok', resume }),
-    ).toEqual({ kind: 'pi', sandboxToken: 'tok', resume });
+      readPiContinuation({ engine: 'pi', resume, journalGz: 'AAAA' }),
+    ).toEqual({ engine: 'pi', resume, journalGz: 'AAAA' });
   });
 
-  it('rejects absent or malformed tokens', async () => {
+  it('rejects absent or malformed continuations', async () => {
     installMocks();
-    const { readPiResumeToken } = await import('./runtime.js');
-    expect(readPiResumeToken(undefined)).toBeUndefined();
-    expect(readPiResumeToken({ kind: 'other' })).toBeUndefined();
+    const { readPiContinuation } = await import('./runtime.js');
+    expect(readPiContinuation(undefined)).toBeUndefined();
     expect(
-      readPiResumeToken({ kind: 'pi', sandboxToken: 42, resume: {} }),
+      readPiContinuation({ engine: 'other', resume: {}, journalGz: 'x' }),
     ).toBeUndefined();
   });
 });
