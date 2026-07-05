@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
   createAgent,
+  createThread,
   createVirtualSandbox,
   type ChangedFile,
   type Credentials,
@@ -88,6 +89,43 @@ describe('live runtime smoke', () => {
 
         // Still alive after both runs: runcell never destroyed it.
         expect((await sandbox.exec('echo ok')).stdout.trim()).toBe('ok');
+      } finally {
+        await sandbox.destroy();
+      }
+    },
+    timeoutMs,
+  );
+
+  live(
+    'remembers earlier turns through a thread',
+    async () => {
+      const agent = createAgent({
+        model:
+          process.env['RUNCELL_LIVE_MODEL'] ?? 'anthropic/claude-sonnet-4-5',
+        credentials: credentialsFromEnv(),
+      });
+      const sandbox = await createVirtualSandbox();
+      const thread = createThread();
+      try {
+        await agent.run({
+          prompt:
+            'Remember that the secret word is "banana". Call submitResult with acknowledged set to true.',
+          schema: z.object({ acknowledged: z.literal(true) }),
+          sandbox,
+          thread,
+        });
+
+        const recalled = await agent.run({
+          prompt:
+            'What was the secret word I told you? Call submitResult with word set to exactly that word.',
+          schema: z.object({ word: z.string() }),
+          sandbox,
+          thread,
+        });
+        expect(recalled.data.word.toLowerCase()).toContain('banana');
+
+        // The thread accumulated both turns for portable persistence.
+        expect(thread.messages).toHaveLength(4);
       } finally {
         await sandbox.destroy();
       }

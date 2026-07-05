@@ -1,4 +1,7 @@
-import { HarnessAgent } from '@ai-sdk/harness/agent';
+import {
+  HarnessAgent,
+  type HarnessAgentResumeSessionState,
+} from '@ai-sdk/harness/agent';
 import {
   jsonSchema,
   tool,
@@ -35,6 +38,7 @@ import {
   appendThreadMessage,
   getThreadInternals,
   renderThreadContext,
+  type ThreadProviderState,
 } from './thread.js';
 import type {
   AgentOptions,
@@ -81,9 +85,7 @@ async function runWithHarness<TSchema extends AgentSchema>({
   let submitted: unknown;
 
   const threadInternals = getThreadInternals(runOptions.thread);
-  const threadContext = threadInternals
-    ? renderThreadContext(threadInternals.messages)
-    : undefined;
+  let ended = false;
 
   const tools = createTools({
     tools: agentOptions.tools,
@@ -95,6 +97,19 @@ async function runWithHarness<TSchema extends AgentSchema>({
 
   const { provider: sandboxProvider, sessionId: pinnedSessionId } =
     resolveRunSandbox({ config, runOptions });
+
+  // Lossless resume is only possible when a caller-owned sandbox still holds the
+  // journal we persisted for this thread. Otherwise fall back to neutral replay.
+  const reusedSandbox = getSandboxInternals(runOptions.sandbox);
+  const resumeToken = readPiResumeToken(threadInternals?.providerState);
+  const resumeFrom =
+    reusedSandbox && resumeToken?.sandboxToken === reusedSandbox.sessionToken
+      ? resumeToken.resume
+      : undefined;
+  const threadContext =
+    threadInternals && resumeFrom === undefined
+      ? renderThreadContext(threadInternals.messages)
+      : undefined;
 
   const harnessAgent = new HarnessAgent({
     id: 'runcell',
@@ -120,6 +135,7 @@ async function runWithHarness<TSchema extends AgentSchema>({
 
   const session = await harnessAgent.createSession({
     ...(pinnedSessionId ? { sessionId: pinnedSessionId } : {}),
+    ...(resumeFrom ? { resumeFrom } : {}),
     ...(runOptions.signal ? { abortSignal: runOptions.signal } : {}),
   });
 
@@ -168,6 +184,16 @@ async function runWithHarness<TSchema extends AgentSchema>({
               content: text,
               data: parsed.data,
             });
+            // Persist the journal into the caller-owned sandbox and record an
+            // opaque token so the next run can resume this exact conversation.
+            if (reusedSandbox) {
+              const resume = await session.stop();
+              ended = true;
+              threadInternals.providerState = createPiResumeToken(
+                reusedSandbox.sessionToken,
+                resume,
+              );
+            }
           }
           return {
             data: parsed.data,
@@ -187,8 +213,47 @@ async function runWithHarness<TSchema extends AgentSchema>({
     agentOptions.events?.onError?.(error);
     throw error;
   } finally {
-    await session.destroy();
+    if (!ended) {
+      await session.destroy();
+    }
   }
+}
+
+interface PiResumeToken {
+  kind: 'pi';
+  sandboxToken: string;
+  resume: HarnessAgentResumeSessionState;
+}
+
+function createPiResumeToken(
+  sandboxToken: string,
+  resume: HarnessAgentResumeSessionState,
+): ThreadProviderState {
+  const token: PiResumeToken = { kind: 'pi', sandboxToken, resume };
+  return token as unknown as ThreadProviderState;
+}
+
+/**
+ * Read a Pi resume token out of a thread's opaque provider state, or
+ * `undefined` when absent or malformed. Exported for testing.
+ */
+export function readPiResumeToken(
+  state: ThreadProviderState | undefined,
+): PiResumeToken | undefined {
+  if (state === undefined) {
+    return undefined;
+  }
+  const kind = (state as { kind?: unknown }).kind;
+  const sandboxToken = (state as { sandboxToken?: unknown }).sandboxToken;
+  const resume = (state as { resume?: unknown }).resume;
+  if (kind === 'pi' && typeof sandboxToken === 'string' && resume != null) {
+    return {
+      kind: 'pi',
+      sandboxToken,
+      resume: resume as HarnessAgentResumeSessionState,
+    };
+  }
+  return undefined;
 }
 
 /**
