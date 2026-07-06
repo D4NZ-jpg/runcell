@@ -60,42 +60,47 @@ await agent.run({ prompt: 'Now add tests.', sandbox, thread }); // same files, r
 
 ## How it works
 
-1. Install. The virtual sandbox is bundled, so there is nothing else to set
-   up.
+1. **Install.** The virtual sandbox is bundled, so there is nothing else to
+   set up.
 
    ```bash
    npm install runcell
    ```
 
-2. Describe the task: a prompt, optional files and tools, and a schema when
-   you need structured output.
+2. **Describe the task.** A prompt, optional files and tools, and a schema
+   when you need structured output.
 
-3. Use the result. Streamed text, changed files as bytes, validated
+3. **Use the result.** Streamed text, changed files as bytes, validated
    `result.data`, and thread or sandbox state you can serialize into your
    database.
 
 ## Common questions
 
-**Is this another agent framework?**
+### Is this another agent framework?
+
 No. Runcell hands you three primitives (an agent, a sandbox, a thread) and has
 no opinion about how you run them. There is no workflow engine and no hidden
 state: if you saved the thread, you have the whole conversation.
 
-**Which schema libraries work?**
+### Which schema libraries work?
+
 Anything implementing [Standard Schema](https://standardschema.dev): Zod 3.24+,
 Zod 4, Valibot, ArkType, and others.
 
-**Where does state live?**
+### Where does state live?
+
 Wherever you put it. `thread.toJSON()` and `sandbox.snapshot()` are plain
 JSON-safe values, so Postgres, Redis, and a file on disk all work. Resume on
 any machine.
 
-**What happens when the model ignores the schema?**
+### What happens when the model ignores the schema?
+
 Runcell runs repair turns asking it to correct the submission. If the budget
 is exhausted, the run rejects with `IncompleteResultError`. You never receive
 unvalidated data.
 
-**Is it safe to run in production?**
+### Is it safe to run in production?
+
 Credentials default to environment variables, and local developer credentials
 are refused in production unless explicitly allowed. Agent file paths are
 validated, and every run is sandboxed by default.
