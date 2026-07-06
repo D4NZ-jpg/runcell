@@ -171,6 +171,7 @@ default to local credentials so they're easy to run on a configured machine.
 | `npm run example:06` | Credential modes                                            |
 | `npm run example:07` | Minimal shared credential store                             |
 | `npm run example:08` | Structured output plus returned file validation             |
+| `npm run example:09` | Chat agent: streaming, thread persistence, shared sandbox   |
 
 ```bash
 RUNCELL_EXAMPLE_CREDENTIALS=local npm run examples:run

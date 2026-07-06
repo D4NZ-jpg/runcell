@@ -12,6 +12,7 @@ The examples in `examples/` are compile-checked and runnable.
 | `npm run example:06` | Credential modes                                            |
 | `npm run example:07` | Minimal shared credential store                             |
 | `npm run example:08` | Structured output plus returned file validation             |
+| `npm run example:09` | Chat agent: streaming, thread persistence, shared sandbox   |
 
 Run all examples:
 
@@ -32,6 +33,21 @@ Supported example credential values:
 local
 env
 agentDir:/path/to/agent-dir
+```
+
+## Chat agent example
+
+`example:09` is the [chat-agent guide](./chat-agent.md) condensed into one
+script:
+
+1. stream a plain chat turn (no schema) into stdout;
+2. serialize the thread to JSON and rebuild it, like a server between requests;
+3. prove the memory survived with a second turn;
+4. run a structured turn on the same conversation;
+5. read a file the agent wrote, straight off the caller-owned sandbox.
+
+```bash
+npm run example:09
 ```
 
 ## File output validation example
