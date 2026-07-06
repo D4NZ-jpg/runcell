@@ -10,6 +10,23 @@ import { onMounted, onUnmounted, ref } from 'vue';
 
 const root = ref<HTMLElement>();
 const svg = ref<SVGSVGElement>();
+const cursor = ref<SVGRectElement>();
+
+let burst: Animation | undefined;
+
+/** Quick double-blink on press, like tapping a terminal. Runs above the CSS
+ * hover state and reverts on its own; rapid clicks restart it. */
+function blinkBurst() {
+  const el = cursor.value;
+  if (!el || typeof el.animate !== 'function') {
+    return;
+  }
+  burst?.cancel();
+  burst = el.animate(
+    [{ opacity: 0 }, { opacity: 1 }, { opacity: 0 }, { opacity: 1 }],
+    { duration: 420, easing: 'steps(1, end)' },
+  );
+}
 
 let raf = 0;
 let running = false;
@@ -92,11 +109,12 @@ onMounted(() => {
 onUnmounted(() => {
   detach?.();
   cancelAnimationFrame(raf);
+  burst?.cancel();
 });
 </script>
 
 <template>
-  <div ref="root" class="rc-mark" aria-hidden="true">
+  <div ref="root" class="rc-mark" aria-hidden="true" @pointerdown="blinkBurst">
     <svg ref="svg" viewBox="0 0 40 40" fill="none">
       <rect
         x="3"
@@ -108,6 +126,7 @@ onUnmounted(() => {
         stroke-width="3"
       />
       <rect
+        ref="cursor"
         class="rc-cursor"
         x="15.5"
         y="12"
@@ -130,6 +149,13 @@ onUnmounted(() => {
   height: 192px;
   perspective: 640px;
   color: var(--vp-c-text-1);
+  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .rc-mark:active {
+    transform: scale(0.97);
+  }
 }
 
 @media (min-width: 640px) {
