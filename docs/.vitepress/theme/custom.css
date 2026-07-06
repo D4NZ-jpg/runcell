@@ -1,0 +1,142 @@
+/**
+ * Runcell theme layer over the VitePress default theme.
+ *
+ * Design goals: monochrome brand cohesion (black/white, like the logo), press
+ * feedback on interactive elements, strong easing curves, and a subtle
+ * entrance stagger on the landing page. Motion uses transform/opacity only and
+ * is disabled under prefers-reduced-motion.
+ */
+
+:root {
+  /* Strong curves; the CSS built-ins are too weak. */
+  --rc-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  --rc-ink: #0a0a0a;
+  --rc-paper: #ffffff;
+
+  /* Monochrome brand: buttons, links, sidebar marker, search highlight. */
+  --vp-c-brand-1: var(--rc-ink);
+  --vp-c-brand-2: #3d3d3d;
+  --vp-c-brand-3: var(--rc-ink);
+  --vp-c-brand-soft: rgba(10, 10, 10, 0.07);
+
+  --vp-button-brand-border: transparent;
+  --vp-button-brand-text: var(--rc-paper);
+  --vp-button-brand-bg: var(--rc-ink);
+  --vp-button-brand-hover-border: transparent;
+  --vp-button-brand-hover-text: var(--rc-paper);
+  --vp-button-brand-hover-bg: #2e2e2e;
+  --vp-button-brand-active-border: transparent;
+  --vp-button-brand-active-text: var(--rc-paper);
+  --vp-button-brand-active-bg: var(--rc-ink);
+
+  /* Crisp hero name instead of the default brand gradient. */
+  --vp-home-hero-name-color: var(--vp-c-text-1);
+
+  /* A faint glow behind the hero mark for depth. */
+  --vp-home-hero-image-background-image: radial-gradient(
+    ellipse at center,
+    rgba(10, 10, 10, 0.08),
+    transparent 60%
+  );
+  --vp-home-hero-image-filter: blur(48px);
+}
+
+.dark {
+  --vp-c-brand-1: #fafafa;
+  --vp-c-brand-2: #c2c2c2;
+  --vp-c-brand-3: #fafafa;
+  --vp-c-brand-soft: rgba(250, 250, 250, 0.1);
+
+  --vp-button-brand-text: var(--rc-ink);
+  --vp-button-brand-bg: #fafafa;
+  --vp-button-brand-hover-text: var(--rc-ink);
+  --vp-button-brand-hover-bg: #d9d9d9;
+  --vp-button-brand-active-text: var(--rc-ink);
+  --vp-button-brand-active-bg: #fafafa;
+
+  --vp-home-hero-image-background-image: radial-gradient(
+    ellipse at center,
+    rgba(250, 250, 250, 0.1),
+    transparent 60%
+  );
+}
+
+/* Buttons must feel responsive: scale on press, fast ease-out. */
+.VPButton {
+  transition:
+    transform 160ms var(--rc-ease-out),
+    color 0.25s,
+    border-color 0.25s,
+    background-color 0.25s !important;
+}
+
+.VPButton:active {
+  transform: scale(0.97);
+}
+
+/* Feature cards: quiet border reveal on hover, pointer devices only. */
+@media (hover: hover) and (pointer: fine) {
+  .VPFeatures .VPFeature {
+    transition: border-color 150ms var(--rc-ease-out);
+  }
+
+  .VPFeatures .VPFeature:hover {
+    border-color: var(--vp-c-border);
+  }
+}
+
+/* Landing entrance: fade + 8px rise, staggered. Rare-view page, so a touch of
+   delight is allowed; content is interactive throughout. */
+@media (prefers-reduced-motion: no-preference) {
+  .VPHome .VPHero .main .name,
+  .VPHome .VPHero .main .text,
+  .VPHome .VPHero .main .tagline,
+  .VPHome .VPHero .main .actions,
+  .VPHome .VPHero .image,
+  .VPHome .VPFeatures .item {
+    animation: rc-enter 300ms var(--rc-ease-out) both;
+  }
+
+  .VPHome .VPHero .main .name {
+    animation-delay: 0ms;
+  }
+  .VPHome .VPHero .main .text {
+    animation-delay: 40ms;
+  }
+  .VPHome .VPHero .main .tagline {
+    animation-delay: 80ms;
+  }
+  .VPHome .VPHero .main .actions {
+    animation-delay: 120ms;
+  }
+  .VPHome .VPHero .image {
+    animation-delay: 60ms;
+  }
+
+  .VPHome .VPFeatures .item:nth-child(1) {
+    animation-delay: 160ms;
+  }
+  .VPHome .VPFeatures .item:nth-child(2) {
+    animation-delay: 205ms;
+  }
+  .VPHome .VPFeatures .item:nth-child(3) {
+    animation-delay: 250ms;
+  }
+  .VPHome .VPFeatures .item:nth-child(4) {
+    animation-delay: 295ms;
+  }
+  .VPHome .VPFeatures .item:nth-child(5) {
+    animation-delay: 340ms;
+  }
+  .VPHome .VPFeatures .item:nth-child(6) {
+    animation-delay: 385ms;
+  }
+}
+
+@keyframes rc-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
