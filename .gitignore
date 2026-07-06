@@ -14,3 +14,7 @@ coverage/
 
 # Local/private notes not pushed
 .local/
+
+# VitePress
+docs/.vitepress/cache/
+docs/.vitepress/dist/

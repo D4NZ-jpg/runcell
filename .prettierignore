@@ -10,3 +10,4 @@ packages/harness-pi-raw/
 
 # Lockfiles
 package-lock.json
+docs/.vitepress/cache/

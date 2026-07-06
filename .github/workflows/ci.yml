@@ -50,6 +50,10 @@ jobs:
       - name: Test
         run: npm run test
 
+      # VitePress fails on dead links, so this doubles as a docs link check.
+      - name: Docs build
+        run: npm run docs:build
+
   commitlint:
     name: Commit messages
     runs-on: ubuntu-latest
