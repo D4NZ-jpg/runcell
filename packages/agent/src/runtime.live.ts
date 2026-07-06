@@ -132,6 +132,39 @@ describe('live runtime smoke', () => {
     },
     timeoutMs,
   );
+
+  live(
+    'streams text for a plain turn without a schema',
+    async () => {
+      const agent = createAgent({
+        model:
+          process.env['RUNCELL_LIVE_MODEL'] ?? 'anthropic/claude-sonnet-4-5',
+        credentials: credentialsFromEnv(),
+      });
+
+      const { textStream, result } = agent.stream({
+        prompt:
+          'Reply with a short one-sentence greeting. Do not use any tools.',
+      });
+
+      let streamed = '';
+      let deltas = 0;
+      for await (const delta of textStream) {
+        streamed += delta;
+        deltas += 1;
+      }
+      const final = await result;
+
+      // The stream produced text, and the final result agrees with it.
+      expect(deltas).toBeGreaterThan(0);
+      expect(streamed.trim().length).toBeGreaterThan(0);
+      expect(final.text).toBe(streamed);
+      // No schema: data is undefined and the text is the output.
+      expect(final.data).toBeUndefined();
+      expect(final.finishReason.length).toBeGreaterThan(0);
+    },
+    timeoutMs,
+  );
 });
 
 function credentialsFromEnv(): Credentials {
