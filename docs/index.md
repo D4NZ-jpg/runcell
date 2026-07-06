@@ -5,10 +5,6 @@ hero:
   name: Runcell
   text: Run AI agents in a sandbox. Get back results you can trust.
   tagline: Runcell gives the agent an isolated workspace. You get streamed text, changed files, and output validated against your schema, plus conversation state you can store anywhere.
-  image:
-    light: /logo-mark-light.svg
-    dark: /logo-mark-dark.svg
-    alt: Runcell
   actions:
     - theme: brand
       text: Get started in 5 minutes
