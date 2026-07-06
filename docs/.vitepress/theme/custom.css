@@ -30,9 +30,6 @@
   --vp-button-brand-active-text: var(--rc-paper);
   --vp-button-brand-active-bg: var(--rc-ink);
 
-  /* Crisp hero name instead of the default brand gradient. */
-  --vp-home-hero-name-color: var(--vp-c-text-1);
-
   /* A faint glow behind the hero mark for depth. */
   --vp-home-hero-image-background-image: radial-gradient(
     ellipse at center,
@@ -89,7 +86,6 @@
 /* Landing entrance: fade + 8px rise, staggered. Rare-view page, so a touch of
    delight is allowed; content is interactive throughout. */
 @media (prefers-reduced-motion: no-preference) {
-  .VPHome .VPHero .main .name,
   .VPHome .VPHero .main .text,
   .VPHome .VPHero .main .tagline,
   .VPHome .VPHero .main .actions,
@@ -98,20 +94,17 @@
     animation: rc-enter 300ms var(--rc-ease-out) both;
   }
 
-  .VPHome .VPHero .main .name {
+  .VPHome .VPHero .main .text {
     animation-delay: 0ms;
   }
-  .VPHome .VPHero .main .text {
-    animation-delay: 40ms;
-  }
   .VPHome .VPHero .main .tagline {
-    animation-delay: 80ms;
+    animation-delay: 50ms;
   }
   .VPHome .VPHero .main .actions {
-    animation-delay: 120ms;
+    animation-delay: 100ms;
   }
   .VPHome .VPHero .image {
-    animation-delay: 60ms;
+    animation-delay: 40ms;
   }
 
   .VPHome .VPFeatures .item:nth-child(1) {
