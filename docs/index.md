@@ -2,14 +2,14 @@
 layout: home
 
 hero:
-  text: Run AI agents in a sandbox. Get back results you can trust.
-  tagline: Runcell gives the agent an isolated workspace. You get streamed text, changed files, and output validated against your schema, plus conversation state you can store anywhere.
+  text: Agents as code. Answers as data.
+  tagline: Build agents in plain TypeScript. Each run is sandboxed and returns typed, validated data, streamed text, and the files it changed.<br />No framework, no hosted platform.
   actions:
     - theme: brand
       text: Get started in 5 minutes
       link: /getting-started
     - theme: alt
-      text: Build a chat agent
+      text: See it in action
       link: /chat-agent
 
 features:
@@ -20,7 +20,7 @@ features:
   - title: Streaming built in
     details: agent.stream() returns the text as an async iterable plus a promise for the final result. Wiring it to SSE takes about a dozen lines.
   - title: Conversations that fit in a database row
-    details: A thread serializes to plain JSON, with a readable message log and the state needed to resume losslessly. Save it to Postgres and pick it up on another machine.
+    details: A thread is a plain JSON value that carries a readable message log and everything needed to continue where you left off. Store it in your own database and pick the conversation back up on any machine.
   - title: Workspaces as values
     details: Keep one sandbox across runs, share it between agents, or read its files from your own code. snapshot() turns it into JSON you can restore later.
   - title: Not a framework
@@ -35,27 +35,22 @@ run has a schema, the agent must submit a payload that satisfies it, and
 reply.
 
 ```ts
-import { createAgent, createVirtualSandbox, createThread } from 'runcell';
+import { createAgent } from 'runcell';
 import { z } from 'zod';
 
 const agent = createAgent({ model: 'anthropic/claude-sonnet-4-5' });
 
-// A structured task: result.data is validated against the schema.
 const review = await agent.run({
-  prompt: 'Review index.ts and report risks.',
+  prompt: 'Review index.ts and report the risks you find.',
   files: [{ path: 'index.ts', text: source }],
-  schema: z.object({ risks: z.array(z.string()) }),
+  schema: z.object({
+    severity: z.enum(['low', 'medium', 'high']),
+    risks: z.array(z.string()),
+  }),
 });
+
+review.data.severity; // 'low' | 'medium' | 'high', validated
 review.data.risks; // string[], validated
-
-// A chat turn: the streamed text is the output.
-const { textStream, result } = agent.stream({ prompt: 'Say hello.' });
-
-// State is yours to hold: sandboxes and threads are values you own.
-const sandbox = await createVirtualSandbox();
-const thread = createThread();
-await agent.run({ prompt: 'Scaffold a project.', sandbox, thread });
-await agent.run({ prompt: 'Now add tests.', sandbox, thread }); // same files, remembers
 ```
 
 ## How it works
