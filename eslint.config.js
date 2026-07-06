@@ -12,6 +12,7 @@ export default tseslint.config(
       '**/coverage/**',
       'packages/harness-pi-raw/**',
       'docs/.vitepress/**',
+      'scripts/**',
       '**/*.config.js',
       '**/*.config.ts',
     ],

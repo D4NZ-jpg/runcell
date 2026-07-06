@@ -33,7 +33,8 @@
     "prepare": "husky",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
-    "docs:preview": "vitepress preview docs"
+    "docs:preview": "vitepress preview docs",
+    "test:consumer": "node scripts/consumer-smoke.mjs"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.6.1",
