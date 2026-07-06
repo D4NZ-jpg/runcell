@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { defineConfig } from 'vitepress';
 
 // GitHub Pages project sites serve under /<repo>/. The deploy workflow sets
@@ -10,6 +12,21 @@ export default defineConfig({
     'Run AI agents in isolated sandbox cells — streamed replies, durable conversations, validated structured output.',
   base,
   cleanUrls: true,
+  // Attach each page's raw markdown (minus frontmatter) so the theme can offer
+  // a "Copy Markdown" button, handy for pasting a page into an LLM.
+  transformPageData(pageData, { siteConfig }) {
+    if (pageData.frontmatter['layout'] === 'home') return;
+    try {
+      const file = path.join(siteConfig.srcDir, pageData.relativePath);
+      const raw = fs.readFileSync(file, 'utf-8');
+      const markdown = raw
+        .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '')
+        .trimStart();
+      return { rawMarkdown: markdown };
+    } catch {
+      return;
+    }
+  },
   head: [
     [
       'link',
