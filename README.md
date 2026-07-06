@@ -1,257 +1,165 @@
 <div align="center">
 
-# runcell
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/public/logo-dark.svg">
+  <img src="docs/public/logo-light.svg" alt="Runcell" height="48">
+</picture>
 
-_Run AI agents in an isolated sandbox cell and get back validated structured output._
+<br><br>
+
+_Run AI agents in isolated sandbox cells — streamed replies, durable
+conversations, validated structured output._
 
 ![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-3c873a?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-blue?style=flat-square&logo=typescript&logoColor=white)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
 
-[Quick start](#quick-start) • [Why runcell](#why-runcell) • [Examples](#examples) • [Docs](#docs) • [Development](#development)
+[Quick start](#quick-start) • [Why Runcell](#why-runcell) • [Docs](#docs) • [Examples](#examples) • [Development](#development)
 
 </div>
 
-`runcell` is a TypeScript package for running AI agents inside an isolated
-workspace and treating the result like application data, not model prose.
-
-You provide a task, optional files, optional host tools, and a Standard
-Schema-compatible schema. Zod works out of the box. The agent can inspect and
-modify the sandbox workspace, then it must submit a structured result. `runcell`
-validates that payload and returns typed `result.data`.
+Runcell gives an AI agent a sandbox workspace and gives you back values your
+application can rely on: streamed text, changed files, schema-validated data,
+and conversation state you can persist anywhere.
 
 ```ts
-const result = await agent.run({
-  prompt: 'Read feedback.txt, write report.md, and summarize the findings.',
-  files: [{ path: 'feedback.txt', text: feedback }],
-  schema: z.object({
-    title: z.string(),
-    reportPath: z.literal('report.md'),
-    keyFindings: z.array(z.string()),
-  }),
-});
+import { createAgent, createThread } from 'runcell';
 
-console.log(result.data.keyFindings);
-console.log(result.files.map(file => file.path));
+const agent = createAgent({ model: 'anthropic/claude-sonnet-4-5' });
+const thread = createThread();
+
+// A chat turn: stream the reply, keep the memory.
+const { textStream, result } = agent.stream({
+  prompt: 'Read feedback.txt and summarize the top complaints.',
+  files: [{ path: 'feedback.txt', text: feedback }],
+  thread,
+});
+for await (const delta of textStream) process.stdout.write(delta);
+await result;
+
+await db.save(thread.id, thread.toJSON()); // the whole conversation, as JSON
 ```
 
 > [!NOTE]
-> The package is experimental. The examples in this repository run end-to-end
-> with local credentials and are the best way to try the current API.
+> Experimental. The examples in this repository run end-to-end with local
+> credentials and are the best way to try the current API.
 
-## Why runcell?
+## Why Runcell?
 
-Most agent integrations make you assemble several pieces yourself:
+Agent integrations make you assemble the same pieces every time: a sandbox,
+file plumbing, tool registration, streaming, schema validation, retries when
+the model misses the contract, conversation persistence. Runcell wraps those
+behind three primitives — and stays out of your architecture:
 
-- sandbox setup;
-- file input and output handling;
-- tool registration;
-- progress events;
-- schema validation;
-- repair turns when the model misses the output contract;
-- credential handling for local development and deployed apps.
+- **Agent** — a stateless callable: `run()` for a result, `stream()` for a
+  live text feed plus the result.
+- **Sandbox** — the workspace. Ephemeral by default; create a handle to keep
+  one across runs, read/write it directly, `snapshot()` it into your database,
+  restore it anywhere. Runcell never destroys a sandbox you own.
+- **Thread** — the conversation. A mutable value with a readable message log
+  and lossless continuation state. `toJSON()` and store it wherever you want.
 
-`runcell` wraps those pieces behind one small API:
+There is no built-in store, no workflow engine, no hidden state. Concurrency
+is `Promise.all`; persistence is your database; orchestration is your code.
+
+### Structured output you can trust
+
+Give a run a schema — anything
+[Standard Schema](https://standardschema.dev)-compatible (Zod 3/4, Valibot,
+ArkType) — and the agent must submit a matching payload. Runcell validates it,
+runs repair turns when the model misses, and rejects rather than returning
+unvalidated data. `result.data` is authoritative; prose is for logs.
 
 ```ts
-const agent = createAgent({ model, tools, events });
-const result = await agent.run({ prompt, files, schema });
+const result = await agent.run({
+  prompt: 'Triage this bug report.',
+  files: [{ path: 'report.txt', text: report }],
+  schema: z.object({
+    severity: z.enum(['low', 'medium', 'high', 'critical']),
+    recommendedFixes: z.array(z.string()),
+  }),
+});
+result.data.severity; // typed and validated
 ```
 
-The important distinction is that `result.data` is authoritative. Free-form text
-is still available for logs or UI, but application logic can rely on the
-schema-validated result.
-
-## What can you build with it?
-
-`runcell` is useful for workflows where an agent needs both a workspace and a
-strict output contract:
-
-- review files and return typed findings;
-- generate a report file plus structured metadata;
-- triage bug reports into severity, rationale, and fixes;
-- call your application tools while preparing an answer;
-- run a multi-step file task and stream progress to a UI;
-- validate final output before handing it to the rest of your system.
+Or omit the schema entirely — then the streamed text _is_ the output, which is
+exactly what chat replies want.
 
 ## Quick start
 
-### Install
-
-Install `runcell` and your schema library. The examples use Zod:
-
 ```bash
-npm install runcell zod
+npm install runcell        # zod optional — only needed for structured output
 ```
-
-For Vercel Sandbox mode, install the optional sandbox provider too:
-
-```bash
-npm install runcell zod @ai-sdk/sandbox-vercel
-```
-
-For this repository, install workspace dependencies first:
-
-```bash
-npm install
-```
-
-### Run an example
-
-Examples default to local credentials so they are easy to run on a configured
-development machine.
-
-```bash
-npm run example:01
-```
-
-### Use the API
 
 ```ts
 import { createAgent } from 'runcell';
-import { z } from 'zod';
 
-const schema = z.object({
-  summary: z.string(),
-  nextSteps: z.array(z.string()),
-});
+// Production: credentials come from environment variables (default).
+const agent = createAgent({ model: 'anthropic/claude-sonnet-4-5' });
 
-const agent = createAgent({
+// Local development: opt into local credentials.
+const dev = createAgent({
   model: 'anthropic/claude-sonnet-4-5',
   credentials: 'local',
 });
 
-const result = await agent.run({
-  prompt: 'Summarize this project and suggest next steps.',
-  schema,
-});
-
-console.log(result.data);
+const reply = await agent.run({ prompt: 'Say hello.' });
+console.log(reply.text);
 ```
 
-For deployed apps, omit `credentials` or pass `{ type: 'env' }` to read provider
-credentials from environment variables.
+Model ids can be provider-qualified when one id exists under several providers:
+`openai-codex/gpt-5.5`.
+
+## What can you build with it?
+
+- **Chat agents** with streamed replies, durable memory, and an optional
+  persistent workspace per conversation —
+  [the flagship guide](docs/chat-agent.md).
+- **File pipelines**: seed files in, let the agent work, get changed files
+  back as bytes.
+- **Typed extraction and triage**: reviews, reports, classifications your
+  code consumes as data, not prose.
+- **Multi-agent workspaces**: share one sandbox handle between agents; they
+  see each other's files.
+- **Resumable jobs**: snapshot the workspace + serialize the thread, park them
+  in your database, pick both up later on another machine.
+
+## Sandboxes
 
 ```ts
-const agent = createAgent({
-  model: 'anthropic/claude-sonnet-4-5',
-});
+// Ephemeral (default): fresh workspace per run, destroyed after.
+await agent.run({ prompt });
+
+// Caller-owned: persists across runs; yours to destroy.
+const sandbox = await createVirtualSandbox();
+await agent.run({ prompt: 'Scaffold the project.', sandbox });
+await sandbox.exec('npm test');
+await db.save(id, await sandbox.snapshot());
+await sandbox.destroy();
 ```
 
-## Core capabilities
+Modes: `virtual` (bundled, default) · `host` (externally-isolated CI/containers)
+· `vercel` (cloud, optional `@ai-sdk/sandbox-vercel` peer, Node 22+) ·
+`custom` (bring your own provider). Details in [docs/sandboxes.md](docs/sandboxes.md).
 
-### Structured results
+## Docs
 
-Every run has a Standard Schema-compatible schema. The agent must submit a
-payload matching that schema, and `runcell` validates it before returning. Zod 3
-and Zod 4 schemas are both supported.
-
-```ts
-const schema = z.object({
-  severity: z.enum(['low', 'medium', 'high', 'critical']),
-  rationale: z.string(),
-  recommendedFixes: z.array(z.string()),
-});
-```
-
-### File inputs and outputs
-
-Pass files into the sandbox and receive files created or modified by the agent.
-
-```ts
-const report = result.files.find(file => file.path === 'report.md');
-const reportText = report ? new TextDecoder().decode(report.bytes) : '';
-```
-
-### Sandbox modes
-
-By default, `runcell` runs in a virtual sandbox workspace:
-
-```ts
-const agent = createAgent({
-  model: 'anthropic/claude-sonnet-4-5',
-  sandbox: 'virtual',
-});
-```
-
-Use host mode only when the current process is already isolated by something
-else, such as a CI job, container, or ephemeral VM:
-
-```ts
-const agent = createAgent({
-  model: 'anthropic/claude-sonnet-4-5',
-  sandbox: {
-    type: 'host',
-    rootDir: process.env.GITHUB_WORKSPACE ?? process.cwd(),
-    isolation: 'external',
-  },
-});
-```
-
-Host mode maps the agent workspace onto `rootDir`; `runcell` does not add an OS
-security boundary in this mode.
-
-Use Vercel Sandbox mode when you want cloud isolation. It requires Node.js 22+
-and the optional `@ai-sdk/sandbox-vercel` peer dependency:
-
-```ts
-const agent = createAgent({
-  model: 'anthropic/claude-sonnet-4-5',
-  sandbox: {
-    type: 'vercel',
-    runtime: 'node24',
-    ports: [3000],
-  },
-});
-```
-
-Advanced users can pass a custom sandbox provider:
-
-```ts
-const agent = createAgent({
-  model,
-  sandbox: { type: 'custom', provider },
-});
-```
-
-### Host tools
-
-Expose application functions the agent can call.
-
-```ts
-tools: {
-  lookupCustomer: {
-    description: 'Look up customer account details by customer id.',
-    schema: z.object({ id: z.string() }),
-    execute: ({ id }) => ({ id, name: 'Acme Inc.' }),
-  },
-}
-```
-
-### Events
-
-Stream text, tool calls, file changes, repairs, finishes, and errors into your
-UI or logs.
-
-```ts
-events: {
-  onText: text => process.stdout.write(text),
-  onFileChange: file => console.error(`changed ${file.path}`),
-  onFinish: finish => console.error(`finish: ${finish.finishReason}`),
-}
-```
-
-### Credentials
-
-Examples use local credentials by default. Application code defaults to
-environment credentials when `credentials` is omitted.
-
-Supported modes include `env`, `local`, explicit API keys, explicit agent
-directories, and shared lockable credential stores.
+| Guide                                                  |                                               |
+| ------------------------------------------------------ | --------------------------------------------- |
+| [Getting started](docs/getting-started.md)             | Install, credentials, models, first runs      |
+| [Building a chat agent](docs/chat-agent.md)            | Streaming + threads + persistence, end to end |
+| [Sandboxes](docs/sandboxes.md)                         | Handles, ownership, snapshot/restore, modes   |
+| [Threads](docs/threads.md)                             | Conversation memory and persistence           |
+| [Structured output](docs/structured-output.md)         | Schemas, repair turns, plain turns            |
+| [Streaming](docs/streaming.md)                         | `agent.stream()` and SSE                      |
+| [Files, tools, and events](docs/files-tools-events.md) | Workspace I/O, host tools, callbacks          |
+| [Credentials](docs/credentials.md)                     | env, local, API keys, shared stores           |
+| [API reference](docs/api.md)                           | Every export and type                         |
 
 ## Examples
 
-The examples in [`examples/`](examples/) are compile-checked and runnable.
+The examples in [`examples/`](examples/) are compile-checked and runnable; they
+default to local credentials so they're easy to run on a configured machine.
 
 | Command              | Demonstrates                                                |
 | -------------------- | ----------------------------------------------------------- |
@@ -264,47 +172,17 @@ The examples in [`examples/`](examples/) are compile-checked and runnable.
 | `npm run example:07` | Minimal shared credential store                             |
 | `npm run example:08` | Structured output plus returned file validation             |
 
-Run every example:
-
 ```bash
 RUNCELL_EXAMPLE_CREDENTIALS=local npm run examples:run
 ```
 
-Example configuration:
-
-```bash
-RUNCELL_EXAMPLE_MODEL=anthropic/claude-sonnet-4-5 npm run example:01
-RUNCELL_EXAMPLE_CREDENTIALS=env npm run example:01
-RUNCELL_EXAMPLE_CREDENTIALS=agentDir:/path/to/agent-dir npm run example:01
-```
-
-## Docs
-
-The README is the project overview and quickstart. Detailed docs are split into
-focused pages:
-
-- [Getting started](docs/getting-started.md)
-- [Examples](docs/examples.md)
-- [API](docs/api.md)
-- [Files, tools, and events](docs/files-tools-events.md)
-- [Credentials](docs/credentials.md)
-
 ## Development
 
 ```bash
-npm run check        # build + format:check + lint + typecheck + test
-npm run build        # build packages
-npm run lint         # run ESLint
-npm run format       # run Prettier
-npm run typecheck    # typecheck packages and examples
-npm run test         # run unit tests
-npm run test:live    # opt-in live smoke test
-```
-
-Run the live smoke test with local credentials:
-
-```bash
+npm install
+npm run check      # build, format, lint, typecheck, tests
 RUNCELL_LIVE=1 RUNCELL_LIVE_CREDENTIALS=local npm run test:live
 ```
 
-The CI gate runs the non-live checks on Node.js 20 and 22.
+Monorepo layout: the public package lives in `packages/agent/` (published as
+`runcell`); `examples/` are compile-checked against it.

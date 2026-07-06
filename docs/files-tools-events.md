@@ -1,85 +1,99 @@
 # Files, tools, and events
 
-## File inputs
+## Files in
 
-Seed files into the sandbox with `files`:
-
-```ts
-const result = await agent.run({
-  prompt: 'Read feedback.txt and create report.md.',
-  files: [{ path: 'feedback.txt', text: feedback }],
-  schema,
-});
-```
-
-Binary inputs are also supported:
+Seed the workspace before a run starts. Text and binary both work:
 
 ```ts
 await agent.run({
-  prompt: 'Inspect these uploaded bytes.',
-  files: [{ path: 'archive.bin', bytes }],
+  prompt: 'Read feedback.txt and create report.md.',
+  files: [
+    { path: 'feedback.txt', text: feedback },
+    { path: 'assets/data.bin', bytes: new Uint8Array([...]) },
+  ],
   schema,
 });
 ```
 
-Paths are workspace-relative. Absolute paths, `..` traversal, drive letters,
-backslashes, and null bytes are rejected before execution.
+Paths must be **relative workspace paths** — absolute paths, `..` segments,
+backslashes, and drive letters are rejected before the run starts.
 
-## File outputs
+## Files out
 
-Files created or modified by the agent are returned as `result.files`:
+Everything the agent creates or modifies comes back on the result:
 
 ```ts
-const report = result.files.find(file => file.path === 'report.md');
-const reportText = report ? new TextDecoder().decode(report.bytes) : '';
+const result = await agent.run({ prompt, schema });
+
+for (const file of result.files) {
+  file.path; // workspace-relative
+  file.change; // 'create' | 'modify'
+  file.bytes; // Uint8Array
+}
+
+const report = result.files.find(f => f.path === 'report.md');
+const text = report ? new TextDecoder().decode(report.bytes) : undefined;
 ```
 
-See `examples/08-file-output-validation.ts` for an end-to-end pattern that
-validates both structured data and returned file bytes.
+With a caller-owned [sandbox](./sandboxes.md) you can also just read the
+workspace directly (`sandbox.readTextFile(...)`) after — or during — runs.
 
 ## Host tools
 
-Expose host-side functions as tools:
+Tools are functions the agent can call on **your** process — application
+lookups, internal APIs, anything the sandbox itself can't reach:
 
 ```ts
-const lookupCustomerSchema = z.object({ id: z.string() });
+import { z } from 'zod';
 
 const agent = createAgent({
-  model: 'anthropic/claude-sonnet-4-5',
-  credentials: 'local',
+  model,
   tools: {
     lookupCustomer: {
       description: 'Look up customer account details by customer id.',
-      schema: lookupCustomerSchema,
-      execute: ({ id }) => ({
-        id,
-        name: 'Acme Inc.',
-        accountStatus: 'active',
-      }),
+      schema: z.object({ id: z.string() }),
+      execute: ({ id }) => db.customers.find(id), // sync or async
     },
   },
 });
 ```
 
-User tool names cannot collide with sandbox/runtime tools such as `read`,
-`write`, `edit`, `bash`, `grep`, `glob`, `ls`, `submitResult`, or `fileChange`.
+- `schema` is any [Standard Schema](https://standardschema.dev) validator —
+  the input is validated before `execute` runs, and typed from the schema.
+- The return value is serialized back to the model.
+- Reserved names (used by the runtime): `read`, `write`, `edit`, `bash`,
+  `grep`, `glob`, `ls`, `submitResult`, `fileChange`. Registering one throws
+  at `createAgent` time.
 
-## Event hooks
+## Events
 
-Use events to connect a run to a UI, logs, or validation pipeline:
+Lifecycle callbacks for logging, UIs, and metrics. All optional:
 
 ```ts
 const agent = createAgent({
-  model: 'anthropic/claude-sonnet-4-5',
-  credentials: 'local',
+  model,
   events: {
-    onText: text => process.stdout.write(text),
-    onToolCall: call => console.error(`calling ${call.name}`),
-    onToolResult: result => console.error(`finished ${result.name}`),
-    onFileChange: file => console.error(`changed ${file.path}`),
-    onRepair: repair => console.error(`repair #${repair.attempt}`),
-    onFinish: finish => console.error(`finish: ${finish.finishReason}`),
-    onError: error => console.error(error),
+    onText: delta => process.stdout.write(delta),
+    onToolCall: call => log('tool call', call.name, call.input),
+    onToolResult: result => log('tool result', result.name),
+    onFileChange: file => log('changed', file.path, file.change),
+    onRepair: info => log('repair attempt', info.attempt, info.reason),
+    onFinish: info => log('turn finished', info.finishReason),
+    onError: error => log('error', error),
   },
 });
 ```
+
+| Event          | Fires when                                      |
+| -------------- | ----------------------------------------------- |
+| `onText`       | a text delta streams from the model             |
+| `onToolCall`   | the agent invokes one of your tools             |
+| `onToolResult` | one of your tools returns                       |
+| `onFileChange` | the agent creates/modifies a workspace file     |
+| `onRepair`     | a repair turn starts (structured runs only)     |
+| `onFinish`     | a turn completes, with its finish reason        |
+| `onError`      | anything fails (the run still rejects normally) |
+
+Events fire for `run()` and `stream()` alike. For streaming text to a client,
+prefer `agent.stream()`'s `textStream` over `onText` — see
+[Streaming](./streaming.md).

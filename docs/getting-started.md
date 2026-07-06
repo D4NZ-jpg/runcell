@@ -2,52 +2,81 @@
 
 ## Install
 
-Install `runcell` and a Standard Schema-compatible validation library. The
-examples use Zod:
+```bash
+npm install runcell
+```
+
+If you want structured output, also install a
+[Standard Schema](https://standardschema.dev)-compatible validation library.
+The examples use Zod (v3 and v4 both work):
 
 ```bash
 npm install runcell zod
 ```
 
-For Vercel Sandbox mode, also install the optional provider:
+Nothing else is required: the default virtual sandbox is bundled. Optional
+extras like the Vercel Sandbox provider are separate installs (see
+[Sandboxes](./sandboxes.md)).
 
-```bash
-npm install @ai-sdk/sandbox-vercel
+## Credentials
+
+Application code defaults to environment credentials — omit `credentials` and
+provider keys are read from environment variables (`ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, and friends):
+
+```ts
+const agent = createAgent({ model: 'anthropic/claude-sonnet-4-5' });
 ```
 
-For this repository, install workspace dependencies first:
+On a configured development machine, opt into local credentials:
 
-```bash
-npm install
+```ts
+const agent = createAgent({
+  model: 'anthropic/claude-sonnet-4-5',
+  credentials: 'local',
+});
 ```
 
-## Run the basic example
+All modes (API keys, shared stores, custom directories) are covered in
+[Credentials](./credentials.md).
 
-Examples default to local credentials so they are easy to run on a configured
-development machine.
+## Models
 
-```bash
-npm run example:01
+`model` accepts a model id, a display name, or a provider-qualified id. When
+the same model id exists under several providers, qualify it to pin the one
+you hold credentials for:
+
+```ts
+createAgent({ model: 'anthropic/claude-sonnet-4-5' });
+createAgent({ model: 'openai-codex/gpt-5.5' }); // provider-qualified
 ```
 
-Override the model or credential mode when needed:
+## First run: a plain turn
 
-```bash
-RUNCELL_EXAMPLE_MODEL=anthropic/claude-sonnet-4-5 npm run example:01
-RUNCELL_EXAMPLE_CREDENTIALS=env npm run example:01
-RUNCELL_EXAMPLE_CREDENTIALS=agentDir:/path/to/agent-dir npm run example:01
+Without a schema, the model's text is the output:
+
+```ts
+import { createAgent } from 'runcell';
+
+const agent = createAgent({
+  model: 'anthropic/claude-sonnet-4-5',
+  credentials: 'local',
+});
+
+const reply = await agent.run({ prompt: 'Say hello in one sentence.' });
+console.log(reply.text); // the reply
+console.log(reply.finishReason); // "stop"
+console.log(reply.data); // undefined — no schema was given
 ```
 
-## Minimal app
+## First run: a structured task
+
+With a schema, the agent must submit a payload matching it, and `result.data`
+is the validated, typed output:
 
 ```ts
 import { createAgent } from 'runcell';
 import { z } from 'zod';
-
-const schema = z.object({
-  summary: z.string(),
-  nextSteps: z.array(z.string()),
-});
 
 const agent = createAgent({
   model: 'anthropic/claude-sonnet-4-5',
@@ -56,33 +85,25 @@ const agent = createAgent({
 
 const result = await agent.run({
   prompt: 'Summarize this project and suggest next steps.',
-  schema,
+  schema: z.object({
+    summary: z.string(),
+    nextSteps: z.array(z.string()),
+  }),
 });
 
-console.log(result.data.summary);
+console.log(result.data.summary); // typed
 ```
 
-## Production default
+## Where to next
 
-Application code can omit `credentials`. The default is `{ type: 'env' }`, so
-provider keys can come from the deployment environment.
+- Build something real: [Building a chat agent](./chat-agent.md)
+- Give runs a workspace that persists: [Sandboxes](./sandboxes.md)
+- Give runs memory: [Threads](./threads.md)
+- Stream tokens to a UI: [Streaming](./streaming.md)
 
-```ts
-const agent = createAgent({
-  model: 'anthropic/claude-sonnet-4-5',
-});
-```
-
-## Validation
-
-Run the non-live project gate:
+## Validating this repository
 
 ```bash
-npm run check
-```
-
-Run the opt-in live smoke test:
-
-```bash
+npm run check                     # build, lint, typecheck, tests
 RUNCELL_LIVE=1 RUNCELL_LIVE_CREDENTIALS=local npm run test:live
 ```
