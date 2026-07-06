@@ -2,14 +2,14 @@
 
 This is the guide the rest of the docs build toward: a chat endpoint where each
 conversation streams its replies, remembers its history, and can keep a working
-filesystem between turns — with **you** deciding where every piece of state
+filesystem between turns. You decide where every piece of state
 lives.
 
 The three primitives:
 
-- **Agent** — stateless. Create one per process and reuse it.
-- **Thread** — the conversation. A mutable value you persist wherever you want.
-- **Sandbox** — the workspace. Ephemeral by default; pass a handle to keep it.
+- **Agent**: stateless. Create one per process and reuse it.
+- **Thread**: the conversation. A mutable value you persist wherever you want.
+- **Sandbox**: the workspace. Ephemeral by default; pass a handle to keep it.
 
 ## Step 1: a minimal chat loop
 
@@ -40,7 +40,7 @@ for (;;) {
 
 Two things to notice:
 
-- No `schema` — a chat reply is the streamed text itself, not a structured
+- No `schema`: a chat reply is the streamed text itself, not a structured
   payload. `result.data` is `undefined` on these turns.
 - The `thread` is mutated in place: after `await result`, it contains the new
   user + agent turns, and the next call remembers everything so far.
@@ -48,7 +48,7 @@ Two things to notice:
 ## Step 2: an HTTP endpoint with persistence
 
 An agent server is stateless if you persist the thread between requests.
-`thread.toJSON()` is a plain JSON value — store it in Postgres, Redis, a file,
+`thread.toJSON()` is a plain JSON value. Store it in Postgres, Redis, a file,
 anywhere:
 
 ```ts
@@ -98,12 +98,12 @@ export async function POST(req: Request): Promise<Response> {
 
 Each request gets a fresh sandbox (created and destroyed by runcell), but the
 conversation survives: the thread carries its own continuation state, so the
-next turn picks up **exactly** where the last one ended — even on a different
+next turn picks up exactly where the last one ended, even on a different
 machine.
 
 ## Step 3: rendering history
 
-`thread.messages` is the render surface — a neutral log of turns for your UI:
+`thread.messages` is the render surface: a neutral log of turns for your UI:
 
 ```ts
 const thread = threadFromJSON(await db.loadThread(conversationId));
@@ -117,14 +117,14 @@ for (const message of thread.messages) {
 }
 ```
 
-Don't render (or touch) `thread.toJSON().continuation` — it's the opaque
+Don't render (or touch) `thread.toJSON().continuation`. It's the opaque
 engine state that makes lossless resume work. `messages` is for humans;
 `continuation` is for the machine.
 
 ## Step 4: a workspace that survives the conversation
 
 By default every turn runs in a fresh sandbox. If the conversation _builds_
-something — a project, a dataset, a report — keep one sandbox per conversation
+something (a project, a dataset, a report), keep one sandbox per conversation
 and pass the handle:
 
 ```ts
@@ -148,8 +148,8 @@ await sandbox.destroy();
 const revived = await restoreSandbox(await db.loadWorkspace(conversationId));
 ```
 
-Ownership rule: **you created the handle, you destroy it.** runcell never
-disposes a sandbox you passed in — and a thread's continuation works across
+The ownership rule: you created the handle, you destroy it. runcell never
+disposes a sandbox you passed in. A thread's continuation works across
 sandboxes, so conversation memory is never tied to workspace lifetime.
 
 ## Step 5: mixing in structured turns
@@ -185,5 +185,5 @@ one process-wide agent
 ```
 
 runcell owns none of your state. Threads and snapshots are plain JSON-safe
-values; where they live — and how conversations scale out — is your
+values; where they live, and how conversations scale out, is your
 architecture, not the library's.

@@ -7,7 +7,7 @@
 
 <br><br>
 
-_Run AI agents in isolated sandbox cells — streamed replies, durable
+_Run AI agents in isolated sandbox cells: streamed replies, durable
 conversations, validated structured output._
 
 ![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-3c873a?style=flat-square)
@@ -49,14 +49,14 @@ await db.save(thread.id, thread.toJSON()); // the whole conversation, as JSON
 Agent integrations make you assemble the same pieces every time: a sandbox,
 file plumbing, tool registration, streaming, schema validation, retries when
 the model misses the contract, conversation persistence. Runcell wraps those
-behind three primitives — and stays out of your architecture:
+behind three primitives and stays out of your architecture:
 
-- **Agent** — a stateless callable: `run()` for a result, `stream()` for a
+- **Agent**: a stateless callable. `run()` for a result, `stream()` for a
   live text feed plus the result.
-- **Sandbox** — the workspace. Ephemeral by default; create a handle to keep
+- **Sandbox**: the workspace. Ephemeral by default; create a handle to keep
   one across runs, read/write it directly, `snapshot()` it into your database,
   restore it anywhere. Runcell never destroys a sandbox you own.
-- **Thread** — the conversation. A mutable value with a readable message log
+- **Thread**: the conversation. A mutable value with a readable message log
   and lossless continuation state. `toJSON()` and store it wherever you want.
 
 There is no built-in store, no workflow engine, no hidden state. Concurrency
@@ -64,11 +64,11 @@ is `Promise.all`; persistence is your database; orchestration is your code.
 
 ### Structured output you can trust
 
-Give a run a schema — anything
+Give a run a schema: anything
 [Standard Schema](https://standardschema.dev)-compatible (Zod 3/4, Valibot,
-ArkType) — and the agent must submit a matching payload. Runcell validates it,
-runs repair turns when the model misses, and rejects rather than returning
-unvalidated data. `result.data` is authoritative; prose is for logs.
+ArkType). The agent must submit a matching payload. Runcell validates it,
+runs repair turns when the model misses, and fails the run when they don't
+help. Bad data never reaches your code. `result.data` is authoritative; prose is for logs.
 
 ```ts
 const result = await agent.run({
@@ -82,7 +82,7 @@ const result = await agent.run({
 result.data.severity; // typed and validated
 ```
 
-Or omit the schema entirely — then the streamed text _is_ the output, which is
+Omit the schema entirely and the streamed text _is_ the output, which is
 exactly what chat replies want.
 
 ## Quick start

@@ -18,16 +18,16 @@ const r = await agent.run({ prompt: 'What is the codename?', thread });
 
 Two parts with two different jobs:
 
-- **`messages`** — a neutral, readable log of turns
+- **`messages`**: a neutral, readable log of turns
   (`{ role, content, data?, createdAt }`). This is your render surface: loop
   over it to draw a chat UI, inspect it in tests, log it.
-- **`continuation`** (inside `toJSON()`) — an opaque, compressed capture of the
+- **`continuation`** (inside `toJSON()`): an opaque, compressed capture of the
   engine's exact conversation state, updated after each successful turn. This
   is what makes memory _lossless_: the next run restores the full internal
   state, not a summary. Never inspect or edit it.
 
 If a continuation is ever missing or can't be used (say, after an engine
-upgrade), runcell falls back to replaying `messages` as context — degraded but
+upgrade), runcell falls back to replaying `messages` as context: degraded but
 functional.
 
 ## Persistence: threads are plain values
@@ -48,7 +48,7 @@ thread, you have the whole conversation.
 
 ## Mutation and forking
 
-Threads mutate in place — after a successful run, the new user + agent turns
+Threads mutate in place. After a successful run, the new user + agent turns
 have been appended to the thread you passed. The rule that follows:
 
 > **One thread = one logical actor.** Don't hand the same thread to two
@@ -81,7 +81,7 @@ await agent.run({ prompt, thread });
 await agent.run({ prompt, thread, sandbox });
 ```
 
-A thread's continuation is portable across sandboxes — resume a conversation
+A thread's continuation is portable across sandboxes: resume a conversation
 on a brand-new sandbox, a restored snapshot, or a different machine.
 
 ## Failed runs

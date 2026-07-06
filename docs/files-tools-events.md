@@ -15,7 +15,7 @@ await agent.run({
 });
 ```
 
-Paths must be **relative workspace paths** — absolute paths, `..` segments,
+Paths must be relative workspace paths; absolute paths, `..` segments,
 backslashes, and drive letters are rejected before the run starts.
 
 ## Files out
@@ -36,11 +36,11 @@ const text = report ? new TextDecoder().decode(report.bytes) : undefined;
 ```
 
 With a caller-owned [sandbox](./sandboxes.md) you can also just read the
-workspace directly (`sandbox.readTextFile(...)`) after — or during — runs.
+workspace directly (`sandbox.readTextFile(...)`) after (or during) runs.
 
 ## Host tools
 
-Tools are functions the agent can call on **your** process — application
+Tools are functions the agent can call on your own process: application
 lookups, internal APIs, anything the sandbox itself can't reach:
 
 ```ts
@@ -95,5 +95,5 @@ const agent = createAgent({
 | `onError`      | anything fails (the run still rejects normally) |
 
 Events fire for `run()` and `stream()` alike. For streaming text to a client,
-prefer `agent.stream()`'s `textStream` over `onText` — see
+prefer `agent.stream()`'s `textStream` over `onText`; see
 [Streaming](./streaming.md).

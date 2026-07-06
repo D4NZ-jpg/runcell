@@ -93,7 +93,7 @@ Creates a fresh virtual sandbox and writes a snapshot's files back into it.
 | Member                  | Description                                                                           |
 | ----------------------- | ------------------------------------------------------------------------------------- |
 | `id`                    | Stable identifier for the resource.                                                   |
-| `capabilities`          | `{ ports, nativeSnapshot, resume }` — what this backend supports.                     |
+| `capabilities`          | `{ ports, nativeSnapshot, resume }`: what this backend supports.                      |
 | `exec(command, opts?)`  | Run a shell command → `{ exitCode, stdout, stderr }`. `opts`: `cwd`, `env`, `signal`. |
 | `readFile(path)`        | `Uint8Array \| null`.                                                                 |
 | `readTextFile(path)`    | `string \| null`.                                                                     |
@@ -131,7 +131,7 @@ See [Sandboxes](./sandboxes.md) for semantics; `vercel` requires the optional
 
 ### `SandboxProvider`
 
-The provider interface accepted by `{ type: 'custom' }` — an object with
+The provider interface accepted by `{ type: 'custom' }`: an object with
 `specificationVersion: 'harness-sandbox-v1'`, a `providerId`, and a
 `createSession()` method. Existing providers from the `@ai-sdk/sandbox-*`
 family satisfy it directly.
@@ -148,12 +148,12 @@ Rebuilds a thread from a persisted `ThreadState`.
 
 ### `Thread`
 
-| Member     | Description                                              |
-| ---------- | -------------------------------------------------------- |
-| `id`       | Conversation id.                                         |
-| `messages` | `readonly ThreadMessage[]` — the readable turn log.      |
-| `clone()`  | Deep, independent copy (fork the conversation).          |
-| `toJSON()` | `ThreadState` — plain JSON-safe value; persist anywhere. |
+| Member     | Description                                             |
+| ---------- | ------------------------------------------------------- |
+| `id`       | Conversation id.                                        |
+| `messages` | `readonly ThreadMessage[]`: the readable turn log.      |
+| `clone()`  | Deep, independent copy (fork the conversation).         |
+| `toJSON()` | `ThreadState`: plain JSON-safe value; persist anywhere. |
 
 ### `ThreadMessage`
 
@@ -162,7 +162,7 @@ Rebuilds a thread from a persisted `ThreadState`.
 ```
 
 `ThreadState.continuation` is an opaque engine capture used for lossless
-resume — persist it, never inspect it. See [Threads](./threads.md).
+resume; persist it, never inspect it. See [Threads](./threads.md).
 
 ## Tools
 
@@ -180,7 +180,7 @@ Reserved tool names: `read`, `write`, `edit`, `bash`, `grep`, `glob`, `ls`,
 ## Events (`AgentEvents`)
 
 `onText`, `onToolCall`, `onToolResult`, `onFileChange`, `onRepair`,
-`onFinish`, `onError` — all optional. Details in
+`onFinish`, `onError`, all optional. Details in
 [Files, tools, and events](./files-tools-events.md).
 
 ## Files
@@ -215,6 +215,6 @@ type InferSchemaOutput<TSchema extends AgentSchema> =
 ## Advanced / plumbing exports
 
 `normalizeFiles`, `normalizeCredentials`, `assertSafeWorkspacePath`,
-`resolveSandboxConfig`, `createSandboxProvider` — the validation and resolution
+`resolveSandboxConfig`, `createSandboxProvider`: the validation and resolution
 primitives `createAgent` uses internally, exported for programmatic use and
 testing.

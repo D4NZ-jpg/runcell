@@ -1,6 +1,6 @@
 # runcell
 
-Run AI agents in isolated sandbox cells — streamed replies, durable
+Run AI agents in isolated sandbox cells: streamed replies, durable
 conversations, validated structured output.
 
 ```ts
@@ -28,20 +28,20 @@ const review = await agent.run({
 runcell gives an agent a sandbox workspace and gives you back values your
 application can rely on:
 
-- **Streaming** — `agent.stream()` returns `{ textStream, result }`; pipe
+- **Streaming**: `agent.stream()` returns `{ textStream, result }`; pipe
   deltas to a UI and await the final result.
-- **Structured output** — pass any
+- **Structured output**: pass any
   [Standard Schema](https://standardschema.dev) validator (Zod 3/4, Valibot,
   ArkType); runcell validates the agent's submission, runs repair turns when
-  the model misses, and rejects rather than returning unvalidated data. Omit
+  the model misses, and fails the run when they don't help. Omit
   the schema for plain text turns.
-- **Sandboxes** — ephemeral by default. Or create a caller-owned handle:
+- **Sandboxes**: ephemeral by default. Or create a caller-owned handle:
   reuse it across runs, `exec`/read/write it directly, `snapshot()` it to
   JSON, `restoreSandbox()` anywhere. runcell never destroys a sandbox you own.
-- **Threads** — conversation memory as a value: a readable message log plus
+- **Threads**: conversation memory as a value. a readable message log plus
   lossless continuation state. `toJSON()` it into your database; resume on
   any sandbox, any machine.
-- **Files, tools, events** — seed files in, get changed files back as bytes,
+- **Files, tools, events**: seed files in, get changed files back as bytes,
   expose host functions as tools, observe everything through callbacks.
 
 ## Install

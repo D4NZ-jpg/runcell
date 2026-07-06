@@ -29,7 +29,7 @@ result.data.severity; // typed: 'low' | 'medium' | 'high' | 'critical'
 How it works: the schema is exposed to the agent as a required submission
 contract. The agent works in its sandbox (reading files, running commands,
 calling your tools), and must finish by submitting a payload. runcell validates
-that payload against your schema before returning — `result.data` is
+that payload against your schema before returning. `result.data` is
 authoritative; `result.text` is the surrounding prose, useful for logs.
 
 ## Repair turns
@@ -42,7 +42,7 @@ repair turn asking it to correct the submission. Configure the budget with
 const agent = createAgent({ model, maxRepairs: 2 });
 ```
 
-If the budget is exhausted, `run` rejects with `IncompleteResultError` — you
+If the budget is exhausted, `run` rejects with `IncompleteResultError`, and you
 never receive unvalidated data.
 
 ```ts
@@ -63,7 +63,7 @@ Repair attempts are observable via the `onRepair` event
 ## Schema libraries: Standard Schema
 
 `schema` accepts anything implementing
-[Standard Schema](https://standardschema.dev) — Zod 3.24+, Zod 4, Valibot,
+[Standard Schema](https://standardschema.dev): Zod 3.24+, Zod 4, Valibot,
 ArkType, and others. No lock-in to a specific library or version:
 
 ```ts
@@ -77,7 +77,7 @@ await agent.run({
 
 One nuance: libraries that can produce JSON Schema (Zod does out of the box)
 give the model the most precise description of the expected payload. Bare
-Standard Schema validators still work — they validate the final output, with
+Standard Schema validators still work; they validate the final output, with
 generic guidance to the model.
 
 ## Without a schema: plain turns
@@ -93,10 +93,10 @@ reply.finishReason; // why the turn ended, e.g. "stop"
 ```
 
 No submission contract, no repair loop, one turn. This is the mode chat
-replies want — see [Building a chat agent](./chat-agent.md).
+replies want; see [Building a chat agent](./chat-agent.md).
 
 ## Choosing per run
 
-`schema` is a per-run decision, so one agent freely mixes both shapes — plain
-conversational turns and structured extraction turns — even within the same
+`schema` is a per-run decision, so one agent freely mixes both shapes: plain
+conversational turns and structured extraction turns, even within the same
 [thread](./threads.md).

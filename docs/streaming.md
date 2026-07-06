@@ -13,8 +13,8 @@ for await (const delta of textStream) {
 const final = await result; // the same RunResult run() would return
 ```
 
-- **`textStream`** — an `AsyncIterable<string>` of the model's text deltas.
-- **`result`** — a promise for the final `RunResult`. **Always await it**, even
+- **`textStream`**: an `AsyncIterable<string>` of the model's text deltas.
+- **`result`**: a promise for the final `RunResult`. Always await it, even
   if you only care about the stream: it finalizes the turn, surfaces errors,
   and (with a thread) commits the conversation state.
 
@@ -60,7 +60,7 @@ export async function POST(req: Request): Promise<Response> {
 }
 ```
 
-The full server pattern — with threads and persistence — is in
+The full server pattern, with threads and persistence, is in
 [Building a chat agent](./chat-agent.md).
 
 ## Everything else stays on events
@@ -84,5 +84,5 @@ See [Files, tools, and events](./files-tools-events.md) for the full list.
 ## Errors
 
 If the run fails, the stream simply ends and `result` rejects. Handle errors
-where you `await result` — a `try`/`catch` around only the `for await` loop is
+where you `await result`; a `try`/`catch` around only the `for await` loop is
 not enough.

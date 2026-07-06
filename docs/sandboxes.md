@@ -5,7 +5,7 @@ Every run executes inside a sandbox workspace. There are two ways to get one:
 - **Ephemeral (default):** omit `sandbox`, or pass a mode option like
   `'virtual'`. runcell creates the sandbox for the run and destroys it after.
 - **Caller-owned handle:** create a `Sandbox` yourself and pass it to runs.
-  It persists across runs — and runcell **never** destroys it.
+  It persists across runs, and runcell never destroys it.
 
 ```ts
 import { createAgent, createVirtualSandbox } from 'runcell';
@@ -38,7 +38,7 @@ const text = await sandbox.readTextFile('src/index.ts'); // string | null
 await sandbox.remove('scratch'); // file or directory, no-op if missing
 ```
 
-Paths are relative to the sandbox workspace — the same directory the agent
+Paths are relative to the sandbox workspace, the same directory the agent
 works in, so anything the agent writes is immediately visible to your code and
 vice versa.
 
@@ -62,7 +62,7 @@ automatically.
 
 ## Sharing and concurrency
 
-A handle is just a value — share it between agents or runs however you like:
+A handle is just a value. Share it between agents or runs however you like:
 
 ```ts
 await Promise.all([
@@ -72,7 +72,7 @@ await Promise.all([
 ```
 
 runcell guarantees its own bookkeeping stays consistent under concurrent use,
-but it does not referee your logic — two agents writing the same file is
+but it does not referee your logic: two agents writing the same file is
 allowed, exactly like two processes on a real machine. If you want mutual
 exclusion, one opt-in primitive is provided:
 
@@ -96,7 +96,7 @@ if (sandbox.capabilities.ports) {
 ```
 
 The bundled virtual sandbox reports `{ ports: false, nativeSnapshot: false,
-resume: false }` — portable file snapshots work everywhere regardless.
+resume: false }`. Portable file snapshots work everywhere regardless.
 
 ## Sandbox modes (ephemeral)
 
@@ -114,7 +114,7 @@ await agent.run({ prompt, sandbox: 'virtual' }); // same as omitting it
 ### Host
 
 Maps the workspace onto a real directory. **Only** for processes that are
-already externally isolated — a CI job, container, or ephemeral VM. runcell
+already externally isolated: a CI job, a container, an ephemeral VM. runcell
 does not add an OS security boundary in this mode, which is why the option
 forces you to say so:
 
@@ -153,7 +153,7 @@ Bring your own provider (Docker, E2B, Modal, a pre-created cloud sandbox, …):
 await agent.run({ prompt, sandbox: { type: 'custom', provider } });
 ```
 
-`provider` implements the sandbox provider interface — see
+`provider` implements the sandbox provider interface; see
 [API reference](./api.md#sandboxprovider).
 
 ## Ownership rules, in one table
