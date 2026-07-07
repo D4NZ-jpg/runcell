@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Monorepo for runcell: build AI agents in TypeScript that return typed, validated data.",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "workspaces": [
     "packages/*"

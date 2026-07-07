@@ -8,6 +8,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Initial public release.
 
+### Requirements
+
+- Node.js 22 or newer.
+
 ### Agent
 
 - `createAgent({ model, credentials, instructions, tools, events, sandbox, maxRepairs })`
