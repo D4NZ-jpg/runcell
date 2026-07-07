@@ -66,5 +66,13 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/D4NZ-jpg/runcell.git"
+  },
+  "homepage": "https://d4nz-jpg.github.io/runcell/",
+  "bugs": {
+    "url": "https://github.com/D4NZ-jpg/runcell/issues"
   }
 }
