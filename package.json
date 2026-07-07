@@ -34,7 +34,9 @@
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",
-    "test:consumer": "node scripts/consumer-smoke.mjs"
+    "test:consumer": "node scripts/consumer-smoke.mjs",
+    "release:dry": "npm run build && npm publish -w runcell --dry-run",
+    "release": "npm run check && npm publish -w runcell"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.6.1",

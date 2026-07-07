@@ -1,6 +1,6 @@
 {
   "name": "runcell",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Build AI agents in TypeScript that return typed, validated data. Every run is sandboxed.",
   "type": "module",
   "license": "MIT",
@@ -26,7 +26,8 @@
     "build": "del-cli dist && tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest --run",
-    "test:live": "vitest --run --config vitest.live.config.ts"
+    "test:live": "vitest --run --config vitest.live.config.ts",
+    "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
     "@ai-sdk/sandbox-vercel": "1.0.0-beta.20"
@@ -51,11 +52,19 @@
     "ai",
     "agent",
     "sandbox",
-    "structured-output"
+    "structured-output",
+    "typescript",
+    "llm",
+    "ai-agents",
+    "standard-schema",
+    "zod"
   ],
   "peerDependenciesMeta": {
     "@ai-sdk/sandbox-vercel": {
       "optional": true
     }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
