@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Monorepo for runcell — run AI agents in an isolated sandbox cell with a structured output contract.",
+  "description": "Monorepo for runcell: build AI agents in TypeScript that return typed, validated data.",
   "engines": {
     "node": ">=20"
   },

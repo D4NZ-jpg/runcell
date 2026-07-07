@@ -1,7 +1,7 @@
 {
   "name": "runcell",
   "version": "0.0.0",
-  "description": "Run AI agents in an isolated sandbox cell with a structured output contract.",
+  "description": "Build AI agents in TypeScript that return typed, validated data. Every run is sandboxed.",
   "type": "module",
   "license": "MIT",
   "sideEffects": false,

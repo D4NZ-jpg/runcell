@@ -21,7 +21,7 @@ export async function runBasicExample(): Promise<
     files: [
       {
         path: 'runcell.txt',
-        text: 'runcell runs AI agents in an isolated sandbox cell. It accepts files, host tools, event callbacks, and a Zod schema. The agent must submit its final structured result through a hidden submitResult tool.',
+        text: 'runcell lets you build AI agents in TypeScript that return typed, validated data. Each run is sandboxed and accepts files, host tools, event callbacks, and a schema. The agent submits its final structured result through a hidden submitResult tool.',
       },
     ],
     schema: summarySchema,

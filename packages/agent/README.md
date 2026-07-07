@@ -1,7 +1,7 @@
 # runcell
 
-Run AI agents in isolated sandbox cells: streamed replies, durable
-conversations, validated structured output.
+Build AI agents in TypeScript that return typed, validated data. Every run is
+sandboxed, with streaming and durable conversations built in.
 
 ```ts
 import { createAgent, createThread } from 'runcell';

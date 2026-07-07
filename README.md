@@ -7,8 +7,8 @@
 
 <br><br>
 
-_Run AI agents in isolated sandbox cells: streamed replies, durable
-conversations, validated structured output._
+_Build AI agents in TypeScript that return typed, validated data. Every run is
+sandboxed, with streaming and durable conversations built in._
 
 ![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-3c873a?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-blue?style=flat-square&logo=typescript&logoColor=white)

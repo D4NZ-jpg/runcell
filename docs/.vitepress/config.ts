@@ -9,7 +9,7 @@ const base = process.env['DOCS_BASE'] ?? '/';
 export default defineConfig({
   title: 'Runcell',
   description:
-    'Run AI agents in isolated sandbox cells — streamed replies, durable conversations, validated structured output.',
+    'Build AI agents in TypeScript that return typed, validated data. Every run is sandboxed, with streaming and durable conversations built in.',
   base,
   cleanUrls: true,
   // Attach each page's raw markdown (minus frontmatter) so the theme can offer

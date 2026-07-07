@@ -13,14 +13,14 @@ hero:
       link: /chat-agent
 
 features:
-  - title: Isolated by default
-    details: Every run happens in a sandboxed workspace, so file writes and shell commands never touch your machine. The virtual sandbox is bundled; host, Vercel, and custom providers are there when you need them.
   - title: Typed, validated output
     details: Works with any Standard Schema library (Zod, Valibot, ArkType). Runcell checks the agent's submission, asks it to fix mistakes, and fails the run if it can't. Bad data never reaches your code.
   - title: Streaming built in
     details: agent.stream() returns the text as an async iterable plus a promise for the final result. Wiring it to SSE takes about a dozen lines.
   - title: Conversations that fit in a database row
     details: A thread is a plain JSON value that carries a readable message log and everything needed to continue where you left off. Store it in your own database and pick the conversation back up on any machine.
+  - title: Isolated by default
+    details: Every run happens in a sandboxed workspace, so file writes and shell commands never touch your machine. The virtual sandbox is bundled; host, Vercel, and custom providers are there when you need them.
   - title: Workspaces as values
     details: Keep one sandbox across runs, share it between agents, or read its files from your own code. snapshot() turns it into JSON you can restore later.
   - title: Not a framework
