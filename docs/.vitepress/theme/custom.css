@@ -83,6 +83,13 @@
   }
 }
 
+/* Landing FAQ: indent each answer under its question heading so the
+   question -> answer relationship reads clearly. On the home page, h3 appears
+   only in the Common questions section. */
+.VPHome .vp-doc h3 + p {
+  padding-left: 22px;
+}
+
 /* Landing entrance: fade + 8px rise, staggered. Rare-view page, so a touch of
    delight is allowed; content is interactive throughout. */
 @media (prefers-reduced-motion: no-preference) {
