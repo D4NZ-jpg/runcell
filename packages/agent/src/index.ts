@@ -4,6 +4,7 @@ export {
   RuncellError,
   InvalidOptionError,
   IncompleteResultError,
+  TurnError,
   CredentialError,
   NotImplementedError,
 } from './errors.js';

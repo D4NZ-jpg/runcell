@@ -111,6 +111,8 @@ export interface RunOptionsBase {
   thread?: Thread;
   /** Per-run instructions appended to the agent-level instructions. */
   instructions?: string;
+  /** Per-run lifecycle callbacks, invoked in addition to the agent-level ones. */
+  events?: AgentEvents;
   /** Resume a previous session by id. */
   sessionId?: string;
   /** Abort signal to cancel the run. */
@@ -151,8 +153,8 @@ export interface RunResult<TData> {
 /**
  * A streaming run. Iterate {@link StreamRun.textStream} to receive the model's
  * text as it is generated, and await {@link StreamRun.result} for the final
- * outcome. Tool calls, file changes, and other events are delivered through the
- * agent's `events` callbacks.
+ * outcome. Tool calls, file changes, and other events are delivered through
+ * the agent-level and per-run `events` callbacks.
  */
 export interface StreamRun<TData> {
   /** The model's text output, streamed delta by delta. */

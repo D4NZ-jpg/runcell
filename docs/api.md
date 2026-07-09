@@ -50,6 +50,8 @@ run(options: RunOptionsBase): Promise<RunResult<undefined>>;
 | `sandbox`      | `Sandbox \| SandboxOption` | A caller-owned handle (reused, never destroyed by runcell) or an ephemeral mode option.            |
 | `thread`       | `Thread`                   | Conversation to continue; mutated in place on success.                                             |
 | `instructions` | `string`                   | Per-run instructions appended to the agent-level instructions.                                     |
+| `events`       | `AgentEvents`              | Per-run lifecycle callbacks, invoked in addition to the agent-level ones.                          |
+| `sessionId`    | `string`                   | Resume a previous session by id.                                                                   |
 | `signal`       | `AbortSignal`              | Cancels the run.                                                                                   |
 
 ### `RunResult<TData>`
@@ -180,7 +182,8 @@ Reserved tool names: `read`, `write`, `edit`, `bash`, `grep`, `glob`, `ls`,
 ## Events (`AgentEvents`)
 
 `onText`, `onToolCall`, `onToolResult`, `onFileChange`, `onRepair`,
-`onFinish`, `onError`, all optional. Details in
+`onFinish`, `onError`, all optional. Register them at the agent level, per
+run, or both — both sets fire. Details in
 [Files, tools, and events](./files-tools-events.md).
 
 ## Files
@@ -197,12 +200,13 @@ Paths must be relative workspace paths (no absolute paths, no `..`).
 
 All runcell errors extend `RuncellError`:
 
-| Error                   | Thrown when                                                                      |
-| ----------------------- | -------------------------------------------------------------------------------- |
-| `InvalidOptionError`    | Options are malformed (bad sandbox option, reserved tool name, foreign thread…). |
-| `IncompleteResultError` | A structured run exhausted its repair budget without a valid payload.            |
-| `CredentialError`       | Credential configuration is unsafe or malformed (e.g. `local` in production).    |
-| `NotImplementedError`   | A declared-but-unavailable capability was invoked.                               |
+| Error                   | Thrown when                                                                                                                                                                                   |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `InvalidOptionError`    | Options are malformed (bad sandbox option, reserved tool name, foreign thread…).                                                                                                              |
+| `IncompleteResultError` | A structured run exhausted its repair budget without a valid payload.                                                                                                                         |
+| `TurnError`             | The engine reported a terminal error for a turn (e.g. a provider API failure); the original error is `cause`. Engine-reported aborts also surface here — inspect `cause` to distinguish them. |
+| `CredentialError`       | Credential configuration is unsafe or malformed (e.g. `local` in production).                                                                                                                 |
+| `NotImplementedError`   | A declared-but-unavailable capability was invoked.                                                                                                                                            |
 
 ## Schema typing helpers
 

@@ -67,7 +67,10 @@ const agent = createAgent({
 
 ## Events
 
-Lifecycle callbacks for logging, UIs, and metrics. All optional:
+Lifecycle callbacks for logging, UIs, and metrics. All optional, and
+best-effort: a throwing callback is swallowed and never affects the run.
+Register them at the agent level (every run) or per run via
+`agent.run({ ..., events })` — when both are set, both fire.
 
 ```ts
 const agent = createAgent({
@@ -84,15 +87,15 @@ const agent = createAgent({
 });
 ```
 
-| Event          | Fires when                                      |
-| -------------- | ----------------------------------------------- |
-| `onText`       | a text delta streams from the model             |
-| `onToolCall`   | the agent invokes one of your tools             |
-| `onToolResult` | one of your tools returns                       |
-| `onFileChange` | the agent creates/modifies a workspace file     |
-| `onRepair`     | a repair turn starts (structured runs only)     |
-| `onFinish`     | a turn completes, with its finish reason        |
-| `onError`      | anything fails (the run still rejects normally) |
+| Event          | Fires when                                                                   |
+| -------------- | ---------------------------------------------------------------------------- |
+| `onText`       | a text delta streams from the model                                          |
+| `onToolCall`   | the agent invokes one of your tools                                          |
+| `onToolResult` | one of your tools returns                                                    |
+| `onFileChange` | the agent creates/modifies a workspace file                                  |
+| `onRepair`     | a repair turn starts (structured runs only)                                  |
+| `onFinish`     | a turn completes, with its finish reason                                     |
+| `onError`      | the run fails after the session has started (the run still rejects normally) |
 
 Events fire for `run()` and `stream()` alike. For streaming text to a client,
 prefer `agent.stream()`'s `textStream` over `onText`; see

@@ -343,6 +343,109 @@ describe('defaultRuntime', () => {
     expect(result.finishReason).toBe('stop');
   });
 
+  it('fails the run with the real error when the stream reports a terminal error', async () => {
+    const errors: unknown[] = [];
+    installRuntimeMocks([
+      () => [
+        { type: 'text-delta', text: 'partial' },
+        { type: 'error', error: new Error('400 provider says no') },
+      ],
+    ]);
+    const runtime = await loadRuntime();
+    const { TurnError } = await import('./errors.js');
+
+    await expect(
+      runtime.run(
+        createRuntimeInput(z.object({ ok: z.boolean() }), {
+          agentOptions: { events: { onError: error => errors.push(error) } },
+        }),
+      ),
+    ).rejects.toThrow('400 provider says no');
+
+    // Emitted exactly once, from the run-level catch, as the thrown TurnError.
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(TurnError);
+    expect((errors[0] as Error).cause).toBeInstanceOf(Error);
+  });
+
+  it('fails a plain turn on a terminal stream error instead of returning empty text', async () => {
+    installRuntimeMocks([() => [{ type: 'error', error: 'quota exhausted' }]]);
+    const runtime = await loadRuntime();
+    const { TurnError } = await import('./errors.js');
+
+    await expect(
+      runtime.run({
+        agentOptions: { model: 'anthropic/test' },
+        config: {
+          model: 'anthropic/test',
+          instructions: undefined,
+          credentials: { mode: 'apiKeys', keys: { anthropic: 'test-key' } },
+          toolNames: [],
+          sandbox: { type: 'virtual' },
+          maxRepairs: 1,
+        },
+        runOptions: { prompt: 'say hi' },
+      }),
+    ).rejects.toBeInstanceOf(TurnError);
+  });
+
+  it('invokes both agent-level and per-run event callbacks', async () => {
+    const agentTexts: string[] = [];
+    const runTexts: string[] = [];
+    let runFinishes = 0;
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    installRuntimeMocks([
+      agent => {
+        agent.submit({ ok: true });
+        return [
+          { type: 'text-delta', text: 'hi' },
+          { type: 'finish', finishReason: 'stop' },
+        ];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    try {
+      await runtime.run(
+        createRuntimeInput(z.object({ ok: z.boolean() }), {
+          agentOptions: {
+            events: {
+              // An async rejecting listener (as a JS consumer would pass
+              // despite the void signature) is still best-effort.
+              // eslint-disable-next-line @typescript-eslint/no-misused-promises
+              onText: delta => {
+                agentTexts.push(delta);
+                return Promise.reject(new Error('async boom'));
+              },
+              // A throwing agent-level listener must not starve the run-level one.
+              onFinish: () => {
+                throw new Error('agent onFinish boom');
+              },
+            },
+          },
+          runOptions: {
+            events: {
+              onText: delta => runTexts.push(delta),
+              onFinish: () => {
+                runFinishes += 1;
+              },
+            },
+          },
+        }),
+      );
+      await new Promise(resolve => setImmediate(resolve));
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+
+    expect(agentTexts).toEqual(['hi']);
+    expect(runTexts).toEqual(['hi']);
+    expect(runFinishes).toBe(1);
+    expect(unhandled).toEqual([]);
+  });
+
   it('propagates the original error when onError itself throws', async () => {
     installRuntimeMocks([() => []]);
     const runtime = await loadRuntime();

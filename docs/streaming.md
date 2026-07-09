@@ -66,7 +66,8 @@ The full server pattern, with threads and persistence, is in
 ## Everything else stays on events
 
 `textStream` carries text only. Tool calls, tool results, file changes,
-repairs, and errors are delivered through the agent's `events` callbacks,
+repairs, and errors are delivered through the agent-level and per-run
+`events` callbacks,
 which fire during streamed and non-streamed runs alike:
 
 ```ts

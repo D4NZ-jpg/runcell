@@ -31,6 +31,18 @@ export class IncompleteResultError extends RuncellError {
 }
 
 /**
+ * Thrown when the engine reports a terminal error for a turn — for example a
+ * provider API failure or an aborted request. The original error is available
+ * as `cause`.
+ */
+export class TurnError extends RuncellError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'TurnError';
+  }
+}
+
+/**
  * Thrown when credentials are misconfigured for the current environment
  * (for example, local file credentials used in production without opt-in).
  */

@@ -25,7 +25,7 @@ import type {
   CredentialPlan,
   CredentialStore,
 } from './credentials.js';
-import { IncompleteResultError } from './errors.js';
+import { IncompleteResultError, TurnError } from './errors.js';
 import { normalizeFiles, type NormalizedFile } from './files.js';
 import { assertSafeWorkspacePath } from './paths.js';
 import {
@@ -44,6 +44,7 @@ import {
   type ThreadContinuation,
 } from './thread.js';
 import type {
+  AgentEvents,
   AgentOptions,
   AgentSchema,
   ChangedFile,
@@ -92,6 +93,7 @@ async function runWithHarness({
   let submitted: unknown;
 
   const schema = runOptions.schema;
+  const events = mergeEvents(agentOptions.events, runOptions.events);
   const threadInternals = getThreadInternals(runOptions.thread);
   let succeeded = false;
 
@@ -174,7 +176,7 @@ async function runWithHarness({
     const maxAttempts = schema ? config.maxRepairs : 0;
     for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
       if (attempt > 0) {
-        safeEmit(agentOptions.events?.onRepair, {
+        safeEmit(events?.onRepair, {
           attempt,
           reason: 'missing or invalid structured result',
         });
@@ -189,10 +191,11 @@ async function runWithHarness({
         ...(runOptions.signal ? { abortSignal: runOptions.signal } : {}),
       });
 
+      let streamError: { cause: unknown } | undefined;
       for await (const part of result.stream) {
         await handleStreamPart({
           part,
-          events: agentOptions.events,
+          events,
           sandboxContext,
           changedFiles,
           abortSignal: runOptions.signal,
@@ -204,7 +207,21 @@ async function runWithHarness({
           setFinishReason(reason) {
             finishReason = reason;
           },
+          setStreamError(cause) {
+            streamError ??= { cause };
+          },
         });
+      }
+
+      // Terminal for the turn: fail the run with the real error instead of
+      // dissolving into an empty result. Thrown after the stream drains so
+      // the iterator closes cleanly.
+      if (streamError) {
+        const { cause } = streamError;
+        throw new TurnError(
+          cause instanceof Error ? cause.message : String(cause),
+          { cause },
+        );
       }
 
       // No schema: the turn's text is the output; return after one turn.
@@ -246,7 +263,7 @@ async function runWithHarness({
       'Agent finished without submitting a valid structured result.',
     );
   } catch (error) {
-    safeEmit(agentOptions.events?.onError, error);
+    safeEmit(events?.onError, error);
     throw error;
   } finally {
     const ownedSandbox = ownsSandbox ? sandboxSession : undefined;
@@ -281,6 +298,36 @@ async function bestEffort(fn: () => Promise<unknown>): Promise<void> {
   }
 }
 
+/** Combine agent-level and per-run callbacks; each side stays best-effort. */
+function mergeEvents(
+  agent: AgentEvents | undefined,
+  run: AgentEvents | undefined,
+): AgentEvents | undefined {
+  if (!agent || !run) {
+    return agent ?? run;
+  }
+  // Field list must track AgentEvents; a missing key would silently drop
+  // that callback's run-level side.
+  const both =
+    <TArgs extends unknown[]>(
+      a: ((...args: TArgs) => void) | undefined,
+      b: ((...args: TArgs) => void) | undefined,
+    ) =>
+    (...args: TArgs) => {
+      safeEmit(a, ...args);
+      safeEmit(b, ...args);
+    };
+  return {
+    onText: both(agent.onText, run.onText),
+    onToolCall: both(agent.onToolCall, run.onToolCall),
+    onToolResult: both(agent.onToolResult, run.onToolResult),
+    onFileChange: both(agent.onFileChange, run.onFileChange),
+    onRepair: both(agent.onRepair, run.onRepair),
+    onFinish: both(agent.onFinish, run.onFinish),
+    onError: both(agent.onError, run.onError),
+  };
+}
+
 /**
  * Invoke an event callback per the {@link AgentEvents} contract: callbacks are
  * best-effort, so a throwing listener never breaks the run.
@@ -290,7 +337,12 @@ function safeEmit<TArgs extends unknown[]>(
   ...args: TArgs
 ): void {
   try {
-    listener?.(...args);
+    const result = listener?.(...args) as unknown;
+    if (result instanceof Promise) {
+      // An async listener is still best-effort: observe its rejection so it
+      // cannot surface as an unhandled rejection.
+      void result.catch(() => undefined);
+    }
   } catch {
     // Intentionally swallowed.
   }
@@ -628,6 +680,7 @@ async function handleStreamPart({
   sessionId,
   appendText,
   setFinishReason,
+  setStreamError,
 }: {
   part: { type: string; [key: string]: unknown };
   events: AgentOptions['events'];
@@ -637,6 +690,7 @@ async function handleStreamPart({
   sessionId: string;
   appendText: (delta: string) => void;
   setFinishReason: (reason: string) => void;
+  setStreamError: (cause: unknown) => void;
 }): Promise<void> {
   switch (part.type) {
     case 'text-delta': {
@@ -691,7 +745,7 @@ async function handleStreamPart({
     }
 
     case 'error':
-      safeEmit(events?.onError, part['error']);
+      setStreamError(part['error']);
       return;
   }
 }
