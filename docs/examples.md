@@ -13,6 +13,7 @@ The examples in `examples/` are compile-checked and runnable.
 | `npm run example:07` | Minimal shared credential store                             |
 | `npm run example:08` | Structured output plus returned file validation             |
 | `npm run example:09` | Chat agent: streaming, thread persistence, shared sandbox   |
+| `npm run example:10` | Multi-phase runs sharing one sandbox and thread             |
 
 Run all examples:
 
