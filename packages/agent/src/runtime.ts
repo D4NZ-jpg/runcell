@@ -158,9 +158,12 @@ async function runWithHarness({
     },
   });
 
-  const sessionId = continuation
-    ? continuationSessionId(continuation)
-    : pinnedSessionId;
+  // A caller-owned sandbox pins the session id so every run shares one
+  // workspace directory; the continuation's own id only decides where an
+  // ephemeral sandbox resumes.
+  const sessionId =
+    pinnedSessionId ??
+    (continuation ? continuationSessionId(continuation) : undefined);
   const session = await harnessAgent.createSession({
     ...(sessionId ? { sessionId } : {}),
     ...(resumeFrom ? { resumeFrom } : {}),

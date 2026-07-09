@@ -57,13 +57,15 @@ class MockSession {
   ) {}
   detach(): Promise<unknown> {
     this.detachCount += 1;
-    // Simulate Pi flushing its journal into the sandbox on detach.
+    // Simulate Pi flushing its journal into the sandbox on detach. The resume
+    // state's session id lives in Pi's own namespace, distinct from the
+    // harness session id it was created with.
     this.sandbox.files.set(JOURNAL_PATH, JOURNAL_BYTES);
     return Promise.resolve({
       type: 'resume-session',
       harnessId: 'pi',
       specificationVersion: 'harness-v1',
-      sessionId: this.sessionId,
+      sessionId: `pi-${this.sessionId}`,
       data: { sessionFileName: 'session.jsonl' },
     });
   }
@@ -216,11 +218,39 @@ describe('thread continuation lifecycle', () => {
     expect(second?.createSessionCalls[0]?.resumeFrom).toEqual(
       continuation?.resume,
     );
-    expect(second?.createSessionCalls[0]?.sessionId).toBe('sess');
+    expect(second?.createSessionCalls[0]?.sessionId).toBe('pi-sess');
     expect(second?.streamCalls[0]?.prompt).toBe('second');
 
     // The journal was re-materialized into the fresh sandbox before Pi started.
     expect(second?.sandbox.files.get(JOURNAL_PATH)).toEqual(JOURNAL_BYTES);
+  });
+
+  it('keeps a caller-owned sandbox pinned to one workspace across thread resumes', async () => {
+    installMocks();
+    const { defaultRuntime } = await import('./runtime.js');
+    const { createThread } = await import('./thread.js');
+    const { createVirtualSandbox, getSandboxInternals } =
+      await import('./sandbox-handle.js');
+
+    const thread = createThread({ id: 'chat' });
+    const sandbox = await createVirtualSandbox();
+    const token = getSandboxInternals(sandbox)?.sessionToken;
+    state.scripts = [okScript('one'), okScript('two')];
+
+    try {
+      await defaultRuntime.run(makeInput('first', { thread, sandbox }));
+      await defaultRuntime.run(makeInput('second', { thread, sandbox }));
+    } finally {
+      await sandbox.destroy();
+    }
+
+    const [first, second] = state.instances;
+    expect(first?.createSessionCalls[0]?.sessionId).toBe(token);
+    // The resumed run must stay in the handle's pinned workspace instead of
+    // following the continuation's Pi-internal session id — otherwise its file
+    // changes land in a directory the caller's handle never sees.
+    expect(second?.createSessionCalls[0]?.sessionId).toBe(token);
+    expect(second?.createSessionCalls[0]?.resumeFrom).toBeDefined();
   });
 
   it('clears the continuation and disposes an owned sandbox when journal capture fails', async () => {
