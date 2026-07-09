@@ -311,6 +311,59 @@ describe('defaultRuntime', () => {
     ]);
   });
 
+  it('never lets throwing event callbacks break the run', async () => {
+    installRuntimeMocks([
+      agent => {
+        agent.submit({ ok: true });
+        return [
+          { type: 'text-delta', text: 'hello' },
+          { type: 'finish', finishReason: 'stop' },
+        ];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    const result = await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() }), {
+        agentOptions: {
+          events: {
+            onText: () => {
+              throw new Error('onText boom');
+            },
+            onFinish: () => {
+              throw new Error('onFinish boom');
+            },
+          },
+        },
+      }),
+    );
+
+    expect(result.data).toEqual({ ok: true });
+    expect(result.text).toBe('hello');
+    expect(result.finishReason).toBe('stop');
+  });
+
+  it('propagates the original error when onError itself throws', async () => {
+    installRuntimeMocks([() => []]);
+    const runtime = await loadRuntime();
+    const { IncompleteResultError } = await import('./errors.js');
+
+    await expect(
+      runtime.run(
+        createRuntimeInput(z.object({ ok: z.boolean() }), {
+          agentOptions: {
+            events: {
+              onError: () => {
+                throw new Error('onError boom');
+              },
+            },
+          },
+          config: { maxRepairs: 0 },
+        }),
+      ),
+    ).rejects.toBeInstanceOf(IncompleteResultError);
+  });
+
   it('wraps host tools', async () => {
     const lookupSchema = z.object({ query: z.string() });
     const lookupInputs: z.infer<typeof lookupSchema>[] = [];

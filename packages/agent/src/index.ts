@@ -1,5 +1,4 @@
 export { createAgent } from './create-agent.js';
-export type { ResolvedAgentConfig } from './create-agent.js';
 
 export {
   RuncellError,

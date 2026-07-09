@@ -52,7 +52,8 @@ export interface FinishEvent {
 }
 
 /**
- * Streaming + lifecycle callbacks. All are optional and best-effort.
+ * Streaming + lifecycle callbacks. All are optional and best-effort: a
+ * throwing callback is swallowed and never affects the run.
  */
 export interface AgentEvents {
   onText?: (text: string) => void;

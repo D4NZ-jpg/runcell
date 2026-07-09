@@ -4,6 +4,7 @@ import type {
   HarnessV1SandboxProvider,
 } from '@ai-sdk/harness';
 import { HARNESS_ID } from '@local/harness-pi-raw';
+import { shellQuote } from './shell.js';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
@@ -348,8 +349,4 @@ function bytesToBase64(bytes: Uint8Array): string {
 
 function base64ToBytes(data: string): Uint8Array {
   return new Uint8Array(Buffer.from(data, 'base64'));
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }

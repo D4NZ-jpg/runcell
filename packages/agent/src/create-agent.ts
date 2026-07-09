@@ -173,6 +173,10 @@ export function createAgent(
       .finally(() => {
         text.close();
       });
+    // A consumer may iterate only textStream; pre-observe the rejection so a
+    // failed run never surfaces as an unhandled rejection, while `result`
+    // still rejects for callers that await it.
+    void result.catch(() => undefined);
     return { textStream: text.iterable, result };
   };
 

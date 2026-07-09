@@ -1,4 +1,5 @@
 import { createJustBashSandbox } from '@ai-sdk/sandbox-just-bash';
+import { shellQuote } from './shell.js';
 import type {
   HarnessV1NetworkSandboxSession,
   HarnessV1SandboxProvider,
@@ -10,6 +11,7 @@ import type {
 import { spawn as spawnChild } from 'node:child_process';
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { constants as osConstants } from 'node:os';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
 import { InvalidOptionError } from './errors.js';
@@ -355,12 +357,16 @@ class HostSandboxSession implements HarnessV1NetworkSandboxSession {
     );
   };
 
-  spawn = (options: {
+  // async (despite no await) so a pre-aborted signal rejects instead of throwing synchronously.
+  // eslint-disable-next-line @typescript-eslint/require-await
+  spawn = async (options: {
     command: string;
     workingDirectory?: string;
     env?: Record<string, string>;
     abortSignal?: AbortSignal;
   }): Promise<Experimental_SandboxProcess> => {
+    options.abortSignal?.throwIfAborted();
+
     const cwd = this.toHostPath(options.workingDirectory ?? HOST_VIRTUAL_ROOT);
     const command = this.toHostCommand(options.command);
     const child = spawnChild(command, {
@@ -373,22 +379,28 @@ class HostSandboxSession implements HarnessV1NetworkSandboxSession {
     const abort = () => child.kill();
     options.abortSignal?.addEventListener('abort', abort, { once: true });
 
-    return Promise.resolve({
+    const exit = new Promise<{ exitCode: number }>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', (code, signal) => {
+        resolve({
+          exitCode: code ?? 128 + (signal ? osConstants.signals[signal] : 0),
+        });
+      });
+    });
+    exit
+      .catch(() => undefined)
+      .finally(() => options.abortSignal?.removeEventListener('abort', abort));
+
+    return {
       ...(child.pid ? { pid: child.pid } : {}),
       stdout: nodeReadableToWeb(child.stdout),
       stderr: nodeReadableToWeb(child.stderr),
-      wait: () =>
-        new Promise(resolve => {
-          child.once('close', code => {
-            options.abortSignal?.removeEventListener('abort', abort);
-            resolve({ exitCode: code ?? 0 });
-          });
-        }),
+      wait: () => exit,
       kill: () => {
         child.kill();
         return Promise.resolve();
       },
-    });
+    };
   };
 
   run = async (options: {
@@ -623,8 +635,4 @@ function toUint8Array(value: unknown): Uint8Array {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }

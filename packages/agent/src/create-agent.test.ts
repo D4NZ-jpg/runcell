@@ -165,7 +165,47 @@ describe('createAgent', () => {
     ).resolves.toMatchObject({ data: { ok: true } });
     expect(runtime.calls).toHaveLength(1);
   });
+
+  it('stream does not leave an unhandled rejection when only textStream is consumed', async () => {
+    const unhandled: unknown[] = [];
+    const listener = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', listener);
+    try {
+      const agent = createAgent(
+        { model: 'anthropic/claude-sonnet-4-5' },
+        { nodeEnv: 'development', runtime: createFailingRuntimeMock() },
+      );
+
+      const { textStream } = agent.stream({ prompt: 'do a thing' });
+      const deltas: string[] = [];
+      for await (const delta of textStream) {
+        deltas.push(delta);
+      }
+      await new Promise(resolve => setImmediate(resolve));
+
+      expect(deltas).toEqual([]);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', listener);
+    }
+  });
+
+  it('stream still rejects result for callers that await it', async () => {
+    const agent = createAgent(
+      { model: 'anthropic/claude-sonnet-4-5' },
+      { nodeEnv: 'development', runtime: createFailingRuntimeMock() },
+    );
+
+    const { result } = agent.stream({ prompt: 'do a thing' });
+    await expect(result).rejects.toThrow('run failed');
+  });
 });
+
+function createFailingRuntimeMock(): RuncellRuntime {
+  return { run: () => Promise.reject(new Error('run failed')) };
+}
 
 function createRuntimeMock(
   result: { data: unknown } = { data: {} },

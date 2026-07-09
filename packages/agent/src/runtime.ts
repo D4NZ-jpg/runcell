@@ -3,6 +3,7 @@ import {
   type HarnessAgentResumeSessionState,
 } from '@ai-sdk/harness/agent';
 import type { HarnessV1NetworkSandboxSession } from '@ai-sdk/harness';
+import { shellQuote } from './shell.js';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import {
   jsonSchema,
@@ -170,7 +171,7 @@ async function runWithHarness({
     const maxAttempts = schema ? config.maxRepairs : 0;
     for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
       if (attempt > 0) {
-        agentOptions.events?.onRepair?.({
+        safeEmit(agentOptions.events?.onRepair, {
           attempt,
           reason: 'missing or invalid structured result',
         });
@@ -242,28 +243,53 @@ async function runWithHarness({
       'Agent finished without submitting a valid structured result.',
     );
   } catch (error) {
-    agentOptions.events?.onError?.(error);
+    safeEmit(agentOptions.events?.onError, error);
     throw error;
   } finally {
-    try {
-      if (succeeded && threadInternals) {
-        // Flush Pi's journal into the sandbox (leaves it running), capture it
-        // into the thread, then dispose the sandbox only if we own it.
+    const ownedSandbox = ownsSandbox ? sandboxSession : undefined;
+    if (succeeded && threadInternals) {
+      // Flush Pi's journal into the sandbox (leaves it running) and capture
+      // it into the thread. The continuation is cleared up front so a failed
+      // capture leaves neutral replay rather than a stale journal, and an
+      // owned sandbox is disposed regardless of how the capture went.
+      threadInternals.continuation = undefined;
+      await bestEffort(async () => {
         const resume = await session.detach();
         const journalGz = await readJournal(sandboxContext, resume);
         if (journalGz) {
           threadInternals.continuation = { engine: 'pi', resume, journalGz };
         }
-        if (ownsSandbox && sandboxSession) {
-          await disposeSandbox(sandboxSession);
-        }
-      } else {
-        await session.destroy();
+      });
+      if (ownedSandbox) {
+        await bestEffort(() => disposeSandbox(ownedSandbox));
       }
-    } catch {
-      // Teardown is best-effort: a failed detach just means the next run
-      // falls back to neutral replay.
+    } else {
+      await bestEffort(() => session.destroy());
     }
+  }
+}
+
+/** Teardown is best-effort: a failure only degrades the next run. */
+async function bestEffort(fn: () => Promise<unknown>): Promise<void> {
+  try {
+    await fn();
+  } catch {
+    // Intentionally swallowed.
+  }
+}
+
+/**
+ * Invoke an event callback per the {@link AgentEvents} contract: callbacks are
+ * best-effort, so a throwing listener never breaks the run.
+ */
+function safeEmit<TArgs extends unknown[]>(
+  listener: ((...args: TArgs) => void) | undefined,
+  ...args: TArgs
+): void {
+  try {
+    listener?.(...args);
+  } catch {
+    // Intentionally swallowed.
   }
 }
 
@@ -613,14 +639,14 @@ async function handleStreamPart({
     case 'text-delta': {
       const delta = typeof part['text'] === 'string' ? part['text'] : '';
       appendText(delta);
-      events?.onText?.(delta);
+      safeEmit(events?.onText, delta);
       return;
     }
 
     case 'tool-call': {
       const name = typeof part['toolName'] === 'string' ? part['toolName'] : '';
       if (name && name !== 'submitResult') {
-        events?.onToolCall?.({
+        safeEmit(events?.onToolCall, {
           id: typeof part['toolCallId'] === 'string' ? part['toolCallId'] : '',
           name,
           input: part['input'],
@@ -642,7 +668,7 @@ async function handleStreamPart({
         return;
       }
       if (name && name !== 'submitResult') {
-        events?.onToolResult?.({
+        safeEmit(events?.onToolResult, {
           id: typeof part['toolCallId'] === 'string' ? part['toolCallId'] : '',
           name,
           output: part['output'],
@@ -657,12 +683,12 @@ async function handleStreamPart({
           ? part['finishReason']
           : 'unknown';
       setFinishReason(reason);
-      events?.onFinish?.({ sessionId, finishReason: reason });
+      safeEmit(events?.onFinish, { sessionId, finishReason: reason });
       return;
     }
 
     case 'error':
-      events?.onError?.(part['error']);
+      safeEmit(events?.onError, part['error']);
       return;
   }
 }
@@ -704,7 +730,7 @@ async function recordFileChange({
     bytes,
   };
   changedFiles.set(safePath, file);
-  onFileChange?.(file);
+  safeEmit(onFileChange, file);
 }
 
 function isFileChangePayload(
@@ -832,8 +858,4 @@ function joinSections(...sections: (string | undefined)[]): string {
     .map(section => section?.trim())
     .filter((section): section is string => Boolean(section))
     .join('\n\n');
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }

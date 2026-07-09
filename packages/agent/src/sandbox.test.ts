@@ -117,6 +117,55 @@ describe('host sandbox provider', () => {
     ).resolves.toBe('changed');
   });
 
+  it('rejects commands when the abort signal is already aborted', async () => {
+    const rootDir = await mkdtemp(path.join(tmpdir(), 'runcell-host-'));
+    const provider = createSandboxProvider({
+      type: 'host',
+      rootDir,
+      isolation: 'external',
+    });
+    const session = await provider.createSession({ sessionId: 'test-session' });
+
+    await expect(
+      session.run({
+        command: `printf ran > ${path.join(rootDir, 'ran.txt')}`,
+        abortSignal: AbortSignal.abort(),
+      }),
+    ).rejects.toThrow('aborted');
+    await expect(readFile(path.join(rootDir, 'ran.txt'))).rejects.toThrow();
+  });
+
+  it('rejects wait() when the shell cannot spawn', async () => {
+    const rootDir = await mkdtemp(path.join(tmpdir(), 'runcell-host-'));
+    const provider = createSandboxProvider({
+      type: 'host',
+      rootDir,
+      isolation: 'external',
+    });
+    const session = await provider.createSession({ sessionId: 'test-session' });
+
+    const proc = await session.spawn({
+      command: 'echo hi',
+      workingDirectory: '/workspace/does-not-exist',
+    });
+
+    await expect(proc.wait()).rejects.toThrow('ENOENT');
+  });
+
+  it('maps signal-terminated commands to 128 + signal number', async () => {
+    const rootDir = await mkdtemp(path.join(tmpdir(), 'runcell-host-'));
+    const provider = createSandboxProvider({
+      type: 'host',
+      rootDir,
+      isolation: 'external',
+    });
+    const session = await provider.createSession({ sessionId: 'test-session' });
+
+    const result = await session.run({ command: 'kill -TERM $$' });
+
+    expect(result.exitCode).toBe(143);
+  });
+
   it('rejects file access outside rootDir', async () => {
     const rootDir = await mkdtemp(path.join(tmpdir(), 'runcell-host-'));
     const provider = createSandboxProvider({

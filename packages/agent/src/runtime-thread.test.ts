@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { gunzipSync } from 'node:zlib';
 import { z } from 'zod';
 import type { ResolvedAgentConfig } from './create-agent.js';
+import type { SandboxOption, SandboxProvider } from './sandbox.js';
 import type { AgentOptions, RunOptions } from './types.js';
 import type { Thread } from './thread.js';
 
@@ -75,6 +76,7 @@ class MockSession {
 class MockHarnessAgent {
   readonly settings: {
     tools: Record<string, { execute(input: unknown): unknown }>;
+    sandbox?: { createSession(options: object): Promise<unknown> };
     onSandboxSession?: (opts: {
       session: FakeSandbox;
       sessionWorkDir: string;
@@ -97,6 +99,7 @@ class MockHarnessAgent {
     resumeFrom?: unknown;
   }): Promise<MockSession> {
     this.createSessionCalls.push(options ?? {});
+    await this.settings.sandbox?.createSession({});
     await this.settings.onSandboxSession?.({
       session: this.sandbox,
       sessionWorkDir: '/work',
@@ -220,6 +223,62 @@ describe('thread continuation lifecycle', () => {
     expect(second?.sandbox.files.get(JOURNAL_PATH)).toEqual(JOURNAL_BYTES);
   });
 
+  it('clears the continuation and disposes an owned sandbox when journal capture fails', async () => {
+    installMocks();
+    const { defaultRuntime } = await import('./runtime.js');
+    const { createThread, getThreadInternals } = await import('./thread.js');
+
+    const thread = createThread({ id: 'chat' });
+    const owned = fakeOwnedSandbox();
+    state.scripts = [
+      okScript('one'),
+      agent => {
+        // The journal read during teardown blows up.
+        agent.sandbox.readBinaryFile = () =>
+          Promise.reject(new Error('read failed'));
+        agent.submit({ ok: true });
+        return [{ type: 'text-delta', text: 'two' }];
+      },
+    ];
+
+    await defaultRuntime.run(makeInput('first', { thread }));
+    expect(getThreadInternals(thread)?.continuation).toBeDefined();
+
+    await defaultRuntime.run(
+      makeInput('second', { thread, sandbox: owned.option }),
+    );
+
+    // No stale continuation survives, and the billed sandbox is still gone.
+    expect(getThreadInternals(thread)?.continuation).toBeUndefined();
+    expect(owned.destroyCount()).toBe(1);
+  });
+
+  it('disposes an owned sandbox even when detach fails', async () => {
+    installMocks();
+    const { defaultRuntime } = await import('./runtime.js');
+    const { createThread, getThreadInternals } = await import('./thread.js');
+
+    const thread = createThread({ id: 'chat' });
+    const owned = fakeOwnedSandbox();
+    state.scripts = [
+      agent => {
+        if (agent.session) {
+          agent.session.detach = () =>
+            Promise.reject(new Error('detach failed'));
+        }
+        agent.submit({ ok: true });
+        return [{ type: 'text-delta', text: 'one' }];
+      },
+    ];
+
+    await defaultRuntime.run(
+      makeInput('first', { thread, sandbox: owned.option }),
+    );
+
+    expect(getThreadInternals(thread)?.continuation).toBeUndefined();
+    expect(owned.destroyCount()).toBe(1);
+  });
+
   it('destroys the session and stores nothing without a thread', async () => {
     installMocks();
     const { defaultRuntime } = await import('./runtime.js');
@@ -251,6 +310,32 @@ describe('readPiContinuation', () => {
     ).toBeUndefined();
   });
 });
+
+/**
+ * A per-run custom sandbox whose network session counts disposals, so tests
+ * can assert an owned sandbox is destroyed during teardown.
+ */
+function fakeOwnedSandbox(): {
+  option: SandboxOption;
+  destroyCount: () => number;
+} {
+  let destroyed = 0;
+  const session = {
+    destroy: () => {
+      destroyed += 1;
+      return Promise.resolve();
+    },
+  };
+  const option: SandboxOption = {
+    type: 'custom',
+    provider: {
+      specificationVersion: 'harness-sandbox-v1',
+      providerId: 'fake-network',
+      createSession: () => Promise.resolve(session),
+    } as unknown as SandboxProvider,
+  };
+  return { option, destroyCount: () => destroyed };
+}
 
 function toAsyncIterable(
   parts: readonly StreamPart[],
