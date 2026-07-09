@@ -33,6 +33,7 @@ import type {
 import type { Experimental_SandboxSession } from '@ai-sdk/provider-utils';
 import { resolvePiAuth, type PiAuthOptions } from './pi-auth';
 import { getPiTerminalError, parseNativeEvent } from './pi-events';
+import { HARNESS_ID } from './pi-harness-id';
 import { createPiModelResolver } from './pi-model-resolver';
 import { createPiPathMapper } from './pi-paths';
 import { createPiRemoteOps, type PiRemoteOps } from './pi-remote-ops';
@@ -56,8 +57,6 @@ import {
 import { PiWorkspaceVfs } from './pi-workspace-vfs';
 import { syncHostWorkspaceFromSandbox } from './pi-workspace-mirror';
 
-const HARNESS_ID = 'pi';
-
 /*
  * Pi runs in this Node process, not behind an attachable in-sandbox bridge.
  * During a tool approval pause the Pi turn is still alive and blocked on the
@@ -66,6 +65,26 @@ const HARNESS_ID = 'pi';
  * error. Cross-process resume still falls back to the persisted session file.
  */
 const parkedPiSessions = new Map<string, HarnessV1Session>();
+
+/*
+ * Parked sessions hold live resources (VFS mount, host tmpdir, live Pi
+ * session), so a session that is never resumed would otherwise leak for the
+ * process lifetime. Cap the park and evict + destroy the oldest entry on
+ * overflow; the Map's insertion order is the LRU order (re-parking
+ * re-inserts).
+ */
+const MAX_PARKED_PI_SESSIONS = 8;
+
+function parkPiSession(sessionId: string, session: HarnessV1Session): void {
+  parkedPiSessions.delete(sessionId);
+  parkedPiSessions.set(sessionId, session);
+  while (parkedPiSessions.size > MAX_PARKED_PI_SESSIONS) {
+    const [oldestId, oldest] = parkedPiSessions.entries().next().value!;
+    parkedPiSessions.delete(oldestId);
+    // Best-effort teardown: eviction must not fail the park that caused it.
+    void Promise.resolve(oldest.doDestroy()).catch(() => {});
+  }
+}
 
 /**
  * Whether a discovered resource path belongs to a specific directory.
@@ -306,142 +325,191 @@ export async function createPiSession(
   // not exist on the host, so it is a safe, collision-free VFS mount point.
   const sessionWorkDir = input.sessionWorkDir;
 
-  await mkdir(hostWorkDir, { recursive: true });
-  await mkdir(hostAgentDir, { recursive: true });
-  await mkdir(hostSessionDir, { recursive: true });
-
   const sandbox = input.sandboxSession.restricted();
   const permissionMode = input.permissionMode ?? 'allow-all';
-  let sandboxSkillRootDir: string | undefined;
-  let harnessSkills: Skill[] = [];
 
-  // Materialise harness-provided skills into sandbox HOME, not the workspace.
-  if (input.skills.length > 0) {
-    const sandboxHomeDir = await resolveSandboxHomeDir({
-      sandbox,
-      ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
-    });
-    sandboxSkillRootDir = path.posix.join(sandboxHomeDir, '.agents', 'skills');
-    harnessSkills = createHarnessPiSkills({
-      skills: input.skills,
-      sandboxSkillRootDir,
-    });
-    await writePiSkills({
-      sandbox,
-      sandboxHomeDir,
-      skills: input.skills,
-      ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
-    });
-  }
-
-  // On resume: pull the Pi session file out of the sandbox into the fresh
-  // host mirror so SessionManager.open can read it.
-  let resumeSessionFilePath: string | undefined;
-  if (input.isResume && input.resumeSessionFileName) {
-    resumeSessionFilePath = await pullSessionFileFromSandbox({
-      sandbox,
-      sessionWorkDir: input.sessionWorkDir,
-      hostSessionDir,
-      sessionFileName: input.resumeSessionFileName,
-      ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
-    });
-  }
-
-  // Snapshot sandbox state into the host mirror BEFORE the VFS goes live so
-  // Pi sees the workspace as soon as it boots.
-  await syncHostWorkspaceFromSandbox({
-    sandbox,
-    sandboxWorkDir: input.sessionWorkDir,
-    hostWorkDir,
-  });
-
-  // Mount only the workspace: the model's view of the workspace lives at
-  // `sessionWorkDir` and is backed by `hostWorkDir`. The agent and session
-  // directories stay on the real host filesystem (below) — they are host-only
-  // Pi state (auth, model registry, session journal) that must never surface
-  // in the sandbox or the workspace mirror.
+  // Constructed up front (the mount happens mid-acquisition below) so a
+  // failed init can always unwind the process-global fs patches a partial
+  // acquisition may have installed.
   const workspaceVfs = new PiWorkspaceVfs();
-  workspaceVfs.mount(hostWorkDir, sessionWorkDir);
 
-  const paths = createPiPathMapper({
-    hostWorkDir,
-    sandboxWorkDir: sessionWorkDir,
-    readableRoots: sandboxSkillRootDir
-      ? [{ sandboxDir: sandboxSkillRootDir }]
-      : [],
-  });
+  const acquireSessionResources = async () => {
+    await mkdir(hostWorkDir, { recursive: true });
+    await mkdir(hostAgentDir, { recursive: true });
+    await mkdir(hostSessionDir, { recursive: true });
 
-  // Pi auth + model registry are global to this Pi session. These live on the
-  // real host filesystem (`hostAgentDir`), never in the sandbox/workspace.
-  const authStorage =
-    input.settings.authStorage ??
-    AuthStorage.create(path.join(hostAgentDir, 'auth.json'));
-  const modelRegistry =
-    input.settings.modelRegistry ??
-    ModelRegistry.create(authStorage, path.join(hostAgentDir, 'models.json'));
-  const settingsManager =
-    input.settings.settingsManager ?? SettingsManager.inMemory();
+    let sandboxSkillRootDir: string | undefined;
+    let harnessSkills: Skill[] = [];
 
-  // Run-scoped env (for the model resolver's gateway fallback heuristic).
-  const resolverEnv = resolvePiAuth(input.settings.auth, process.env, {
+    // Materialise harness-provided skills into sandbox HOME, not the workspace.
+    if (input.skills.length > 0) {
+      const sandboxHomeDir = await resolveSandboxHomeDir({
+        sandbox,
+        ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+      });
+      sandboxSkillRootDir = path.posix.join(
+        sandboxHomeDir,
+        '.agents',
+        'skills',
+      );
+      harnessSkills = createHarnessPiSkills({
+        skills: input.skills,
+        sandboxSkillRootDir,
+      });
+      await writePiSkills({
+        sandbox,
+        sandboxHomeDir,
+        skills: input.skills,
+        ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+      });
+    }
+
+    // On resume: pull the Pi session file out of the sandbox into the fresh
+    // host mirror so SessionManager.open can read it.
+    let resumeSessionFilePath: string | undefined;
+    if (input.isResume && input.resumeSessionFileName) {
+      resumeSessionFilePath = await pullSessionFileFromSandbox({
+        sandbox,
+        sessionWorkDir: input.sessionWorkDir,
+        hostSessionDir,
+        sessionFileName: input.resumeSessionFileName,
+        ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+      });
+    }
+
+    // Snapshot sandbox state into the host mirror BEFORE the VFS goes live so
+    // Pi sees the workspace as soon as it boots.
+    await syncHostWorkspaceFromSandbox({
+      sandbox,
+      sandboxWorkDir: input.sessionWorkDir,
+      hostWorkDir,
+    });
+
+    // Mount only the workspace: the model's view of the workspace lives at
+    // `sessionWorkDir` and is backed by `hostWorkDir`. The agent and session
+    // directories stay on the real host filesystem (below) — they are host-only
+    // Pi state (auth, model registry, session journal) that must never surface
+    // in the sandbox or the workspace mirror.
+    workspaceVfs.mount(hostWorkDir, sessionWorkDir);
+
+    const paths = createPiPathMapper({
+      hostWorkDir,
+      sandboxWorkDir: sessionWorkDir,
+      readableRoots: sandboxSkillRootDir
+        ? [{ sandboxDir: sandboxSkillRootDir }]
+        : [],
+    });
+
+    // Pi auth + model registry are global to this Pi session. These live on the
+    // real host filesystem (`hostAgentDir`), never in the sandbox/workspace.
+    const authStorage =
+      input.settings.authStorage ??
+      AuthStorage.create(path.join(hostAgentDir, 'auth.json'));
+    const modelRegistry =
+      input.settings.modelRegistry ??
+      ModelRegistry.create(authStorage, path.join(hostAgentDir, 'models.json'));
+    const settingsManager =
+      input.settings.settingsManager ?? SettingsManager.inMemory();
+
+    // Run-scoped env (for the model resolver's gateway fallback heuristic).
+    const resolverEnv = resolvePiAuth(input.settings.auth, process.env, {
+      authStorage,
+      modelRegistry,
+    });
+
+    const resourceLoaderOptions = input.settings.resourceLoaderOptions ?? {};
+    const userSkillsOverride = resourceLoaderOptions.skillsOverride;
+    const extensionFactories = [
+      ...(resourceLoaderOptions.extensionFactories ?? []),
+      ...(input.settings.extensionFactories ?? []),
+    ];
+    const additionalExtensionPaths = [
+      ...(resourceLoaderOptions.additionalExtensionPaths ?? []),
+      ...(input.settings.additionalExtensionPaths ?? []),
+    ];
+
+    const resourceLoader =
+      input.settings.resourceLoader ??
+      new DefaultResourceLoader({
+        ...resourceLoaderOptions,
+        cwd: sessionWorkDir,
+        agentDir: hostAgentDir,
+        settingsManager,
+        extensionFactories,
+        additionalExtensionPaths,
+        appendSystemPromptOverride:
+          resourceLoaderOptions.appendSystemPromptOverride ?? (() => []),
+        // Pi runs in the host process. Keep stock safe defaults unless callers
+        // explicitly opt into raw SDK resource loading.
+        noExtensions:
+          resourceLoaderOptions.noExtensions ??
+          !(input.settings.enableExtensions ?? false),
+        noThemes:
+          resourceLoaderOptions.noThemes ??
+          !(input.settings.enableThemes ?? false),
+        noPromptTemplates:
+          resourceLoaderOptions.noPromptTemplates ??
+          !(input.settings.enablePromptTemplates ?? false),
+        skillsOverride: base => {
+          const overridden = userSkillsOverride
+            ? userSkillsOverride(base)
+            : base;
+          return {
+            ...overridden,
+            skills: [
+              ...(input.settings.allowGlobalSkills
+                ? overridden.skills
+                : overridden.skills.filter(skill =>
+                    isWithinWorkspace(
+                      skill.filePath,
+                      sessionWorkDir,
+                      hostWorkDir,
+                    ),
+                  )),
+              ...harnessSkills,
+            ],
+          };
+        },
+      });
+    await resourceLoader.reload();
+    applyPendingProviderRegistrations({ resourceLoader, modelRegistry });
+
+    const resolveModel = createPiModelResolver(modelRegistry, resolverEnv);
+    // Resolve once: deterministic given the configured model. This is the Pi
+    // `Model` object handed to `createAgentSession`.
+    const resolvedModel = resolveModel(input.settings.model);
+
+    return {
+      resumeSessionFilePath,
+      paths,
+      authStorage,
+      modelRegistry,
+      settingsManager,
+      resourceLoader,
+      resolvedModel,
+    };
+  };
+
+  let acquired: Awaited<ReturnType<typeof acquireSessionResources>>;
+  try {
+    acquired = await acquireSessionResources();
+  } catch (error) {
+    // Unwind partial acquisition so a failed init leaves no process-global fs
+    // patches or host tmpdir behind. A caller-supplied `agentDir` outside
+    // `hostRoot` is intentionally left in place.
+    workspaceVfs.unmount();
+    await rm(hostRoot, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+  const {
+    resumeSessionFilePath,
+    paths,
     authStorage,
     modelRegistry,
-  });
-
-  const resourceLoaderOptions = input.settings.resourceLoaderOptions ?? {};
-  const userSkillsOverride = resourceLoaderOptions.skillsOverride;
-  const extensionFactories = [
-    ...(resourceLoaderOptions.extensionFactories ?? []),
-    ...(input.settings.extensionFactories ?? []),
-  ];
-  const additionalExtensionPaths = [
-    ...(resourceLoaderOptions.additionalExtensionPaths ?? []),
-    ...(input.settings.additionalExtensionPaths ?? []),
-  ];
-
-  const resourceLoader =
-    input.settings.resourceLoader ??
-    new DefaultResourceLoader({
-      ...resourceLoaderOptions,
-      cwd: sessionWorkDir,
-      agentDir: hostAgentDir,
-      settingsManager,
-      extensionFactories,
-      additionalExtensionPaths,
-      appendSystemPromptOverride:
-        resourceLoaderOptions.appendSystemPromptOverride ?? (() => []),
-      // Pi runs in the host process. Keep stock safe defaults unless callers
-      // explicitly opt into raw SDK resource loading.
-      noExtensions:
-        resourceLoaderOptions.noExtensions ??
-        !(input.settings.enableExtensions ?? false),
-      noThemes:
-        resourceLoaderOptions.noThemes ?? !(input.settings.enableThemes ?? false),
-      noPromptTemplates:
-        resourceLoaderOptions.noPromptTemplates ??
-        !(input.settings.enablePromptTemplates ?? false),
-      skillsOverride: base => {
-        const overridden = userSkillsOverride ? userSkillsOverride(base) : base;
-        return {
-          ...overridden,
-          skills: [
-            ...(input.settings.allowGlobalSkills
-              ? overridden.skills
-              : overridden.skills.filter(skill =>
-                  isWithinWorkspace(skill.filePath, sessionWorkDir, hostWorkDir),
-                )),
-            ...harnessSkills,
-          ],
-        };
-      },
-    });
-  await resourceLoader.reload();
-  applyPendingProviderRegistrations({ resourceLoader, modelRegistry });
-
-  const resolveModel = createPiModelResolver(modelRegistry, resolverEnv);
-  // Resolve once: deterministic given the configured model. This is the Pi
-  // `Model` object handed to `createAgentSession`.
-  const resolvedModel = resolveModel(input.settings.model);
+    settingsManager,
+    resourceLoader,
+    resolvedModel,
+  } = acquired;
 
   // Per-session mutable state we hold across prompts.
   let piSession: AgentSession | undefined;
@@ -950,7 +1018,7 @@ export async function createPiSession(
 
     doDetach: async (): Promise<HarnessV1ResumeSessionState> => {
       if (activeTurn != null || pendingToolResults.size > 0) {
-        parkedPiSessions.set(input.sessionId, sessionImpl);
+        parkPiSession(input.sessionId, sessionImpl);
         if (sessionFileName) {
           try {
             await persistSessionFile();
@@ -980,7 +1048,7 @@ export async function createPiSession(
         activeTurn != null &&
         (pendingToolResults.size > 0 || pendingToolApprovals.size > 0)
       ) {
-        parkedPiSessions.set(input.sessionId, sessionImpl);
+        parkPiSession(input.sessionId, sessionImpl);
         if (sessionFileName) {
           try {
             await persistSessionFile();

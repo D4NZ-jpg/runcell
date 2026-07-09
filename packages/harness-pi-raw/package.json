@@ -24,6 +24,7 @@
     "clean": "del-cli dist *.tsbuildinfo",
     "type-check": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
+    "test": "vitest --config vitest.node.config.js --run",
     "test:vendored": "vitest --config vitest.node.config.js --run"
   },
   "exports": {

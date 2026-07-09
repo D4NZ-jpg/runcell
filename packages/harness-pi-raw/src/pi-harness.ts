@@ -5,6 +5,7 @@ import {
 } from '@ai-sdk/harness';
 import { tool } from '@ai-sdk/provider-utils';
 import { z } from 'zod';
+import { HARNESS_ID } from './pi-harness-id';
 import { piResumeStateSchema } from './pi-resume-state';
 import { createPiSession, type PiSessionSettings } from './pi-session';
 
@@ -91,12 +92,7 @@ const PI_BUILTIN_TOOLS = {
   } as HarnessV1BuiltinTool,
 } as const satisfies Record<string, HarnessV1BuiltinTool<any, any>>;
 
-/**
- * Harness identifier. The framework composes each session's working directory
- * as `<defaultWorkingDirectory>/<harnessId>-<sessionId>`, so consumers that
- * need to predict that path share this constant.
- */
-export const HARNESS_ID = 'pi';
+export { HARNESS_ID } from './pi-harness-id';
 
 export function createPi(
   settings: PiHarnessSettings = {},
