@@ -114,4 +114,34 @@ describe('PiWorkspaceVfs', () => {
       rmSync(otherBacking, { recursive: true, force: true });
     }
   });
+
+  it('reference-counts instances sharing one mount point', () => {
+    const otherVfs = new PiWorkspaceVfs();
+    vfs.mount(backingRoot, mountPoint);
+    otherVfs.mount(backingRoot, mountPoint);
+
+    // The first owner unmounting must not tear the mount down for the second.
+    vfs.unmount();
+    writeFileSync(path.join(mountPoint, 'still-here.txt'), 'alive');
+    expect(readFileSync(path.join(backingRoot, 'still-here.txt'), 'utf8')).toBe(
+      'alive',
+    );
+
+    otherVfs.unmount();
+    expect(() => readFileSync(path.join(mountPoint, 'still-here.txt'))).toThrow();
+  });
+
+  it('rejects a shared mount point with a different backing root', () => {
+    const otherBacking = mkdtempSync(path.join(tmpdir(), 'pi-vfs-other-'));
+    const otherVfs = new PiWorkspaceVfs();
+    try {
+      vfs.mount(backingRoot, mountPoint);
+      expect(() => otherVfs.mount(otherBacking, mountPoint)).toThrow(
+        /already backed/,
+      );
+    } finally {
+      otherVfs.unmount();
+      rmSync(otherBacking, { recursive: true, force: true });
+    }
+  });
 });

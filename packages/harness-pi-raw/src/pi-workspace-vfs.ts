@@ -6,14 +6,16 @@
  * so the redirect never shadows real host files.
  *
  * The mapping is process-global because Pi's upstream runtime reads and
- * writes through the shared `fs` module. Concurrent mounts are supported as
- * long as each instance uses a distinct mount point (each session's sandbox
- * working directory is unique).
+ * writes through the shared `fs` module. Concurrent mounts are supported:
+ * distinct mount points coexist, and instances that share a mount point (runs
+ * sharing one caller-owned sandbox) reference-count the shared entry.
  *
  * Multi-instance invariants:
  * - Multiple `PiWorkspaceVfs` instances may stay mounted concurrently.
- * - Path routing uses longest-prefix matching, so mount points must not
- *   overlap.
+ * - Path routing uses longest-prefix matching, so distinct mount points must
+ *   not overlap.
+ * - Instances may share a mount point only with an identical backing root;
+ *   the entry lives until its last owner unmounts.
  * - Extra `fs` patches stay installed while `mountedRoots.size > 0` and are
  *   restored only after the final unmount.
  * - Mount and unmount remain synchronous, so Node's single-threaded execution
@@ -39,6 +41,7 @@ import path from 'node:path';
 type MountedRoot = {
   backingRoot: string;
   mountPoint: string;
+  refs: number;
 };
 
 type WrappedRealpathSync = typeof fs.realpathSync & {
@@ -400,7 +403,10 @@ export class PiWorkspaceVfs {
 
   private disposeMount(): void {
     if (this.mountPoint) {
-      mountedRoots.delete(this.mountPoint);
+      const entry = mountedRoots.get(this.mountPoint);
+      if (entry && --entry.refs === 0) {
+        mountedRoots.delete(this.mountPoint);
+      }
     }
     this.backingRoot = null;
     this.mountPoint = null;
@@ -417,10 +423,21 @@ export class PiWorkspaceVfs {
       this.disposeMount();
     }
 
-    mountedRoots.set(resolvedMountPoint, {
-      backingRoot: resolvedBackingRoot,
-      mountPoint: resolvedMountPoint,
-    });
+    const existing = mountedRoots.get(resolvedMountPoint);
+    if (existing) {
+      if (existing.backingRoot !== resolvedBackingRoot) {
+        throw new Error(
+          `VFS mount point ${resolvedMountPoint} is already backed by ${existing.backingRoot}`,
+        );
+      }
+      existing.refs += 1;
+    } else {
+      mountedRoots.set(resolvedMountPoint, {
+        backingRoot: resolvedBackingRoot,
+        mountPoint: resolvedMountPoint,
+        refs: 1,
+      });
+    }
     installExtraFsPatches();
 
     this.backingRoot = resolvedBackingRoot;

@@ -75,15 +75,51 @@ const parkedPiSessions = new Map<string, HarnessV1Session>();
  */
 const MAX_PARKED_PI_SESSIONS = 8;
 
-function parkPiSession(sessionId: string, session: HarnessV1Session): void {
-  parkedPiSessions.delete(sessionId);
-  parkedPiSessions.set(sessionId, session);
+/*
+ * Concurrent runs sharing a caller-owned sandbox share a pinned session id, so
+ * the id alone cannot address a parked session. The per-session journal file
+ * name disambiguates; a pre-first-turn park has no journal yet and keys on the
+ * id alone, matching the empty resume descriptor it hands back.
+ */
+function parkKey(
+  sessionId: string,
+  sessionFileName: string | undefined,
+): string {
+  return `${sessionId}\n${sessionFileName ?? ''}`;
+}
+
+function parkPiSession(key: string, session: HarnessV1Session): void {
+  parkedPiSessions.delete(key);
+  parkedPiSessions.set(key, session);
   while (parkedPiSessions.size > MAX_PARKED_PI_SESSIONS) {
     const [oldestId, oldest] = parkedPiSessions.entries().next().value!;
     parkedPiSessions.delete(oldestId);
     // Best-effort teardown: eviction must not fail the park that caused it.
     void Promise.resolve(oldest.doDestroy()).catch(() => {});
   }
+}
+
+/*
+ * Runs sharing a pinned session id also share one host mirror tree
+ * (`hostRoot`). Lease-count it so the first run to finish cannot delete it out
+ * from under the others; the last release removes it from disk.
+ */
+const hostRootLeases = new Map<string, number>();
+
+function acquireHostRootLease(hostRoot: string): () => Promise<void> {
+  hostRootLeases.set(hostRoot, (hostRootLeases.get(hostRoot) ?? 0) + 1);
+  let released = false;
+  return async () => {
+    if (released) return;
+    released = true;
+    const refs = hostRootLeases.get(hostRoot)! - 1;
+    if (refs > 0) {
+      hostRootLeases.set(hostRoot, refs);
+      return;
+    }
+    hostRootLeases.delete(hostRoot);
+    await rm(hostRoot, { recursive: true, force: true });
+  };
 }
 
 /**
@@ -293,9 +329,10 @@ export async function createPiSession(
   input: CreatePiSessionInput,
 ): Promise<HarnessV1Session> {
   if (input.isResume) {
-    const parkedSession = parkedPiSessions.get(input.sessionId);
+    const key = parkKey(input.sessionId, input.resumeSessionFileName);
+    const parkedSession = parkedPiSessions.get(key);
     if (parkedSession) {
-      parkedPiSessions.delete(input.sessionId);
+      parkedPiSessions.delete(key);
       return {
         ...parkedSession,
         isResume: true,
@@ -313,6 +350,7 @@ export async function createPiSession(
     ? path.resolve(input.settings.agentDir)
     : path.join(hostRoot, 'agent');
   const hostSessionDir = path.join(hostRoot, 'sessions');
+  const releaseHostRoot = acquireHostRootLease(hostRoot);
 
   // Pi runs in this host process but must behave as though it lives in the
   // sandbox workspace: its working directory is the real `sessionWorkDir`
@@ -498,7 +536,7 @@ export async function createPiSession(
     // patches or host tmpdir behind. A caller-supplied `agentDir` outside
     // `hostRoot` is intentionally left in place.
     workspaceVfs.unmount();
-    await rm(hostRoot, { recursive: true, force: true }).catch(() => {});
+    await releaseHostRoot().catch(() => {});
     throw error;
   }
   const {
@@ -902,7 +940,7 @@ export async function createPiSession(
       throw new Error('Pi session has been stopped.');
     }
     stopped = true;
-    parkedPiSessions.delete(input.sessionId);
+    parkedPiSessions.delete(parkKey(input.sessionId, sessionFileName));
     settlePendingToolResults('Pi session stopped');
     settlePendingToolApprovals('Pi session stopped');
 
@@ -922,7 +960,7 @@ export async function createPiSession(
     piSession?.dispose();
     piSession = undefined;
     workspaceVfs.unmount();
-    await rm(hostRoot, { recursive: true, force: true });
+    await releaseHostRoot();
 
     return {
       type: 'resume-session',
@@ -1003,7 +1041,7 @@ export async function createPiSession(
     doDestroy: async () => {
       if (stopped) return;
       stopped = true;
-      parkedPiSessions.delete(input.sessionId);
+      parkedPiSessions.delete(parkKey(input.sessionId, sessionFileName));
       settlePendingToolResults('Pi session stopped');
       settlePendingToolApprovals('Pi session stopped');
       unsubscribe?.();
@@ -1011,14 +1049,14 @@ export async function createPiSession(
       piSession?.dispose();
       piSession = undefined;
       workspaceVfs.unmount();
-      await rm(hostRoot, { recursive: true, force: true });
+      await releaseHostRoot();
     },
 
     doStop,
 
     doDetach: async (): Promise<HarnessV1ResumeSessionState> => {
       if (activeTurn != null || pendingToolResults.size > 0) {
-        parkPiSession(input.sessionId, sessionImpl);
+        parkPiSession(parkKey(input.sessionId, sessionFileName), sessionImpl);
         if (sessionFileName) {
           try {
             await persistSessionFile();
@@ -1048,7 +1086,7 @@ export async function createPiSession(
         activeTurn != null &&
         (pendingToolResults.size > 0 || pendingToolApprovals.size > 0)
       ) {
-        parkPiSession(input.sessionId, sessionImpl);
+        parkPiSession(parkKey(input.sessionId, sessionFileName), sessionImpl);
         if (sessionFileName) {
           try {
             await persistSessionFile();
@@ -1091,7 +1129,7 @@ export async function createPiSession(
       }
 
       stopped = true;
-      parkedPiSessions.delete(input.sessionId);
+      parkedPiSessions.delete(parkKey(input.sessionId, sessionFileName));
       settlePendingToolResults('Pi session suspended');
       settlePendingToolApprovals('Pi session suspended');
       unsubscribe?.();
@@ -1099,7 +1137,7 @@ export async function createPiSession(
       piSession?.dispose();
       piSession = undefined;
       workspaceVfs.unmount();
-      await rm(hostRoot, { recursive: true, force: true });
+      await releaseHostRoot();
 
       return {
         type: 'continue-turn',
