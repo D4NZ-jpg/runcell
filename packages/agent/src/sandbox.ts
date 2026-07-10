@@ -17,6 +17,43 @@ import type { Readable } from 'node:stream';
 import { InvalidOptionError } from './errors.js';
 
 const HOST_VIRTUAL_ROOT = '/workspace';
+
+// The only host env vars agent-executed commands inherit by default;
+// everything else is opt-in via the host sandbox `env` option.
+const SAFE_SYSTEM_ENV_KEYS = new Set([
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'TERM',
+  'TMPDIR',
+  'TEMP',
+  'TMP',
+  'LANG',
+  'TZ',
+]);
+
+function isSafeSystemEnvKey(key: string): boolean {
+  return SAFE_SYSTEM_ENV_KEYS.has(key) || key.startsWith('LC_');
+}
+
+function baseHostEnv(
+  env: NodeJS.ProcessEnv,
+  inheritHostEnv: boolean | undefined,
+): NodeJS.ProcessEnv {
+  if (inheritHostEnv) {
+    return { ...env };
+  }
+  const out: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (isSafeSystemEnvKey(key)) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
 const VERCEL_SANDBOX_PACKAGE = '@ai-sdk/sandbox-vercel';
 
 export type SandboxProvider = HarnessV1SandboxProvider;
@@ -36,7 +73,10 @@ export interface HostSandboxOption {
   type: 'host';
   rootDir: string;
   isolation: 'external';
+  /** Env vars exposed to agent-executed commands; `undefined` entries are dropped. */
   env?: Record<string, string | undefined>;
+  /** Pass the full host environment through to agent-executed commands. Default: `false`. */
+  inheritHostEnv?: boolean;
 }
 
 export interface VercelSandboxOption {
@@ -92,12 +132,20 @@ export function resolveSandboxConfig(sandbox: unknown): SandboxConfig {
         );
       }
 
+      const inheritHostEnv = sandbox['inheritHostEnv'];
+      if (inheritHostEnv !== undefined && typeof inheritHostEnv !== 'boolean') {
+        throw new InvalidOptionError(
+          'Host sandbox "inheritHostEnv" must be a boolean.',
+        );
+      }
+
       const env = sandbox['env'];
       return {
         type: 'host',
         rootDir: path.resolve(rootDir),
         isolation: 'external',
         ...(isRecord(env) ? { env: toOptionalStringRecord(env) } : {}),
+        ...(inheritHostEnv !== undefined ? { inheritHostEnv } : {}),
       };
     }
 
@@ -234,6 +282,9 @@ class HostSandboxProvider implements SandboxProvider {
       sessionId,
       rootDir,
       env: this.settings.env,
+      ...(this.settings.inheritHostEnv !== undefined
+        ? { inheritHostEnv: this.settings.inheritHostEnv }
+        : {}),
     });
   };
 
@@ -255,6 +306,7 @@ class HostSandboxSession implements HarnessV1NetworkSandboxSession {
       sessionId: string;
       rootDir: string;
       env?: Record<string, string | undefined>;
+      inheritHostEnv?: boolean;
     },
   ) {
     this.description = `Host filesystem workspace mounted at ${HOST_VIRTUAL_ROOT}.`;
@@ -453,7 +505,7 @@ class HostSandboxSession implements HarnessV1NetworkSandboxSession {
     env: Record<string, string> | undefined,
   ): NodeJS.ProcessEnv {
     return {
-      ...process.env,
+      ...baseHostEnv(process.env, this.settings.inheritHostEnv),
       ...dropUndefined(this.settings.env),
       ...env,
     };

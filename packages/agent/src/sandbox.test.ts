@@ -7,6 +7,7 @@ import { createSandboxProvider, resolveSandboxConfig } from './sandbox.js';
 
 afterEach(() => {
   vi.doUnmock('@ai-sdk/sandbox-vercel');
+  vi.unstubAllEnvs();
 });
 
 describe('resolveSandboxConfig', () => {
@@ -29,6 +30,17 @@ describe('resolveSandboxConfig', () => {
       type: 'custom',
       provider,
     });
+  });
+
+  it('rejects invalid inheritHostEnv values', () => {
+    expect(() =>
+      resolveSandboxConfig({
+        type: 'host',
+        rootDir: '/tmp/x',
+        isolation: 'external',
+        inheritHostEnv: 'yes',
+      }),
+    ).toThrow('"inheritHostEnv" must be a boolean');
   });
 
   it('rejects host mode without explicit external isolation', () => {
@@ -115,6 +127,84 @@ describe('host sandbox provider', () => {
     await expect(
       readFile(path.join(rootDir, 'out.txt'), 'utf-8'),
     ).resolves.toBe('changed');
+  });
+
+  it('exposes only system vars and explicit opt-ins by default', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-secret');
+    vi.stubEnv('HARMLESS_VAR', 'still-hidden');
+
+    const rootDir = await mkdtemp(path.join(tmpdir(), 'runcell-host-'));
+    const provider = createSandboxProvider({
+      type: 'host',
+      rootDir,
+      isolation: 'external',
+      env: { OPENAI_API_KEY: 'explicitly-exposed' },
+    });
+    const session = await provider.createSession({ sessionId: 'test-session' });
+
+    const result = await session.run({
+      command:
+        'printf "%s|%s|%s" "$ANTHROPIC_API_KEY" "$HARMLESS_VAR" "$OPENAI_API_KEY" && test -n "$PATH" && test -n "$HOME"',
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe('||explicitly-exposed');
+  });
+
+  it('gives per-command env precedence over opt-in env and baseline', async () => {
+    vi.stubEnv('LC_ALL', 'en_US.UTF-8');
+
+    const rootDir = await mkdtemp(path.join(tmpdir(), 'runcell-host-'));
+    const provider = createSandboxProvider({
+      type: 'host',
+      rootDir,
+      isolation: 'external',
+      env: { FROM_SETTINGS: 'settings', OVERRIDDEN: 'settings' },
+    });
+    const session = await provider.createSession({ sessionId: 'test-session' });
+
+    const result = await session.run({
+      command: 'printf "%s|%s|%s" "$FROM_SETTINGS" "$OVERRIDDEN" "$LC_ALL"',
+      env: { OVERRIDDEN: 'per-command' },
+    });
+
+    expect(result.stdout).toBe('settings|per-command|en_US.UTF-8');
+  });
+
+  it('inherits the full environment when inheritHostEnv is true', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-secret');
+
+    const rootDir = await mkdtemp(path.join(tmpdir(), 'runcell-host-'));
+    const provider = createSandboxProvider({
+      type: 'host',
+      rootDir,
+      isolation: 'external',
+      inheritHostEnv: true,
+    });
+    const session = await provider.createSession({ sessionId: 'test-session' });
+
+    const result = await session.run({
+      command: 'printf "%s" "$ANTHROPIC_API_KEY"',
+    });
+
+    expect(result.stdout).toBe('sk-secret');
+  });
+
+  it('drops opt-in env entries whose value is undefined', async () => {
+    const rootDir = await mkdtemp(path.join(tmpdir(), 'runcell-host-'));
+    const provider = createSandboxProvider({
+      type: 'host',
+      rootDir,
+      isolation: 'external',
+      env: { NOT_SET_ON_HOST: undefined, PRESENT: 'yes' },
+    });
+    const session = await provider.createSession({ sessionId: 'test-session' });
+
+    const result = await session.run({
+      command: 'printf "%s|%s" "${NOT_SET_ON_HOST-unset}" "$PRESENT"',
+    });
+
+    expect(result.stdout).toBe('unset|yes');
   });
 
   it('rejects commands when the abort signal is already aborted', async () => {

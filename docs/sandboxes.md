@@ -129,6 +129,44 @@ await agent.run({
 });
 ```
 
+Agent-executed commands do **not** inherit the host environment. They only
+see baseline system vars (`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`,
+`TERM`, `TMPDIR`, `TEMP`, `TMP`, `LANG`, `LC_*`, `TZ`), so the agent cannot
+read your secrets with `echo $ANTHROPIC_API_KEY`. Model auth is unaffected —
+credentials are captured from your process before the sandbox starts.
+
+This filter is defense-in-depth against direct inheritance, not an OS
+boundary: commands still run as your user on the host, which is why this
+mode requires external isolation. The baseline list is POSIX-oriented; if
+commands need proxies or similar host config (`HTTPS_PROXY`, …), opt them
+in via `env`.
+
+Everything else is **opt-in**: name the vars you want commands to see via
+`env`:
+
+```ts
+sandbox: {
+  type: 'host',
+  rootDir: process.env.GITHUB_WORKSPACE!,
+  isolation: 'external',
+  env: {
+    CI: process.env.CI,
+    NODE_ENV: 'test',
+    NPM_TOKEN: process.env.NPM_TOKEN, // deliberate — you named it
+  },
+}
+```
+
+Entries with `undefined` values are dropped, so `VAR: process.env.VAR`
+pass-throughs are safe when the var is not set on the host.
+
+If the process is fully trusted and you want the agent to see everything,
+the explicit escape hatch:
+
+```ts
+sandbox: { type: 'host', rootDir, isolation: 'external', inheritHostEnv: true }
+```
+
 ### Vercel Sandbox
 
 Cloud isolation via [Vercel Sandbox](https://vercel.com/docs/vercel-sandbox).
