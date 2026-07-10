@@ -71,8 +71,12 @@ export interface AgentEvents {
 export interface AgentOptions {
   /** Model identifier, e.g. `anthropic/claude-sonnet-4-5` or `openai/gpt-5.1`. */
   model: string;
-  /** System instructions prepended to every run. */
-  instructions?: string;
+  /**
+   * Persistent system prompt for this agent. Appended to the engine's
+   * system prompt in the system role, re-applied on every turn, and preserved
+   * across thread resumes.
+   */
+  systemPrompt?: string;
   /** How to obtain provider credentials. Defaults to `{ type: 'env' }`. */
   credentials?: Credentials;
   /** Host-side tools, keyed by tool name. */
@@ -109,8 +113,6 @@ export interface RunOptionsBase {
    * context and the new user + agent turns are appended to it in place.
    */
   thread?: Thread;
-  /** Per-run instructions appended to the agent-level instructions. */
-  instructions?: string;
   /** Per-run lifecycle callbacks, invoked in addition to the agent-level ones. */
   events?: AgentEvents;
   /** Resume a previous session by id. */

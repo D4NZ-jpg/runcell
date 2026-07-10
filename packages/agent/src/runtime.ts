@@ -129,16 +129,14 @@ async function runWithHarness({
 
   const harnessAgent = new HarnessAgent({
     id: 'runcell',
-    harness: createPi(createPiSettings(config.credentials, config.model)),
+    harness: createPi(
+      createPiSettings(config.credentials, config.model, config.systemPrompt),
+    ),
     sandbox: sandboxProvider,
     permissionMode: 'allow-all',
-    instructions: joinSections(
-      agentOptions.instructions,
-      runOptions.instructions,
-      schema
-        ? 'When the task is complete, call submitResult with the structured result.'
-        : undefined,
-    ),
+    instructions: schema
+      ? 'When the task is complete, call submitResult with the structured result.'
+      : '',
     tools,
     onSandboxSession: async ({ session, sessionWorkDir, abortSignal }) => {
       sandboxContext = { session, workDir: sessionWorkDir };
@@ -807,8 +805,21 @@ function isFileChangePayload(
 function createPiSettings(
   credentials: CredentialPlan,
   model: string,
+  systemPrompt: string | undefined,
 ): PiHarnessSettings {
-  const base = { model } satisfies PiHarnessSettings;
+  const base = {
+    model,
+    ...(systemPrompt
+      ? {
+          resourceLoaderOptions: {
+            appendSystemPromptOverride: (sections: string[]) => [
+              ...sections,
+              systemPrompt,
+            ],
+          },
+        }
+      : {}),
+  } satisfies PiHarnessSettings;
 
   switch (credentials.mode) {
     case 'env':

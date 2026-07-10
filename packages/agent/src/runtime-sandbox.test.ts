@@ -6,7 +6,7 @@ import { createVirtualSandbox, getSandboxInternals } from './sandbox-handle.js';
 
 const config: ResolvedAgentConfig = {
   model: 'anthropic/test',
-  instructions: undefined,
+  systemPrompt: undefined,
   credentials: { mode: 'env' },
   toolNames: [],
   sandbox: { type: 'virtual' },

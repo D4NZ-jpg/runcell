@@ -12,7 +12,7 @@ describe('resolveAgentConfig', () => {
     );
     expect(config).toEqual({
       model: 'anthropic/claude-sonnet-4-5',
-      instructions: undefined,
+      systemPrompt: undefined,
       credentials: { mode: 'env' },
       toolNames: [],
       sandbox: { type: 'virtual' },

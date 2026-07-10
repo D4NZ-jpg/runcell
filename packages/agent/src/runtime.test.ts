@@ -39,9 +39,8 @@ describe('defaultRuntime', () => {
 
     const result = await runtime.run(
       createRuntimeInput(schema, {
-        agentOptions: { instructions: 'Use concise answers.' },
+        agentOptions: { systemPrompt: 'Use concise answers.' },
         runOptions: {
-          instructions: 'Return the boolean flag.',
           files: [
             { path: 'src/input.txt', text: 'hello' },
             { path: 'assets/blob.bin', bytes },
@@ -63,8 +62,19 @@ describe('defaultRuntime', () => {
       auth: { customEnv: { ANTHROPIC_API_KEY: 'test-key' } },
     });
     expect(state.instances[0]?.settings.instructions).toBe(
-      'Use concise answers.\n\nReturn the boolean flag.\n\nWhen the task is complete, call submitResult with the structured result.',
+      'When the task is complete, call submitResult with the structured result.',
     );
+    const appendSystemPrompt = (
+      state.piSettings[0] as {
+        resourceLoaderOptions?: {
+          appendSystemPromptOverride?: (sections: string[]) => string[];
+        };
+      }
+    ).resourceLoaderOptions?.appendSystemPromptOverride;
+    expect(appendSystemPrompt?.(['base'])).toEqual([
+      'base',
+      'Use concise answers.',
+    ]);
     expect(state.sandboxSession.runs.map(run => run.command)).toEqual([
       "mkdir -p '/work/src'",
       "mkdir -p '/work/assets'",
@@ -378,7 +388,7 @@ describe('defaultRuntime', () => {
         agentOptions: { model: 'anthropic/test' },
         config: {
           model: 'anthropic/test',
-          instructions: undefined,
+          systemPrompt: undefined,
           credentials: { mode: 'apiKeys', keys: { anthropic: 'test-key' } },
           toolNames: [],
           sandbox: { type: 'virtual' },
@@ -541,7 +551,7 @@ describe('defaultRuntime', () => {
       agentOptions: { model: 'anthropic/test' },
       config: {
         model: 'anthropic/test',
-        instructions: undefined,
+        systemPrompt: undefined,
         credentials: { mode: 'apiKeys', keys: { anthropic: 'test-key' } },
         toolNames: [],
         sandbox: { type: 'virtual' },
@@ -671,7 +681,7 @@ function createRuntimeInput<TSchema extends AgentSchema>(
     agentOptions,
     config: {
       model: 'anthropic/test',
-      instructions: agentOptions.instructions,
+      systemPrompt: agentOptions.systemPrompt,
       credentials: { mode: 'apiKeys', keys: { anthropic: 'test-key' } },
       toolNames: Object.keys(agentOptions.tools ?? {}),
       sandbox: { type: 'virtual' },

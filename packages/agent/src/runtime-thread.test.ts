@@ -149,7 +149,7 @@ const schema = z.object({ ok: z.boolean() });
 
 const config: ResolvedAgentConfig = {
   model: 'anthropic/test',
-  instructions: undefined,
+  systemPrompt: undefined,
   credentials: { mode: 'env' },
   toolNames: [],
   sandbox: { type: 'virtual' },

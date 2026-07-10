@@ -10,7 +10,7 @@ callbacks. Create one per process and reuse it across runs.
 ```ts
 const agent = createAgent({
   model: 'anthropic/claude-sonnet-4-5',
-  instructions: 'Be concise.',
+  systemPrompt: 'Be concise.',
   credentials: 'local',
   tools: { lookupCustomer },
   events: { onText: d => process.stdout.write(d) },
@@ -21,7 +21,7 @@ const agent = createAgent({
 | Option         | Type                             | Description                                                                                 |
 | -------------- | -------------------------------- | ------------------------------------------------------------------------------------------- |
 | `model`        | `string`                         | Model id, display name, or provider-qualified id (`openai-codex/gpt-5.5`). Required.        |
-| `instructions` | `string`                         | Agent-level instructions applied to every run.                                              |
+| `systemPrompt` | `string`                         | Persistent system prompt: system role, re-applied every turn, survives thread resume.       |
 | `credentials`  | `Credentials`                    | Credential source. Defaults to `{ type: 'env' }`. See [Credentials](./credentials.md).      |
 | `tools`        | `Record<string, ToolDefinition>` | Host functions the agent can call. See [Files, tools, and events](./files-tools-events.md). |
 | `events`       | `AgentEvents`                    | Lifecycle callbacks.                                                                        |
@@ -42,17 +42,16 @@ run(options: RunOptionsBase): Promise<RunResult<undefined>>;
 
 ### Run options
 
-| Option         | Type                       | Description                                                                                        |
-| -------------- | -------------------------- | -------------------------------------------------------------------------------------------------- |
-| `prompt`       | `string`                   | The task prompt. Required.                                                                         |
-| `schema`       | `AgentSchema`              | Structured output contract ([Standard Schema](https://standardschema.dev)). Omit for a plain turn. |
-| `files`        | `FileInput[]`              | Files seeded into the workspace before the run. Relative paths only.                               |
-| `sandbox`      | `Sandbox \| SandboxOption` | A caller-owned handle (reused, never destroyed by runcell) or an ephemeral mode option.            |
-| `thread`       | `Thread`                   | Conversation to continue; mutated in place on success.                                             |
-| `instructions` | `string`                   | Per-run instructions appended to the agent-level instructions.                                     |
-| `events`       | `AgentEvents`              | Per-run lifecycle callbacks, invoked in addition to the agent-level ones.                          |
-| `sessionId`    | `string`                   | Resume a previous session by id.                                                                   |
-| `signal`       | `AbortSignal`              | Cancels the run.                                                                                   |
+| Option      | Type                       | Description                                                                                        |
+| ----------- | -------------------------- | -------------------------------------------------------------------------------------------------- |
+| `prompt`    | `string`                   | The task prompt. Required.                                                                         |
+| `schema`    | `AgentSchema`              | Structured output contract ([Standard Schema](https://standardschema.dev)). Omit for a plain turn. |
+| `files`     | `FileInput[]`              | Files seeded into the workspace before the run. Relative paths only.                               |
+| `sandbox`   | `Sandbox \| SandboxOption` | A caller-owned handle (reused, never destroyed by runcell) or an ephemeral mode option.            |
+| `thread`    | `Thread`                   | Conversation to continue; mutated in place on success.                                             |
+| `events`    | `AgentEvents`              | Per-run lifecycle callbacks, invoked in addition to the agent-level ones.                          |
+| `sessionId` | `string`                   | Resume a previous session by id.                                                                   |
+| `signal`    | `AbortSignal`              | Cancels the run.                                                                                   |
 
 ### `RunResult<TData>`
 

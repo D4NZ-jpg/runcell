@@ -33,7 +33,7 @@ const RESERVED_TOOL_NAMES = new Set([
  */
 export interface ResolvedAgentConfig {
   model: string;
-  instructions: string | undefined;
+  systemPrompt: string | undefined;
   credentials: CredentialPlan;
   toolNames: string[];
   sandbox: SandboxConfig;
@@ -78,7 +78,7 @@ export function resolveAgentConfig(
 
   return {
     model: options.model,
-    instructions: options.instructions,
+    systemPrompt: options.systemPrompt,
     credentials,
     toolNames,
     sandbox,
