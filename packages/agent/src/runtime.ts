@@ -20,12 +20,8 @@ import { AuthStorage, getAgentDir } from '@earendil-works/pi-coding-agent';
 import { createPi, type PiHarnessSettings } from '@local/harness-pi-raw';
 import path from 'node:path';
 import type { ResolvedAgentConfig } from './create-agent.js';
-import type {
-  AuthBlob,
-  CredentialPlan,
-  CredentialStore,
-} from './credentials.js';
-import { IncompleteResultError, TurnError } from './errors.js';
+import type { AuthBlob, CredentialStore } from './credentials.js';
+import { ExtensionError, IncompleteResultError, TurnError } from './errors.js';
 import { normalizeFiles, type NormalizedFile } from './files.js';
 import { assertSafeWorkspacePath } from './paths.js';
 import {
@@ -75,9 +71,33 @@ interface SandboxContext {
 
 export const defaultRuntime: RuncellRuntime = {
   async run(input) {
-    return runWithHarness(input);
+    try {
+      return await runWithHarness(input);
+    } catch (error) {
+      const extensionError = findPiExtensionError(error);
+      if (extensionError) {
+        throw new ExtensionError(extensionError.message, { cause: error });
+      }
+      throw error;
+    }
   },
 };
+
+/**
+ * Find a harness `PiExtensionError` anywhere in an error's cause chain. The
+ * harness may surface it directly (session init) or wrapped in a turn error
+ * (tool-collision check on the first turn).
+ */
+function findPiExtensionError(error: unknown): Error | undefined {
+  let current: unknown = error;
+  while (current instanceof Error) {
+    if (current.name === 'PiExtensionError') {
+      return current;
+    }
+    current = current.cause;
+  }
+  return undefined;
+}
 
 async function runWithHarness({
   agentOptions,
@@ -129,9 +149,7 @@ async function runWithHarness({
 
   const harnessAgent = new HarnessAgent({
     id: 'runcell',
-    harness: createPi(
-      createPiSettings(config.credentials, config.model, config.systemPrompt),
-    ),
+    harness: createPi(createPiSettings(config)),
     sandbox: sandboxProvider,
     permissionMode: 'allow-all',
     instructions: schema
@@ -802,11 +820,8 @@ function isFileChangePayload(
   );
 }
 
-function createPiSettings(
-  credentials: CredentialPlan,
-  model: string,
-  systemPrompt: string | undefined,
-): PiHarnessSettings {
+function createPiSettings(config: ResolvedAgentConfig): PiHarnessSettings {
+  const { credentials, model, systemPrompt, extensions } = config;
   const base = {
     model,
     ...(systemPrompt
@@ -817,6 +832,14 @@ function createPiSettings(
               systemPrompt,
             ],
           },
+        }
+      : {}),
+    ...(extensions.length > 0
+      ? {
+          extensionFactories: extensions,
+          // Importing the extension is the trust decision — its tools just
+          // work. Discovery from ~/.pi and project dirs stays off.
+          activateAllExtensionTools: true,
         }
       : {}),
   } satisfies PiHarnessSettings;

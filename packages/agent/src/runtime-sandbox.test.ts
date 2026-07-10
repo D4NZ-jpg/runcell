@@ -11,6 +11,7 @@ const config: ResolvedAgentConfig = {
   toolNames: [],
   sandbox: { type: 'virtual' },
   maxRepairs: 1,
+  extensions: [],
 };
 
 const schema = z.object({ ok: z.boolean() });

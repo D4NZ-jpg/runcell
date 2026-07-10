@@ -88,6 +88,60 @@ describe('defaultRuntime', () => {
     expect(state.instances[0]?.session?.destroyCount).toBe(1);
   });
 
+  it('wires pi extensions into the harness settings', async () => {
+    const extension = () => undefined;
+    const state = installRuntimeMocks([
+      agent => {
+        agent.submit({ ok: true });
+        return [];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() }), {
+        agentOptions: { pi: { extensions: [extension] } },
+      }),
+    );
+
+    expect(state.piSettings[0]).toMatchObject({
+      extensionFactories: [extension],
+      activateAllExtensionTools: true,
+    });
+  });
+
+  it('omits extension settings when no pi option is given', async () => {
+    const state = installRuntimeMocks([
+      agent => {
+        agent.submit({ ok: true });
+        return [];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    await runtime.run(createRuntimeInput(z.object({ ok: z.boolean() })));
+
+    const settings = state.piSettings[0] as Record<string, unknown>;
+    expect('extensionFactories' in settings).toBe(false);
+    expect('activateAllExtensionTools' in settings).toBe(false);
+  });
+
+  it('maps harness extension failures to ExtensionError', async () => {
+    installRuntimeMocks([
+      () => {
+        throw Object.assign(new Error('keychain unavailable'), {
+          name: 'PiExtensionError',
+        });
+      },
+    ]);
+    const runtime = await loadRuntime();
+    const { ExtensionError } = await import('./errors.js');
+
+    await expect(
+      runtime.run(createRuntimeInput(z.object({ ok: z.boolean() }))),
+    ).rejects.toThrow(ExtensionError);
+  });
+
   it('accepts Standard Schema validators that are not Zod schemas', async () => {
     const schema: AgentSchema<{ ok: boolean }> = {
       '~standard': {
@@ -393,6 +447,7 @@ describe('defaultRuntime', () => {
           toolNames: [],
           sandbox: { type: 'virtual' },
           maxRepairs: 1,
+          extensions: [],
         },
         runOptions: { prompt: 'say hi' },
       }),
@@ -556,6 +611,7 @@ describe('defaultRuntime', () => {
         toolNames: [],
         sandbox: { type: 'virtual' },
         maxRepairs: 1,
+        extensions: [],
       },
       runOptions: { prompt: 'say hi' },
     });
@@ -686,6 +742,7 @@ function createRuntimeInput<TSchema extends AgentSchema>(
       toolNames: Object.keys(agentOptions.tools ?? {}),
       sandbox: { type: 'virtual' },
       maxRepairs: 1,
+      extensions: agentOptions.pi?.extensions ?? [],
       ...overrides.config,
     },
     runOptions: {

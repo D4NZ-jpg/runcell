@@ -43,6 +43,19 @@ export class TurnError extends RuncellError {
 }
 
 /**
+ * Thrown when an explicitly supplied Pi extension fails to initialize or
+ * registers a tool that collides with a reserved or user tool. Always raised
+ * before any model request is attempted. The original error is available as
+ * `cause`.
+ */
+export class ExtensionError extends RuncellError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'ExtensionError';
+  }
+}
+
+/**
  * Thrown when credentials are misconfigured for the current environment
  * (for example, local file credentials used in production without opt-in).
  */

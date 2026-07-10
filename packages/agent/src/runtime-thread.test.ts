@@ -154,6 +154,7 @@ const config: ResolvedAgentConfig = {
   toolNames: [],
   sandbox: { type: 'virtual' },
   maxRepairs: 1,
+  extensions: [],
 };
 
 function makeInput(

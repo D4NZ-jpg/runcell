@@ -1,3 +1,4 @@
+import type { ExtensionFactory } from '@local/harness-pi-raw';
 import { normalizeCredentials, type CredentialPlan } from './credentials.js';
 import { InvalidOptionError } from './errors.js';
 import { normalizeFiles } from './files.js';
@@ -38,6 +39,7 @@ export interface ResolvedAgentConfig {
   toolNames: string[];
   sandbox: SandboxConfig;
   maxRepairs: number;
+  extensions: readonly ExtensionFactory[];
 }
 
 /**
@@ -76,6 +78,13 @@ export function resolveAgentConfig(
     );
   }
 
+  const extensions = options.pi?.extensions ?? [];
+  if (extensions.some(extension => typeof extension !== 'function')) {
+    throw new InvalidOptionError(
+      '"pi.extensions" entries must be extension factory functions.',
+    );
+  }
+
   return {
     model: options.model,
     systemPrompt: options.systemPrompt,
@@ -83,6 +92,7 @@ export function resolveAgentConfig(
     toolNames,
     sandbox,
     maxRepairs,
+    extensions,
   };
 }
 

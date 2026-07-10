@@ -6,6 +6,7 @@ export {
   IncompleteResultError,
   TurnError,
   CredentialError,
+  ExtensionError,
   NotImplementedError,
 } from './errors.js';
 
@@ -62,6 +63,7 @@ export type {
   Agent,
   AgentOptions,
   AgentEvents,
+  PiOptions,
   AgentSchema,
   InferSchemaOutput,
   RunOptions,

@@ -1,4 +1,5 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
+import type { ExtensionFactory } from '@local/harness-pi-raw';
 import type { Credentials } from './credentials.js';
 import type { FileInput } from './files.js';
 import type { SandboxOption } from './sandbox.js';
@@ -66,6 +67,21 @@ export interface AgentEvents {
 }
 
 /**
+ * Pi engine escape hatch. Everything here is engine-specific surface that
+ * tracks Pi's own versioning rather than runcell's core stability promise.
+ */
+export interface PiOptions {
+  /**
+   * Explicit, trusted Pi SDK extensions, loaded in array order before the
+   * model is resolved. Extensions run in the host process with full
+   * application permissions — the import is the trust decision. Tools they
+   * register are activated automatically. A factory that fails to load
+   * rejects the run with {@link ExtensionError}.
+   */
+  extensions?: readonly ExtensionFactory[];
+}
+
+/**
  * Options for {@link createAgent}.
  */
 export interface AgentOptions {
@@ -90,6 +106,8 @@ export interface AgentOptions {
    * valid `submitResult` payload. Defaults to `1`.
    */
   maxRepairs?: number;
+  /** Pi engine escape hatch: extensions and other Pi-specific options. */
+  pi?: PiOptions;
 }
 
 /**

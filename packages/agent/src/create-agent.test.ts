@@ -17,6 +17,7 @@ describe('resolveAgentConfig', () => {
       toolNames: [],
       sandbox: { type: 'virtual' },
       maxRepairs: 1,
+      extensions: [],
     });
   });
 
@@ -102,6 +103,23 @@ describe('resolveAgentConfig', () => {
             },
           },
         },
+        { nodeEnv: 'development' },
+      ),
+    ).toThrow(InvalidOptionError);
+  });
+
+  it('passes pi extensions through and rejects non-function entries', () => {
+    const extension = () => undefined;
+    expect(
+      resolveAgentConfig(
+        { model: 'm', pi: { extensions: [extension] } },
+        { nodeEnv: 'development' },
+      ).extensions,
+    ).toEqual([extension]);
+
+    expect(() =>
+      resolveAgentConfig(
+        { model: 'm', pi: { extensions: ['nope' as never] } },
         { nodeEnv: 'development' },
       ),
     ).toThrow(InvalidOptionError);
