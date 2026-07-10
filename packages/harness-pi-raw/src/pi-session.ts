@@ -99,6 +99,39 @@ function parkPiSession(key: string, session: HarnessV1Session): void {
   }
 }
 
+/**
+ * An explicitly supplied Pi extension failed to load. Fatal by design: a
+ * partially loaded extension set (e.g. an auth or provider extension) must
+ * fail the session before any model request is attempted.
+ */
+export class PiExtensionError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'PiExtensionError';
+  }
+}
+
+/*
+ * Extensions with `session_shutdown` handlers hold long-lived resources
+ * (timers, sockets, watchers). Pi's plain `session.dispose()` does not emit
+ * that event — its higher-level runtime does — so this adapter emits it on
+ * every teardown path. Best-effort: a throwing handler must not block
+ * teardown.
+ */
+async function emitPiSessionShutdown(
+  session: AgentSession | undefined,
+  reason: 'quit' | 'reload',
+): Promise<void> {
+  if (!session) return;
+  try {
+    if (session.extensionRunner.hasHandlers('session_shutdown')) {
+      await session.extensionRunner.emit({ type: 'session_shutdown', reason });
+    }
+  } catch {
+    // Teardown must proceed even if an extension shutdown handler throws.
+  }
+}
+
 /*
  * Runs sharing a pinned session id also share one host mirror tree
  * (`hostRoot`). Lease-count it so the first run to finish cannot delete it out
@@ -510,6 +543,18 @@ export async function createPiSession(
         },
       });
     await resourceLoader.reload();
+
+    // Fail loudly when a supplied extension does not load. Silently continuing
+    // without an auth/provider extension would run with the wrong credentials.
+    const extensionErrors = resourceLoader.getExtensions().errors;
+    if (extensionErrors.length > 0) {
+      throw new PiExtensionError(
+        `Pi extension failed to load: ${extensionErrors
+          .map(({ path: extensionPath, error }) => `${extensionPath}: ${error}`)
+          .join('; ')}`,
+      );
+    }
+
     applyPendingProviderRegistrations({ resourceLoader, modelRegistry });
 
     const resolveModel = createPiModelResolver(modelRegistry, resolverEnv);
@@ -720,6 +765,7 @@ export async function createPiSession(
     if (piSession) {
       unsubscribe?.();
       unsubscribe = undefined;
+      await emitPiSessionShutdown(piSession, 'reload');
       piSession.dispose();
       piSession = undefined;
       // Original adapter waits 25 ms here to let Pi's teardown microtasks
@@ -730,6 +776,25 @@ export async function createPiSession(
     }
 
     const { customTools, builtinNames } = buildToolDefinitions(userTools);
+
+    /*
+     * Extension-vs-extension shadowing follows Pi semantics, but a name shared
+     * with an adapter tool — the sandbox-backed builtins or an AI SDK user
+     * tool — is rejected outright: Pi silently resolves that collision in the
+     * adapter's favor, which would leave the extension's tool mysteriously
+     * dead. Checked against what extensions *registered*, not what won.
+     */
+    const adapterToolNames = new Set(customTools.map(tool => tool.name));
+    for (const extension of resourceLoader.getExtensions().extensions) {
+      for (const name of extension.tools.keys()) {
+        if (adapterToolNames.has(name)) {
+          throw new PiExtensionError(
+            `Pi extension tool "${name}" collides with a reserved or user tool.`,
+          );
+        }
+      }
+    }
+
     const explicitToolNames = [
       ...customTools.map(t => t.name),
       ...(input.settings.extensionToolNames ?? []),
@@ -957,6 +1022,7 @@ export async function createPiSession(
 
     unsubscribe?.();
     unsubscribe = undefined;
+    await emitPiSessionShutdown(piSession, 'quit');
     piSession?.dispose();
     piSession = undefined;
     workspaceVfs.unmount();
@@ -1046,6 +1112,7 @@ export async function createPiSession(
       settlePendingToolApprovals('Pi session stopped');
       unsubscribe?.();
       unsubscribe = undefined;
+      await emitPiSessionShutdown(piSession, 'quit');
       piSession?.dispose();
       piSession = undefined;
       workspaceVfs.unmount();
@@ -1134,6 +1201,7 @@ export async function createPiSession(
       settlePendingToolApprovals('Pi session suspended');
       unsubscribe?.();
       unsubscribe = undefined;
+      await emitPiSessionShutdown(piSession, 'quit');
       piSession?.dispose();
       piSession = undefined;
       workspaceVfs.unmount();

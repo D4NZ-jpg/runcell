@@ -12,7 +12,7 @@ import type {
   HarnessV1Session,
   HarnessV1ToolSpec,
 } from '@ai-sdk/harness';
-import { createPiSession } from './pi-session';
+import { createPiSession, PiExtensionError } from './pi-session';
 
 type FakePiTool = Pick<ToolDefinition, 'name' | 'execute'>;
 
@@ -21,6 +21,8 @@ const piMock = vi.hoisted(() => {
     createAgentSession: vi.fn(),
     customTools: [] as FakePiTool[],
     session: undefined as AgentSession | undefined,
+    extensionErrors: [] as { path: string; error: string }[],
+    extensions: [] as { tools: Map<string, unknown> }[],
   };
 });
 
@@ -34,7 +36,11 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
     createAgentSession: piMock.createAgentSession,
     DefaultResourceLoader: class {
       getExtensions() {
-        return { runtime: { pendingProviderRegistrations: [] } };
+        return {
+          runtime: { pendingProviderRegistrations: [] },
+          errors: piMock.extensionErrors,
+          extensions: piMock.extensions,
+        };
       }
       async reload() {}
     },
@@ -63,6 +69,8 @@ describe('createPiSession', () => {
   beforeEach(() => {
     piMock.customTools = [];
     piMock.session = undefined;
+    piMock.extensionErrors = [];
+    piMock.extensions = [];
     piMock.createAgentSession.mockReset();
     piMock.createAgentSession.mockImplementation(async options => {
       piMock.customTools = options.customTools;
@@ -87,17 +95,7 @@ describe('createPiSession', () => {
       resolvedToolResult = await toolResultPromise;
     });
     const abort = vi.fn(async () => {});
-    piMock.session = {
-      abort,
-      compact: vi.fn(async () => {}),
-      dispose: vi.fn(),
-      getSessionStats: () => ({
-        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      }),
-      prompt,
-      steer: vi.fn(async () => {}),
-      subscribe: vi.fn(() => () => {}),
-    } as unknown as AgentSession;
+    piMock.session = createPiAgentSession({ abort, prompt });
 
     const sandboxSession = createSandboxSession();
     const session = await createPiSession({
@@ -198,6 +196,95 @@ describe('createPiSession', () => {
     fs.rmSync(hostRoot, { recursive: true, force: true });
   });
 
+  it('rejects when a supplied extension fails to load', async () => {
+    piMock.extensionErrors = [
+      { path: '<inline:1>', error: 'keychain unavailable' },
+    ];
+
+    await expect(
+      createPiSession({
+        sessionId: 'session-ext-fail',
+        sandboxSession: createSandboxSession(),
+        sessionWorkDir: '/sandbox/ext-fail',
+        skills: [],
+        settings: {},
+        isResume: false,
+      }),
+    ).rejects.toThrow(PiExtensionError);
+    await expect(
+      createPiSession({
+        sessionId: 'session-ext-fail-2',
+        sandboxSession: createSandboxSession(),
+        sessionWorkDir: '/sandbox/ext-fail-2',
+        skills: [],
+        settings: {},
+        isResume: false,
+      }),
+    ).rejects.toThrow(/<inline:1>: keychain unavailable/);
+  });
+
+  it('rejects an extension tool that collides with an adapter tool', async () => {
+    piMock.extensions = [{ tools: new Map([['weather', {}]]) }];
+    piMock.session = createPiAgentSession();
+
+    const session = await createPiSession({
+      sessionId: 'session-collision',
+      sandboxSession: createSandboxSession(),
+      sessionWorkDir: '/sandbox/collision',
+      skills: [],
+      settings: {},
+      isResume: false,
+    });
+
+    await expect(
+      session.doPromptTurn({
+        prompt: 'go',
+        tools: [{ name: 'weather' }],
+        emit: vi.fn(),
+      }),
+    ).rejects.toThrow(/"weather" collides/);
+
+    await session.doDestroy();
+  });
+
+  it('emits session_shutdown to extensions before disposing', async () => {
+    const events: unknown[] = [];
+    const dispose = vi.fn(() => {
+      events.push('dispose');
+    });
+    piMock.session = createPiAgentSession({
+      dispose,
+      extensionRunner: {
+        hasHandlers: vi.fn((name: string) => name === 'session_shutdown'),
+        emit: vi.fn(async (event: unknown) => {
+          events.push(event);
+        }),
+      },
+    });
+
+    const session = await createPiSession({
+      sessionId: 'session-shutdown',
+      sandboxSession: createSandboxSession(),
+      sessionWorkDir: '/sandbox/shutdown',
+      skills: [],
+      settings: {},
+      isResume: false,
+    });
+    const control = await session.doPromptTurn({
+      prompt: 'go',
+      tools: [],
+      emit: vi.fn(),
+    });
+    await control.done;
+
+    await session.doStop();
+
+    expect(events).toEqual([
+      { type: 'session_shutdown', reason: 'quit' },
+      'dispose',
+    ]);
+  });
+
   it('caps parked sessions and destroys the oldest on overflow', async () => {
     const disposes: ReturnType<typeof vi.fn>[] = [];
     const sessions: HarnessV1Session[] = [];
@@ -206,17 +293,10 @@ describe('createPiSession', () => {
     for (let i = 0; i < 9; i++) {
       const dispose = vi.fn();
       disposes.push(dispose);
-      piMock.session = {
-        abort: vi.fn(async () => {}),
-        compact: vi.fn(async () => {}),
+      piMock.session = createPiAgentSession({
         dispose,
-        getSessionStats: () => ({
-          tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        }),
         prompt: vi.fn(() => new Promise(() => {})),
-        steer: vi.fn(async () => {}),
-        subscribe: vi.fn(() => () => {}),
-      } as unknown as AgentSession;
+      });
 
       const session = await createPiSession({
         sessionId: `park-${i}`,
@@ -253,6 +333,29 @@ describe('createPiSession', () => {
     }
   });
 });
+
+function createPiAgentSession(
+  overrides: Record<string, unknown> = {},
+): AgentSession {
+  return {
+    abort: vi.fn(async () => {}),
+    compact: vi.fn(async () => {}),
+    dispose: vi.fn(),
+    extensionRunner: {
+      hasHandlers: vi.fn(() => false),
+      emit: vi.fn(async () => {}),
+    },
+    getAllTools: vi.fn(() => []),
+    getSessionStats: () => ({
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    }),
+    prompt: vi.fn(async () => {}),
+    setActiveToolsByName: vi.fn(),
+    steer: vi.fn(async () => {}),
+    subscribe: vi.fn(() => () => {}),
+    ...overrides,
+  } as unknown as AgentSession;
+}
 
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
