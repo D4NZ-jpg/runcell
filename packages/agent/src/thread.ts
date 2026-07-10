@@ -81,14 +81,14 @@ class ThreadHandle implements Thread {
   }
 
   toJSON(): ThreadState {
-    return {
-      version: 1,
+    return structuredClone({
+      version: 1 as const,
       id: this.id,
-      messages: this.state.messages.map(message => ({ ...message })),
+      messages: this.state.messages,
       ...(this.state.continuation !== undefined
-        ? { continuation: { ...this.state.continuation } }
+        ? { continuation: this.state.continuation }
         : {}),
-    };
+    });
   }
 }
 
@@ -102,11 +102,10 @@ export function createThread(options: { id?: string } = {}): Thread {
 
 /** Rebuild a thread from a previously serialized {@link ThreadState}. */
 export function threadFromJSON(state: ThreadState): Thread {
-  const internal: ThreadInternalState = {
-    messages: state.messages.map(message => ({ ...message })),
-    continuation:
-      state.continuation !== undefined ? { ...state.continuation } : undefined,
-  };
+  const internal: ThreadInternalState = structuredClone({
+    messages: state.messages,
+    continuation: state.continuation,
+  });
   const thread = new ThreadHandle(state.id, internal);
   internalsRegistry.set(thread, internal);
   return thread;
@@ -129,10 +128,14 @@ export function appendThreadMessage(
   internals: ThreadInternalState,
   message: Omit<ThreadMessage, 'createdAt'> & { createdAt?: string },
 ): void {
-  internals.messages.push({
-    ...message,
-    createdAt: message.createdAt ?? new Date().toISOString(),
-  });
+  // Deep-copied so callers mutating the recorded payload (e.g. result.data)
+  // afterwards cannot rewrite conversation history.
+  internals.messages.push(
+    structuredClone({
+      ...message,
+      createdAt: message.createdAt ?? new Date().toISOString(),
+    }),
+  );
 }
 
 /**

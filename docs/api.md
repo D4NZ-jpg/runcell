@@ -89,6 +89,8 @@ variables for every command.
 ### `restoreSandbox(snapshot, options?): Promise<Sandbox>`
 
 Creates a fresh virtual sandbox and writes a snapshot's files back into it.
+The snapshot is validated first — escaping or duplicate paths and malformed
+base64 reject with `InvalidOptionError` before any sandbox is created.
 
 ### `Sandbox`
 
@@ -104,7 +106,11 @@ Creates a fresh virtual sandbox and writes a snapshot's files back into it.
 | `snapshot()`            | Portable, JSON-serializable capture of workspace **files** (`SandboxSnapshot`).       |
 | `exposeUrl?(port)`      | Public URL for a port. Present only when `capabilities.ports` is `true`.              |
 | `lock(key, fn)`         | Opt-in mutex, serialized per key on this handle.                                      |
-| `destroy()`             | Dispose the sandbox. Idempotent. Caller-owned handles are **only** destroyed here.    |
+| `destroy()`             | Dispose the sandbox. Idempotent; later operations throw. Only the caller does this.   |
+
+File paths (`readFile`, `writeFile`, `remove`, …) must stay inside the
+workspace: relative POSIX paths only, no absolute paths, no `..` — violations
+throw `InvalidOptionError`.
 
 ### `SandboxOption` (ephemeral modes)
 

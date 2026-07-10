@@ -9,6 +9,7 @@ export default tseslint.config(
     ignores: [
       '**/dist/**',
       '**/node_modules/**',
+      '.local/**',
       '**/coverage/**',
       'packages/harness-pi-raw/**',
       'docs/.vitepress/**',

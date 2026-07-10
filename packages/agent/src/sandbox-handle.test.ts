@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { HARNESS_ID } from '@local/harness-pi-raw';
+import { InvalidOptionError } from './errors.js';
 import {
   createReusedSandboxProvider,
   createVirtualSandbox,
@@ -125,9 +126,10 @@ describe('agent reuse', () => {
       const provider = createReusedSandboxProvider(internals);
       const guarded = await provider.createSession();
 
-      // The guarded session shares the underlying workspace...
+      // The guarded session shares the underlying workspace: a write into the
+      // handle's workdir is visible through the handle's relative-path API...
       await guarded.writeTextFile({
-        path: `${guarded.defaultWorkingDirectory}/shared.txt`,
+        path: `${guarded.defaultWorkingDirectory}/pi-${internals.sessionToken}/shared.txt`,
         content: 'from agent',
       });
       // ...and cleanup calls are no-ops, so the caller keeps ownership.
@@ -137,11 +139,7 @@ describe('agent reuse', () => {
       const alive = await sandbox.exec('echo alive');
       expect(alive.exitCode).toBe(0);
       expect(alive.stdout.trim()).toBe('alive');
-      expect(
-        await sandbox.readTextFile(
-          `${guarded.defaultWorkingDirectory}/shared.txt`,
-        ),
-      ).toBe('from agent');
+      expect(await sandbox.readTextFile('shared.txt')).toBe('from agent');
     });
   });
 
@@ -197,5 +195,98 @@ describe('snapshot and restoreSandbox', () => {
     } finally {
       await restored.destroy();
     }
+  });
+
+  it('rejects hostile or malformed snapshots before creating anything', async () => {
+    const data = Buffer.from('x').toString('base64');
+    await expect(
+      restoreSandbox({ version: 1, files: [{ path: '../escape.txt', data }] }),
+    ).rejects.toThrow(InvalidOptionError);
+    await expect(
+      restoreSandbox({ version: 1, files: [{ path: '/etc/passwd', data }] }),
+    ).rejects.toThrow(InvalidOptionError);
+    await expect(
+      restoreSandbox({
+        version: 1,
+        files: [
+          { path: 'a.txt', data },
+          { path: './a.txt', data },
+        ],
+      }),
+    ).rejects.toThrow(/duplicate path/);
+    await expect(
+      restoreSandbox({
+        version: 1,
+        files: [{ path: 'a.txt', data: 'not base64!!' }],
+      }),
+    ).rejects.toThrow(/invalid base64/);
+    await expect(
+      restoreSandbox({ version: 2, files: [] } as never),
+    ).rejects.toThrow(/version 1/);
+  });
+});
+
+describe('path containment', () => {
+  it('rejects paths that escape the workspace', async () => {
+    await withSandbox(async sandbox => {
+      await expect(sandbox.readFile('../outside.txt')).rejects.toThrow(
+        InvalidOptionError,
+      );
+      await expect(sandbox.readTextFile('/etc/passwd')).rejects.toThrow(
+        InvalidOptionError,
+      );
+      await expect(sandbox.writeFile('../../evil.sh', 'x')).rejects.toThrow(
+        InvalidOptionError,
+      );
+      await expect(sandbox.remove('..')).rejects.toThrow(InvalidOptionError);
+      await expect(sandbox.remove('a/../../b')).rejects.toThrow(
+        InvalidOptionError,
+      );
+    });
+  });
+});
+
+describe('destroyed lifecycle', () => {
+  it('rejects operations on a destroyed handle and stays idempotent', async () => {
+    const sandbox = await createVirtualSandbox();
+    await sandbox.writeFile('a.txt', 'alpha');
+
+    await Promise.all([sandbox.destroy(), sandbox.destroy()]);
+    await sandbox.destroy();
+
+    await expect(sandbox.exec('echo hi')).rejects.toThrow(/destroyed/);
+    await expect(sandbox.readFile('a.txt')).rejects.toThrow(/destroyed/);
+    await expect(sandbox.writeFile('b.txt', 'x')).rejects.toThrow(/destroyed/);
+    await expect(sandbox.snapshot()).rejects.toThrow(/destroyed/);
+    await expect(sandbox.lock('k', () => Promise.resolve())).rejects.toThrow(
+      /destroyed/,
+    );
+    expect(getSandboxInternals(sandbox)).toBeUndefined();
+  });
+
+  it('fails lock callbacks queued before destroy', async () => {
+    const sandbox = await createVirtualSandbox();
+    let entered = false;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => (release = resolve));
+    let started!: () => void;
+    const firstStarted = new Promise<void>(resolve => (started = resolve));
+
+    const first = sandbox.lock('k', () => {
+      started();
+      return gate;
+    });
+    const second = sandbox.lock('k', () => {
+      entered = true;
+      return Promise.resolve();
+    });
+
+    await firstStarted;
+    const destroyed = sandbox.destroy();
+    release();
+    await first;
+    await expect(second).rejects.toThrow(/destroyed/);
+    expect(entered).toBe(false);
+    await destroyed;
   });
 });

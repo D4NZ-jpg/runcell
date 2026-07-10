@@ -77,6 +77,41 @@ describe('clone', () => {
     expect(branch.messages).toHaveLength(2);
     expect(branch.id).toBe('chat-4');
   });
+
+  it('does not alias nested message data across copies', () => {
+    const thread = createThread({ id: 'chat-5' });
+    const internals = getThreadInternals(thread);
+    if (!internals) throw new Error('expected internals');
+    appendThreadMessage(internals, {
+      role: 'agent',
+      content: 'done',
+      data: { report: { score: 1 } },
+    });
+
+    const branch = thread.clone();
+    (branch.messages[0]?.data as { report: { score: number } }).report.score =
+      9;
+    expect(thread.messages[0]?.data).toEqual({ report: { score: 1 } });
+
+    const json = thread.toJSON();
+    (json.messages[0]?.data as { report: { score: number } }).report.score = 5;
+    expect(thread.messages[0]?.data).toEqual({ report: { score: 1 } });
+  });
+
+  it('copies appended data and threadFromJSON input', () => {
+    const source = { role: 'user' as const, content: 'x', data: { n: 1 } };
+    const thread = createThread({ id: 'chat-6' });
+    const internals = getThreadInternals(thread);
+    if (!internals) throw new Error('expected internals');
+    appendThreadMessage(internals, source);
+    source.data.n = 2;
+    expect(thread.messages[0]?.data).toEqual({ n: 1 });
+
+    const state = thread.toJSON();
+    const restored = threadFromJSON(state);
+    (state.messages[0]?.data as { n: number }).n = 3;
+    expect(restored.messages[0]?.data).toEqual({ n: 1 });
+  });
 });
 
 describe('getThreadInternals', () => {

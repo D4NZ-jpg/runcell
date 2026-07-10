@@ -4,6 +4,8 @@ import type {
   HarnessV1SandboxProvider,
 } from '@ai-sdk/harness';
 import { HARNESS_ID } from '@local/harness-pi-raw';
+import { InvalidOptionError } from './errors.js';
+import { assertSafeWorkspacePath } from './paths.js';
 import { shellQuote } from './shell.js';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -58,7 +60,10 @@ export interface Sandbox {
    */
   lock<T>(key: string, fn: () => Promise<T>): Promise<T>;
 
-  /** Dispose the sandbox. Idempotent. */
+  /**
+   * Dispose the sandbox. Idempotent; any further operation on the handle
+   * rejects with {@link InvalidOptionError}.
+   */
   destroy(): Promise<void>;
 }
 
@@ -169,11 +174,52 @@ export async function restoreSandbox(
   snapshot: SandboxSnapshot,
   options: VirtualSandboxOptions = {},
 ): Promise<Sandbox> {
+  const files = validateSnapshot(snapshot);
   const sandbox = await createVirtualSandbox(options);
-  for (const file of snapshot.files) {
-    await sandbox.writeFile(file.path, base64ToBytes(file.data));
+  try {
+    for (const file of files) {
+      await sandbox.writeFile(file.path, file.bytes);
+    }
+  } catch (error) {
+    await sandbox.destroy().catch(() => undefined);
+    throw error;
   }
   return sandbox;
+}
+
+/**
+ * Validate a snapshot before any sandbox exists: workspace-safe unique paths
+ * and canonical base64. Rejecting up front keeps restore atomic — a hostile or
+ * corrupt snapshot never creates a sandbox or writes a single file.
+ */
+function validateSnapshot(
+  snapshot: SandboxSnapshot,
+): { path: string; bytes: Uint8Array }[] {
+  // Snapshots come from persisted, possibly tampered data; the static types
+  // say nothing about what is actually on disk.
+  const state: { version?: unknown; files?: unknown } = snapshot;
+  if (state.version !== 1 || !Array.isArray(state.files)) {
+    throw new InvalidOptionError(
+      'Snapshot must be a version 1 SandboxSnapshot.',
+    );
+  }
+  const seen = new Set<string>();
+  return snapshot.files.map(file => {
+    const safePath = assertSafeWorkspacePath(file.path);
+    if (seen.has(safePath)) {
+      throw new InvalidOptionError(
+        `Snapshot contains duplicate path: ${safePath}`,
+      );
+    }
+    seen.add(safePath);
+    const bytes = Buffer.from(file.data, 'base64');
+    if (bytes.toString('base64') !== file.data) {
+      throw new InvalidOptionError(
+        `Snapshot file has invalid base64 data: ${safePath}`,
+      );
+    }
+    return { path: safePath, bytes: new Uint8Array(bytes) };
+  });
 }
 
 /**
@@ -224,6 +270,8 @@ class SessionSandbox implements Sandbox {
   private readonly session: HarnessV1NetworkSandboxSession;
   private readonly workDir: string;
   private readonly locks = new Map<string, Promise<unknown>>();
+  private destroyed = false;
+  private destroyPromise: Promise<void> | undefined;
 
   constructor(
     session: HarnessV1NetworkSandboxSession,
@@ -235,14 +283,17 @@ class SessionSandbox implements Sandbox {
     this.capabilities = capabilities;
     this.workDir = workDir;
     if (capabilities.ports) {
-      this.exposeUrl = async (port: number) =>
-        this.session.getPortUrl({ port });
+      this.exposeUrl = async (port: number) => {
+        this.assertActive();
+        return this.session.getPortUrl({ port });
+      };
     }
   }
 
   exposeUrl?: (port: number) => Promise<string>;
 
   async exec(command: string, options: ExecOptions = {}): Promise<ExecResult> {
+    this.assertActive();
     const result = await this.session.run({
       command,
       workingDirectory: options.cwd ?? this.workDir,
@@ -257,10 +308,12 @@ class SessionSandbox implements Sandbox {
   }
 
   async readFile(filePath: string): Promise<Uint8Array | null> {
+    this.assertActive();
     return this.session.readBinaryFile({ path: this.resolve(filePath) });
   }
 
   async readTextFile(filePath: string): Promise<string | null> {
+    this.assertActive();
     return this.session.readTextFile({ path: this.resolve(filePath) });
   }
 
@@ -268,6 +321,7 @@ class SessionSandbox implements Sandbox {
     filePath: string,
     content: Uint8Array | string,
   ): Promise<void> {
+    this.assertActive();
     const target = this.resolve(filePath);
     if (typeof content === 'string') {
       await this.session.writeTextFile({ path: target, content });
@@ -277,12 +331,14 @@ class SessionSandbox implements Sandbox {
   }
 
   async remove(filePath: string): Promise<void> {
+    this.assertActive();
     await this.session.run({
       command: `rm -rf -- ${shellQuote(this.resolve(filePath))}`,
     });
   }
 
   async snapshot(): Promise<SandboxSnapshot> {
+    this.assertActive();
     const listing = await this.session.run({
       command: 'find . -type f',
       workingDirectory: this.workDir,
@@ -309,7 +365,11 @@ class SessionSandbox implements Sandbox {
 
   lock<T>(key: string, fn: () => Promise<T>): Promise<T> {
     const previous = this.locks.get(key) ?? Promise.resolve();
-    const result = previous.then(() => fn());
+    // Re-check at execution time: the handle may be destroyed while queued.
+    const result = previous.then(() => {
+      this.assertActive();
+      return fn();
+    });
     // Keep the chain alive even if fn rejects, so later lock calls still run.
     this.locks.set(
       key,
@@ -321,18 +381,25 @@ class SessionSandbox implements Sandbox {
     return result;
   }
 
-  async destroy(): Promise<void> {
-    if (this.session.destroy) {
-      await this.session.destroy();
-    } else {
-      await this.session.stop();
+  destroy(): Promise<void> {
+    this.destroyPromise ??= (() => {
+      this.destroyed = true;
+      internalsRegistry.delete(this);
+      return Promise.resolve(
+        this.session.destroy ? this.session.destroy() : this.session.stop(),
+      );
+    })();
+    return this.destroyPromise;
+  }
+
+  private assertActive(): void {
+    if (this.destroyed) {
+      throw new InvalidOptionError('Sandbox has been destroyed.');
     }
   }
 
   private resolve(filePath: string): string {
-    return path.posix.isAbsolute(filePath)
-      ? filePath
-      : path.posix.join(this.workDir, filePath);
+    return path.posix.join(this.workDir, assertSafeWorkspacePath(filePath));
   }
 }
 
@@ -345,8 +412,4 @@ function isAgentStatePath(relativePath: string): boolean {
 
 function bytesToBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('base64');
-}
-
-function base64ToBytes(data: string): Uint8Array {
-  return new Uint8Array(Buffer.from(data, 'base64'));
 }
