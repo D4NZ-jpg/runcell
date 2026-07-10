@@ -154,6 +154,7 @@ Modes: `virtual` (bundled, default) · `host` (externally-isolated CI/containers
 | [Streaming](docs/streaming.md)                         | `agent.stream()` and SSE                      |
 | [Files, tools, and events](docs/files-tools-events.md) | Workspace I/O, host tools, callbacks          |
 | [Credentials](docs/credentials.md)                     | env, local, API keys, shared stores           |
+| [Pi extensions](docs/pi-extensions.md)                 | Custom providers, auth extensions, hooks      |
 | [API reference](docs/api.md)                           | Every export and type                         |
 
 ## Examples

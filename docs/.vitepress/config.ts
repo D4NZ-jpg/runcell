@@ -60,6 +60,7 @@ export default defineConfig({
           { text: 'Streaming', link: '/streaming' },
           { text: 'Files, tools, and events', link: '/files-tools-events' },
           { text: 'Credentials', link: '/credentials' },
+          { text: 'Pi extensions', link: '/pi-extensions' },
         ],
       },
       {

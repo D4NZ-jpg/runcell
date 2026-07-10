@@ -27,6 +27,7 @@ const agent = createAgent({
 | `events`       | `AgentEvents`                    | Lifecycle callbacks.                                                                        |
 | `sandbox`      | `SandboxOption`                  | Agent-level default sandbox mode. Defaults to `'virtual'`.                                  |
 | `maxRepairs`   | `number`                         | Repair-turn budget for structured runs. Defaults to `1`.                                    |
+| `pi`           | `PiOptions`                      | Pi engine escape hatch. See [Pi extensions](./pi-extensions.md).                            |
 
 ## `agent.run(options)`
 
@@ -212,6 +213,7 @@ All runcell errors extend `RuncellError`:
 | `IncompleteResultError` | A structured run exhausted its repair budget without a valid payload.                                                                                                                         |
 | `TurnError`             | The engine reported a terminal error for a turn (e.g. a provider API failure); the original error is `cause`. Engine-reported aborts also surface here — inspect `cause` to distinguish them. |
 | `CredentialError`       | Credential configuration is unsafe or malformed (e.g. `local` in production).                                                                                                                 |
+| `ExtensionError`        | A supplied Pi extension failed to load or registered a colliding tool. Raised before any model request; the original error is `cause`.                                                        |
 | `NotImplementedError`   | A declared-but-unavailable capability was invoked.                                                                                                                                            |
 
 ## Schema typing helpers
