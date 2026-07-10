@@ -38,6 +38,9 @@ export default defineConfig({
     logo: { light: '/logo-light.svg', dark: '/logo-dark.svg' },
     siteTitle: false,
     search: { provider: 'local' },
+    socialLinks: [
+      { icon: 'github', link: 'https://github.com/D4NZ-jpg/runcell' },
+    ],
     nav: [
       { text: 'Guide', link: '/getting-started' },
       { text: 'Chat agent', link: '/chat-agent' },
