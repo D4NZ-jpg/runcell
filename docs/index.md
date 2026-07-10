@@ -20,7 +20,7 @@ features:
   - title: Conversations that fit in a database row
     details: A thread is a plain JSON value that carries a readable message log and everything needed to continue where you left off. Store it in your own database and pick the conversation back up on any machine.
   - title: Isolated by default
-    details: Every run happens in a sandboxed workspace, so file writes and shell commands never touch your machine. The virtual sandbox is bundled; host, Vercel, and custom providers are there when you need them.
+    details: The bundled virtual sandbox keeps file writes and shell commands off your machine. Host mode is available for externally isolated CI jobs and containers; Vercel and custom providers add other deployment options.
   - title: Workspaces as values
     details: Keep one sandbox across runs, share it between agents, or read its files from your own code. snapshot() turns it into JSON you can restore later.
   - title: Not a framework

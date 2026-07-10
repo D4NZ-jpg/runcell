@@ -122,6 +122,7 @@ type SandboxOption =
       rootDir: string;
       isolation: 'external';
       env?: Record<string, string | undefined>;
+      inheritHostEnv?: boolean;
     }
   | {
       type: 'vercel';
