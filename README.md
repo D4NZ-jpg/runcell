@@ -14,7 +14,7 @@ sandboxed, with streaming and durable conversations built in._
 ![TypeScript](https://img.shields.io/badge/TypeScript-blue?style=flat-square&logo=typescript&logoColor=white)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
 
-[Quick start](#quick-start) • [Why Runcell](#why-runcell) • [Docs](#docs) • [Examples](#examples) • [Development](#development)
+[Quick start](#quick-start) • [Why Runcell](#why-runcell) • [Docs](https://d4nz-jpg.github.io/runcell/) • [Examples](#examples) • [Development](#development)
 
 </div>
 
@@ -114,7 +114,7 @@ Model ids can be provider-qualified when one id exists under several providers:
 
 - **Chat agents** with streamed replies, durable memory, and an optional
   persistent workspace per conversation —
-  [the flagship guide](docs/chat-agent.md).
+  [the flagship guide](https://d4nz-jpg.github.io/runcell/chat-agent).
 - **File pipelines**: seed files in, let the agent work, get changed files
   back as bytes.
 - **Typed extraction and triage**: reviews, reports, classifications your
@@ -140,22 +140,25 @@ await sandbox.destroy();
 
 Modes: `virtual` (bundled, default) · `host` (externally-isolated CI/containers)
 · `vercel` (cloud, optional `@ai-sdk/sandbox-vercel` peer, Node 22+) ·
-`custom` (bring your own provider). Details in [docs/sandboxes.md](docs/sandboxes.md).
+`custom` (bring your own provider). Details in the
+[sandboxes guide](https://d4nz-jpg.github.io/runcell/sandboxes).
 
 ## Docs
 
-| Guide                                                  |                                               |
-| ------------------------------------------------------ | --------------------------------------------- |
-| [Getting started](docs/getting-started.md)             | Install, credentials, models, first runs      |
-| [Building a chat agent](docs/chat-agent.md)            | Streaming + threads + persistence, end to end |
-| [Sandboxes](docs/sandboxes.md)                         | Handles, ownership, snapshot/restore, modes   |
-| [Threads](docs/threads.md)                             | Conversation memory and persistence           |
-| [Structured output](docs/structured-output.md)         | Schemas, repair turns, plain turns            |
-| [Streaming](docs/streaming.md)                         | `agent.stream()` and SSE                      |
-| [Files, tools, and events](docs/files-tools-events.md) | Workspace I/O, host tools, callbacks          |
-| [Credentials](docs/credentials.md)                     | env, local, API keys, shared stores           |
-| [Pi extensions](docs/pi-extensions.md)                 | Custom providers, auth extensions, hooks      |
-| [API reference](docs/api.md)                           | Every export and type                         |
+Read the [full documentation](https://d4nz-jpg.github.io/runcell/).
+
+| Guide                                                                             |                                               |
+| --------------------------------------------------------------------------------- | --------------------------------------------- |
+| [Getting started](https://d4nz-jpg.github.io/runcell/getting-started)             | Install, credentials, models, first runs      |
+| [Building a chat agent](https://d4nz-jpg.github.io/runcell/chat-agent)            | Streaming + threads + persistence, end to end |
+| [Sandboxes](https://d4nz-jpg.github.io/runcell/sandboxes)                         | Handles, ownership, snapshot/restore, modes   |
+| [Threads](https://d4nz-jpg.github.io/runcell/threads)                             | Conversation memory and persistence           |
+| [Structured output](https://d4nz-jpg.github.io/runcell/structured-output)         | Schemas, repair turns, plain turns            |
+| [Streaming](https://d4nz-jpg.github.io/runcell/streaming)                         | `agent.stream()` and SSE                      |
+| [Files, tools, and events](https://d4nz-jpg.github.io/runcell/files-tools-events) | Workspace I/O, host tools, callbacks          |
+| [Credentials](https://d4nz-jpg.github.io/runcell/credentials)                     | env, local, API keys, shared stores           |
+| [Pi extensions](https://d4nz-jpg.github.io/runcell/pi-extensions)                 | Custom providers, auth extensions, hooks      |
+| [API reference](https://d4nz-jpg.github.io/runcell/api)                           | Every export and type                         |
 
 ## Examples
 
