@@ -7,16 +7,7 @@ import {
 import { z } from 'zod';
 import { exampleCredentials, exampleModel, runExample } from './_shared.js';
 
-/**
- * The chat-agent pattern from docs/chat-agent.md, condensed into one script:
- *
- * 1. a streamed chat turn (no schema — the text IS the reply);
- * 2. thread persistence: serialize to JSON and rebuild, like a server would
- *    between requests;
- * 3. a second turn that proves the conversation memory survived;
- * 4. a structured turn on the same thread;
- * 5. a caller-owned sandbox shared across all turns, read directly at the end.
- */
+/** Demonstrates streaming, persisted threads, structured output, and sandbox reuse. */
 export async function runChatAgent(): Promise<{
   firstReply: string;
   secondReply: string;
@@ -31,7 +22,7 @@ export async function runChatAgent(): Promise<{
 
   const sandbox = await createVirtualSandbox();
   try {
-    // ---- turn 1: a streamed chat turn ------------------------------------
+    // Stream the first turn.
     const thread = createThread({ id: 'demo-conversation' });
     const first = agent.stream({
       prompt:
@@ -47,20 +38,20 @@ export async function runChatAgent(): Promise<{
     process.stdout.write('\n');
     const firstResult = await first.result;
 
-    // ---- persistence round-trip, like a server between requests ----------
+    // Serialize and restore the thread.
     const savedThread = JSON.stringify(thread.toJSON());
     const revived = threadFromJSON(
       JSON.parse(savedThread) as ReturnType<typeof thread.toJSON>,
     );
 
-    // ---- turn 2: memory survived the round-trip ---------------------------
+    // Continue the restored thread.
     const second = await agent.run({
       prompt: 'What is the project codename? Answer in one short sentence.',
       thread: revived,
       sandbox,
     });
 
-    // ---- turn 3: a structured turn on the same conversation ---------------
+    // Request structured output.
     const extracted = await agent.run({
       prompt: 'Call submitResult with the project codename we discussed.',
       thread: revived,
@@ -68,7 +59,7 @@ export async function runChatAgent(): Promise<{
       schema: z.object({ codename: z.string() }),
     });
 
-    // ---- the caller-owned sandbox is directly readable --------------------
+    // Read the generated file.
     const notes = await sandbox.readTextFile('NOTES.md');
 
     return {

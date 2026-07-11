@@ -1,12 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue';
 
-/**
- * The hero mark, alive: the cursor blinks like a terminal at rest, goes solid
- * on hover (a focused terminal), and the cell tilts toward the pointer with a
- * small spring. Tilt is gated to fine pointers and disabled under
- * prefers-reduced-motion; the blink is pure CSS.
- */
+/** Animated hero mark with pointer and reduced-motion guards. */
 
 const root = ref<HTMLElement>();
 const svg = ref<SVGSVGElement>();
@@ -14,8 +9,7 @@ const cursor = ref<SVGRectElement>();
 
 let burst: Animation | undefined;
 
-/** Quick double-blink on press, like tapping a terminal. Runs above the CSS
- * hover state and reverts on its own; rapid clicks restart it. */
+/** Restart the press blink animation. */
 function blinkBurst() {
   const el = cursor.value;
   if (!el || typeof el.animate !== 'function') {
@@ -32,7 +26,7 @@ let raf = 0;
 let running = false;
 let detach: (() => void) | undefined;
 
-// Spring state: current angle, velocity, target angle (deg).
+// Current angle, velocity, and target angle in degrees.
 let cx = 0;
 let cy = 0;
 let vx = 0;
@@ -42,7 +36,7 @@ let ty = 0;
 
 const STIFFNESS = 140;
 const DAMPING = 16;
-const MAX_TILT = 8;
+const MAX_TILT = 12;
 
 function step(last: number) {
   raf = requestAnimationFrame(now => {
@@ -147,7 +141,7 @@ onUnmounted(() => {
   translate: -50% -50%;
   width: 192px;
   height: 192px;
-  perspective: 640px;
+  perspective: 500px;
   color: var(--vp-c-text-1);
   transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
 }
@@ -179,12 +173,12 @@ onUnmounted(() => {
   will-change: transform;
 }
 
-/* A terminal at rest blinks. */
+/* Blink while idle. */
 .rc-cursor {
   animation: rc-blink 1.1s steps(1, end) infinite;
 }
 
-/* A focused terminal doesn't. */
+/* Keep the cursor visible on hover. */
 .rc-mark:hover .rc-cursor {
   animation: none;
   opacity: 1;

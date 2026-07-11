@@ -20,7 +20,7 @@ backslashes, and drive letters are rejected before the run starts.
 
 ## Files out
 
-Everything the agent creates or modifies comes back on the result:
+Created and modified files are returned on the result:
 
 ```ts
 const result = await agent.run({ prompt, schema });
@@ -40,8 +40,8 @@ workspace directly (`sandbox.readTextFile(...)`) after (or during) runs.
 
 ## Host tools
 
-Tools are functions the agent can call on your own process: application
-lookups, internal APIs, anything the sandbox itself can't reach:
+Tools are functions the agent can call in your process, such as application
+lookups and internal APIs that the sandbox cannot reach:
 
 ```ts
 import { z } from 'zod';
@@ -58,8 +58,9 @@ const agent = createAgent({
 });
 ```
 
-- `schema` is any [Standard Schema](https://standardschema.dev) validator —
-  the input is validated before `execute` runs, and typed from the schema.
+- `schema` accepts any [Standard Schema](https://standardschema.dev)
+  validator. The input is validated before `execute` runs and typed from the
+  schema.
 - The return value is serialized back to the model.
 - Reserved names (used by the runtime): `read`, `write`, `edit`, `bash`,
   `grep`, `glob`, `ls`, `submitResult`, `fileChange`. Registering one throws
@@ -67,10 +68,10 @@ const agent = createAgent({
 
 ## Events
 
-Lifecycle callbacks for logging, UIs, and metrics. All optional, and
-best-effort: a throwing callback is swallowed and never affects the run.
-Register them at the agent level (every run) or per run via
-`agent.run({ ..., events })` — when both are set, both fire.
+Lifecycle callbacks support logging, UIs, and metrics. They are optional and
+best-effort: callback errors are swallowed and do not affect the run. Register
+callbacks at the agent level for every run or per run via
+`agent.run({ ..., events })`. If both are set, both fire.
 
 ```ts
 const agent = createAgent({

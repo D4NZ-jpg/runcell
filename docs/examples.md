@@ -38,14 +38,9 @@ agentDir:/path/to/agent-dir
 
 ## Chat agent example
 
-`example:09` is the [chat-agent guide](./chat-agent.md) condensed into one
-script:
-
-1. stream a plain chat turn (no schema) into stdout;
-2. serialize the thread to JSON and rebuild it, like a server between requests;
-3. prove the memory survived with a second turn;
-4. run a structured turn on the same conversation;
-5. read a file the agent wrote, straight off the caller-owned sandbox.
+`example:09` demonstrates streaming, thread serialization, structured output,
+and reuse of a caller-owned sandbox. It is a runnable version of the
+[chat-agent guide](./chat-agent.md).
 
 ```bash
 npm run example:09
@@ -53,14 +48,8 @@ npm run example:09
 
 ## File output validation example
 
-`example:08` shows a more complete pattern:
-
-1. seed `feedback.txt` into the sandbox;
-2. ask the agent to create `report.md`;
-3. validate structured data with a Standard Schema-compatible validator;
-4. find `report.md` in `result.files`;
-5. decode file bytes;
-6. parse a final object through another schema.
+`example:08` seeds `feedback.txt`, asks the agent to create `report.md`, and
+validates both the structured result and returned file.
 
 ```bash
 npm run example:08

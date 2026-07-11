@@ -2,37 +2,41 @@
 layout: home
 
 hero:
-  text: Agents as code. Answers as data.
-  tagline: Build agents in plain TypeScript. Each run is sandboxed and returns typed, validated data, streamed text, and the files it changed.<br />No framework, no hosted platform.
+  text: Give an agent a workspace.<br />Get back validated results.
+  tagline: An open-source TypeScript runtime for agents that work with files and tools. Use a catalog or custom model with the bundled workspace or an external sandbox. Runs can stream text, preserve state, validate structured output, and return file changes.
   actions:
     - theme: brand
-      text: Get started in 5 minutes
+      text: Run your first agent
       link: /getting-started
     - theme: alt
-      text: See it in action
+      text: Build a chat agent
       link: /chat-agent
 
 features:
-  - title: Typed, validated output
-    details: Works with any Standard Schema library (Zod, Valibot, ArkType). Runcell checks the agent's submission, asks it to fix mistakes, and fails the run if it can't. Bad data never reaches your code.
-  - title: Streaming built in
-    details: agent.stream() returns the text as an async iterable plus a promise for the final result. Wiring it to SSE takes about a dozen lines.
-  - title: Conversations that fit in a database row
-    details: A thread is a plain JSON value that carries a readable message log and everything needed to continue where you left off. Store it in your own database and pick the conversation back up on any machine.
-  - title: Isolated by default
-    details: The bundled virtual sandbox keeps file writes and shell commands off your machine. Host mode is available for externally isolated CI jobs and containers; Vercel and custom providers add other deployment options.
-  - title: Workspaces as values
-    details: Keep one sandbox across runs, share it between agents, or read its files from your own code. snapshot() turns it into JSON you can restore later.
-  - title: Not a framework
-    details: There is no workflow engine and no hidden store. Concurrency is Promise.all, persistence is your database, orchestration is your code.
+  - title: Sandbox workspaces
+    details: Agents read, write, and run commands in a sandbox workspace. The default virtual sandbox does not write to the host filesystem.
+  - title: Schema validation
+    details: Use any Standard Schema validator, including Zod, Valibot, or ArkType. Runcell attempts repair turns and rejects the run if validation still fails.
+  - title: Sandbox providers
+    details: The virtual workspace needs no setup. Vercel Sandbox, a container, or a custom provider can supply an OS security boundary.
+  - title: Serializable state
+    details: Threads and portable filesystem snapshots serialize to JSON. Store them anywhere and resume on another machine.
+  - title: Events and hooks
+    details: Lifecycle callbacks report run activity to logs and UIs. Extension hooks can block tool calls before they run.
+  - title: Local credentials
+    details: credentials 'local' can use supported provider logins from the development machine. Production use requires explicit opt-in.
+  - title: Streaming
+    details: agent.stream() returns an async iterable of text and a promise for the final result.
+  - title: Application-owned orchestration
+    details: Runcell has no workflow engine or data store. The application manages orchestration and persistence.
 ---
 
-## The output is a contract
+## Structured results
 
-Most agent output is prose you have to parse and hope about. When a Runcell
-run has a schema, the agent must submit a payload that satisfies it, and
-`result.data` comes back typed. Skip the schema and the streamed text is the
-reply.
+Applications often need structured data rather than unvalidated prose. When a
+run has a schema, the agent must submit a value that satisfies it, and
+`result.data` contains the typed result. Without a schema, the streamed text is
+the reply.
 
 ```ts
 import { createAgent } from 'runcell';
@@ -71,11 +75,11 @@ review.data.risks; // string[], validated
 
 ## Common questions
 
-### Is this another agent framework?
+### What does Runcell manage?
 
-No. Runcell hands you three primitives (an agent, a sandbox, a thread) and has
-no opinion about how you run them. There is no workflow engine and no hidden
-state: if you saved the thread, you have the whole conversation.
+Runcell provides an agent, a sandbox, and a thread. It does not provide a
+workflow engine or data store. A saved thread contains the conversation state
+needed to resume it.
 
 ### Which schema libraries work?
 
@@ -84,21 +88,30 @@ Zod 4, Valibot, ArkType, and others.
 
 ### Where does state live?
 
-Wherever you put it. `thread.toJSON()` and `sandbox.snapshot()` are plain
-JSON-safe values, so Postgres, Redis, and a file on disk all work. Resume on
-any machine.
+State lives in storage chosen by the application. `thread.toJSON()` and
+`sandbox.snapshot()` return JSON-safe values that can be stored in Postgres,
+Redis, or a file and restored on another machine.
 
 ### What happens when the model ignores the schema?
 
-Runcell runs repair turns asking it to correct the submission. If the budget
-is exhausted, the run rejects with `IncompleteResultError`. You never receive
-unvalidated data.
+Runcell runs repair turns asking the model to correct the submission. If the
+budget is exhausted, the run rejects with `IncompleteResultError`. Invalid
+structured data is not returned as a successful result.
 
-### Is it safe to run in production?
+### Which sandbox should I use in production?
 
-Credentials default to environment variables, and local developer credentials
-are refused in production unless explicitly allowed. Agent file paths are
-validated, and every run is sandboxed by default.
+The bundled virtual sandbox is an isolated in-memory workspace. It keeps agent
+writes off the host filesystem, but it is not an OS security boundary. Use
+Vercel Sandbox, a container or VM, or a custom provider such as Docker, E2B,
+or Modal for untrusted or production workloads.
+
+### Can I run it on my existing Claude / ChatGPT subscription?
+
+For personal projects on your own machine: yes. `credentials: 'local'`
+picks up the provider logins already configured on your dev machine, so a
+side project may not need a separate API key. Provider terms govern
+subscription access. Use API credentials for commercial or deployed work.
+Runcell refuses local credentials in production unless explicitly enabled.
 
 ## Start building
 

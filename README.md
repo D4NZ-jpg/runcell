@@ -7,8 +7,7 @@
 
 <br><br>
 
-_Build AI agents in TypeScript that return typed, validated data. Every run is
-sandboxed, with streaming and durable conversations built in._
+_**Give an agent a workspace. Get back validated results.**_
 
 ![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-3c873a?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-blue?style=flat-square&logo=typescript&logoColor=white)
@@ -18,9 +17,14 @@ sandboxed, with streaming and durable conversations built in._
 
 </div>
 
-Runcell gives an AI agent a sandbox workspace and gives you back values your
-application can rely on: streamed text, changed files, schema-validated data,
-and conversation state you can persist anywhere.
+Runcell is an open-source TypeScript runtime for agents that work with files
+and tools. Choose a catalog model or register a provider, then run it in a
+workspace. A run can return:
+
+- changed files as bytes;
+- schema-validated data, with invalid results repaired or rejected;
+- streamed text through `agent.stream()`;
+- threads and sandbox snapshots that you can store as JSON.
 
 ```ts
 import { createAgent, createThread } from 'runcell';
@@ -46,29 +50,42 @@ await db.save(thread.id, thread.toJSON()); // the whole conversation, as JSON
 
 ## Why Runcell?
 
-Agent integrations make you assemble the same pieces every time: a sandbox,
-file plumbing, tool registration, streaming, schema validation, retries when
-the model misses the contract, conversation persistence. Runcell wraps those
-behind three primitives and stays out of your architecture:
+Runcell exposes three primitives:
 
-- **Agent**: a stateless callable. `run()` for a result, `stream()` for a
-  live text feed plus the result.
-- **Sandbox**: the workspace. Ephemeral by default; create a handle to keep
-  one across runs, read/write it directly, `snapshot()` it into your database,
-  restore it anywhere. Runcell never destroys a sandbox you own.
-- **Thread**: the conversation. A mutable value with a readable message log
-  and lossless continuation state. `toJSON()` and store it wherever you want.
+- An **agent** is a stateless callable.
+- A **sandbox** is the agent's workspace.
+- A **thread** stores conversation state.
 
-There is no built-in store, no workflow engine, no hidden state. Concurrency
-is `Promise.all`; persistence is your database; orchestration is your code.
+Agents read, write, and run commands through the sandbox. The bundled virtual
+sandbox works without additional setup. Vercel Sandbox, containers, and custom
+providers can supply an OS security boundary when the workload requires one.
 
-### Structured output you can trust
+Pass any [Standard Schema](https://standardschema.dev) validator, including
+Zod, Valibot, or ArkType. Runcell validates the submitted value and attempts
+repair turns when validation fails. If repair fails, the run rejects instead
+of returning the invalid value.
 
-Give a run a schema: anything
-[Standard Schema](https://standardschema.dev)-compatible (Zod 3/4, Valibot,
-ArkType). The agent must submit a matching payload. Runcell validates it,
-runs repair turns when the model misses, and fails the run when they don't
-help. Bad data never reaches your code. `result.data` is authoritative; prose is for logs.
+Threads and portable filesystem snapshots serialize to JSON. The application
+chooses where to store them and can resume them on another machine or sandbox
+provider.
+
+The built-in model catalog includes Anthropic, OpenAI, Google, and other
+providers. Extensions can register additional providers before Runcell resolves
+the configured model. Lifecycle callbacks report run activity, and extension
+hooks can block tool calls.
+
+For local personal projects, `credentials: 'local'` can reuse supported
+provider logins from the development machine. Provider terms govern this use;
+commercial and deployed applications should use API credentials. Runcell
+refuses local credentials in production unless explicitly enabled.
+
+Runcell does not include a database or workflow engine. The application owns
+persistence, concurrency, and orchestration.
+
+### Structured output
+
+When a schema is present, `result.data` contains the validated value. Model
+prose remains available for logs.
 
 ```ts
 const result = await agent.run({
@@ -82,13 +99,13 @@ const result = await agent.run({
 result.data.severity; // typed and validated
 ```
 
-Omit the schema entirely and the streamed text _is_ the output, which is
-exactly what chat replies want.
+Omit the schema and the streamed text becomes the output, which suits chat
+replies.
 
 ## Quick start
 
 ```bash
-npm install runcell        # zod optional — only needed for structured output
+npm install runcell        # zod is optional and used for structured output
 ```
 
 ```ts
@@ -112,9 +129,9 @@ Model ids can be provider-qualified when one id exists under several providers:
 
 ## What can you build with it?
 
-- **Chat agents** with streamed replies, durable memory, and an optional
-  persistent workspace per conversation —
-  [the flagship guide](https://d4nz-jpg.github.io/runcell/chat-agent).
+- **Chat agents** with streamed replies, persisted conversation state, and an
+  optional workspace per conversation. See the
+  [chat-agent guide](https://d4nz-jpg.github.io/runcell/chat-agent).
 - **File pipelines**: seed files in, let the agent work, get changed files
   back as bytes.
 - **Typed extraction and triage**: reviews, reports, classifications your

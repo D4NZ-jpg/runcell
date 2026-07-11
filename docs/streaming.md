@@ -13,10 +13,10 @@ for await (const delta of textStream) {
 const final = await result; // the same RunResult run() would return
 ```
 
-- **`textStream`**: an `AsyncIterable<string>` of the model's text deltas.
-- **`result`**: a promise for the final `RunResult`. Always await it, even
-  if you only care about the stream: it finalizes the turn, surfaces errors,
-  and (with a thread) commits the conversation state.
+- `textStream` is an `AsyncIterable<string>` of the model's text deltas.
+- `result` is a promise for the final `RunResult`. Always await it, even if you
+  only need the stream. Awaiting it finalizes the turn, surfaces errors, and
+  commits conversation state when using a thread.
 
 ## With and without a schema
 
@@ -63,12 +63,10 @@ export async function POST(req: Request): Promise<Response> {
 The full server pattern, with threads and persistence, is in
 [Building a chat agent](./chat-agent.md).
 
-## Everything else stays on events
+## Run events
 
-`textStream` carries text only. Tool calls, tool results, file changes,
-repairs, and errors are delivered through the agent-level and per-run
-`events` callbacks,
-which fire during streamed and non-streamed runs alike:
+`textStream` carries text only. Agent-level and per-run `events` callbacks deliver tool calls, tool results,
+file changes, repairs, and errors during streamed and non-streamed runs:
 
 ```ts
 const agent = createAgent({

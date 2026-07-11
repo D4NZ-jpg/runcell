@@ -1,9 +1,8 @@
 # Structured output
 
-Runs come in two shapes. **With a schema**, the agent must submit a payload
-matching it, and `result.data` is validated, typed output your code can rely
-on. **Without one**, the run is a plain turn and the model's text is the
-output.
+A run may include a schema or omit one. With a schema, the agent must submit a
+matching value, and `result.data` contains validated, typed output. Without a
+schema, the model's text is the output.
 
 ## With a schema
 
@@ -26,11 +25,10 @@ const result = await agent.run({
 result.data.severity; // typed: 'low' | 'medium' | 'high' | 'critical'
 ```
 
-How it works: the schema is exposed to the agent as a required submission
-contract. The agent works in its sandbox (reading files, running commands,
-calling your tools), and must finish by submitting a payload. runcell validates
-that payload against your schema before returning. `result.data` is
-authoritative; `result.text` is the surrounding prose, useful for logs.
+The schema becomes a required submission contract. After working in its
+sandbox, the agent must submit a value, which runcell validates against the
+schema before returning. `result.data` contains the validated value, while
+`result.text` contains surrounding prose for logging.
 
 ## Repair turns
 
@@ -42,8 +40,8 @@ repair turn asking it to correct the submission. Configure the budget with
 const agent = createAgent({ model, maxRepairs: 2 });
 ```
 
-If the budget is exhausted, `run` rejects with `IncompleteResultError`, and you
-never receive unvalidated data.
+If the budget is exhausted, `run` rejects with `IncompleteResultError`. A
+structured run succeeds only after its result passes schema validation.
 
 ```ts
 import { IncompleteResultError } from 'runcell';
@@ -87,13 +85,13 @@ Omit `schema` and the turn's streamed text **is** the output:
 ```ts
 const reply = await agent.run({ prompt: 'Summarize our options.' });
 
-reply.text; // the model's reply — authoritative
+reply.text; // the model's reply and plain-turn output
 reply.data; // undefined (typed as undefined)
 reply.finishReason; // why the turn ended, e.g. "stop"
 ```
 
-No submission contract, no repair loop, one turn. This is the mode chat
-replies want; see [Building a chat agent](./chat-agent.md).
+Plain turns have no submission contract or repair loop. Use them for chat
+replies; see [Building a chat agent](./chat-agent.md).
 
 ## Choosing per run
 

@@ -1,14 +1,13 @@
 # Pi extensions
 
-runcell runs on the [Pi coding agent](https://pi.dev) engine. Pi has an
-extension system — host-side plugins that can register custom model
-providers, hook the agent lifecycle, transform requests, and add tools.
+runcell runs on the [Pi coding agent](https://pi.dev) engine. Pi extensions are
+host-side plugins that can register custom model providers, hook the agent
+lifecycle, transform requests, or add tools.
 `pi.extensions` is runcell's escape hatch into that system.
 
 ::: warning Security
-Extensions execute in your host Node process with full application
-permissions — filesystem, network, environment variables, credentials. They
-are **not** sandboxed. Importing an extension is the trust decision; treat it
+Extensions execute in your host Node process with access to the filesystem,
+network, environment variables, and credentials. They are **not** sandboxed. Importing an extension is the trust decision; treat it
 like any other dependency that runs code.
 :::
 
@@ -72,8 +71,8 @@ const agent = createAgent({
 });
 ```
 
-Tools registered by supplied extensions are activated automatically — the
-import was the trust decision. For plain host functions you do not need an
+Tools registered by supplied extensions are activated automatically.
+Importing the extension is the trust decision. For plain host functions you do not need an
 extension at all; the top-level `tools` option is simpler and typed.
 
 Registering a custom provider works the same way and completes before the
@@ -97,37 +96,32 @@ createAgent({ model: 'corporate-ai/coder', pi: { extensions: [corp] } });
 
 ## Semantics
 
-- **Order.** Factories load in array order, before the model is resolved.
-  Later extensions may override providers registered by earlier ones,
-  following Pi semantics.
-- **Failures are fatal.** A factory that throws (sync or async) rejects the
-  run with `ExtensionError` before any model request. Extensions that want to
-  degrade gracefully should catch their own recoverable errors, as
-  `pi-claude-auth` does.
-- **Tool collisions.** An extension tool that shares a name with a runcell
-  tool or a reserved sandbox tool (`read`, `write`, `edit`, `bash`, …)
-  rejects the run with `ExtensionError`. Two extensions may shadow each
-  other's tools (last wins, per Pi).
-- **Factories must be idempotent.** Pi may re-run factories within one run
-  (its reload semantics) and runcell re-runs them for every run and thread
-  resume. Do not start background resources in the factory; use
-  `session_start`/`session_shutdown` handlers.
-- **Shutdown.** `session_shutdown` is emitted and awaited on every teardown
-  path, including errors and aborts.
-- **Headless environment.** `ctx.hasUI` is `false`. Dialogs, notifications,
-  widgets, shortcuts, themes, and `/commands` are unavailable; registering
-  them is a no-op. `session_start` may not fire in embedded mode — prefer
-  `agent_start`.
-- **Concurrency.** Concurrent runs sharing one agent each get their own
-  extension runtime, but your factory's closure and module state are shared;
-  keep them concurrency-safe.
-- **Credentials.** Extensions may override the credentials runcell
-  configured (that is how auth extensions work). Credential-writing
-  extensions are designed around Pi's local agent dir, so they pair best
-  with `credentials: 'local'` or `{ type: 'agentDir' }`.
+- Factories load in array order before the model is resolved. Later extensions
+  may override providers registered by earlier ones, following Pi semantics.
+- If a factory throws synchronously or asynchronously, the run rejects with
+  `ExtensionError` before any model request. Extensions should catch their own
+  recoverable errors if needed, as `pi-claude-auth` does.
+- If an extension tool shares a name with a Runcell tool or reserved sandbox
+  tool (`read`, `write`, `edit`, `bash`, …), the run rejects with
+  `ExtensionError`. Two extensions may shadow each other's tools; the last one
+  wins, following Pi semantics.
+- Factories must be idempotent. Pi may rerun them under its reload semantics,
+  and Runcell runs them for each run and thread resume. Use `session_start` and
+  `session_shutdown` handlers instead of starting background resources in the
+  factory.
+- `session_shutdown` is emitted and awaited during teardown, including errors
+  and aborts.
+- In the headless environment, `ctx.hasUI` is `false`. Dialogs, notifications,
+  widgets, shortcuts, themes, and `/commands` are unavailable. Because
+  `session_start` may not fire in embedded mode, prefer `agent_start`.
+- Concurrent runs sharing an agent receive separate extension runtimes, but
+  the factory closure and module state remain shared. Keep them safe for
+  concurrent use.
+- Extensions may override credentials configured by Runcell. Credential-writing
+  extensions use Pi's local agent directory, so they work best with
+  `credentials: 'local'` or `{ type: 'agentDir' }`.
 
 ## Versioning
 
-Everything under `pi.extensions` and `runcell/pi` is engine-specific surface
-that tracks Pi's own extension API and versioning, not runcell's core
-stability promise.
+The `pi.extensions` and `runcell/pi` APIs track Pi's extension API and
+versioning. They are outside Runcell's core stability guarantee.

@@ -1,7 +1,7 @@
 {
   "name": "runcell",
   "version": "0.1.0",
-  "description": "Build AI agents in TypeScript that return typed, validated data. Every run is sandboxed.",
+  "description": "TypeScript runtime for running agents in sandboxes with structured results, file outputs, and persistent threads.",
   "type": "module",
   "license": "MIT",
   "sideEffects": false,
@@ -56,7 +56,10 @@
   "keywords": [
     "ai",
     "agent",
+    "agent-runtime",
     "sandbox",
+    "sandboxed-agents",
+    "code-execution",
     "structured-output",
     "typescript",
     "llm",

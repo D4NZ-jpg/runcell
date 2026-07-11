@@ -1,15 +1,13 @@
 # Building a chat agent
 
-This is the guide the rest of the docs build toward: a chat endpoint where each
-conversation streams its replies, remembers its history, and can keep a working
-filesystem between turns. You decide where every piece of state
-lives.
+This guide builds a chat endpoint that streams replies, preserves conversation
+history, and optionally keeps a workspace between turns.
 
-The three primitives:
+It uses three Runcell primitives:
 
-- **Agent**: stateless. Create one per process and reuse it.
-- **Thread**: the conversation. A mutable value you persist wherever you want.
-- **Sandbox**: the workspace. Ephemeral by default; pass a handle to keep it.
+- An **agent** is stateless and can be reused across runs.
+- A **thread** holds conversation state that the application can persist.
+- A **sandbox** is the run workspace. Pass a handle to reuse it across turns.
 
 ## Step 1: a minimal chat loop
 
@@ -34,7 +32,7 @@ for (;;) {
     process.stdout.write(delta);
   }
   process.stdout.write('\n');
-  await result; // always await: this finalizes the turn and updates the thread
+  await result; // Finalize the turn and update the thread.
 }
 ```
 
@@ -43,13 +41,13 @@ Two things to notice:
 - No `schema`: a chat reply is the streamed text itself, not a structured
   payload. `result.data` is `undefined` on these turns.
 - The `thread` is mutated in place: after `await result`, it contains the new
-  user + agent turns, and the next call remembers everything so far.
+  user and agent turns used as context for the next call.
 
 ## Step 2: an HTTP endpoint with persistence
 
-An agent server is stateless if you persist the thread between requests.
-`thread.toJSON()` is a plain JSON value. Store it in Postgres, Redis, a file,
-anywhere:
+Persisting the thread allows conversation state to survive between requests
+and server instances. `thread.toJSON()` returns a JSON value suitable for a
+database, cache, or file:
 
 ```ts
 import {
@@ -96,14 +94,13 @@ export async function POST(req: Request): Promise<Response> {
 }
 ```
 
-Each request gets a fresh sandbox (created and destroyed by runcell), but the
-conversation survives: the thread carries its own continuation state, so the
-next turn picks up exactly where the last one ended, even on a different
+Each request gets a fresh sandbox that Runcell creates and destroys. The
+thread carries the continuation state, so the next turn can resume on another
 machine.
 
 ## Step 3: rendering history
 
-`thread.messages` is the render surface: a neutral log of turns for your UI:
+Use `thread.messages` as the message history displayed by the UI:
 
 ```ts
 const thread = threadFromJSON(await db.loadThread(conversationId));
@@ -117,9 +114,8 @@ for (const message of thread.messages) {
 }
 ```
 
-Don't render (or touch) `thread.toJSON().continuation`. It's the opaque
-engine state that makes lossless resume work. `messages` is for humans;
-`continuation` is for the machine.
+Do not render or modify `thread.toJSON().continuation`. It contains opaque
+engine state used to resume the conversation.
 
 ## Step 4: a workspace that survives the conversation
 
@@ -130,27 +126,27 @@ and pass the handle:
 ```ts
 import { createVirtualSandbox, restoreSandbox } from 'runcell';
 
-// While the conversation is hot: keep a live handle (e.g. in an in-memory map).
+// Keep a live handle while the conversation is active.
 const sandbox =
   liveSandboxes.get(conversationId) ?? (await createVirtualSandbox());
 liveSandboxes.set(conversationId, sandbox);
 
 await agent.run({ prompt: message, thread, sandbox });
 
-// Your server can read what the agent built, directly:
+// Read files from the workspace.
 const pkg = await sandbox.readTextFile('package.json');
 
-// When the conversation goes cold: snapshot files into your DB and dispose.
+// Snapshot and destroy the sandbox when it is no longer active.
 await db.saveWorkspace(conversationId, await sandbox.snapshot());
 await sandbox.destroy();
 
-// When the user comes back: rehydrate.
+// Restore the workspace later.
 const revived = await restoreSandbox(await db.loadWorkspace(conversationId));
 ```
 
-The ownership rule: you created the handle, you destroy it. runcell never
-disposes a sandbox you passed in. A thread's continuation works across
-sandboxes, so conversation memory is never tied to workspace lifetime.
+The caller must destroy sandbox handles it creates. Runcell does not destroy a
+sandbox passed to a run. Thread continuation state can be used with another
+sandbox.
 
 ## Step 5: mixing in structured turns
 
@@ -172,7 +168,7 @@ const triage = await agent.run({
 await createTicket(triage.data); // typed and validated
 ```
 
-Plain turns and structured turns share the same thread freely.
+Plain and structured turns can use the same thread.
 
 ## The whole shape
 
@@ -184,6 +180,5 @@ one process-wide agent
     └── per turn: agent.stream({ prompt, thread, sandbox? })
 ```
 
-runcell owns none of your state. Threads and snapshots are plain JSON-safe
-values; where they live, and how conversations scale out, is your
-architecture, not the library's.
+The application stores thread and sandbox snapshots and determines how
+conversations are distributed across processes.

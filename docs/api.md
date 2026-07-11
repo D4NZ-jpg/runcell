@@ -1,6 +1,6 @@
 # API reference
 
-Everything ships from the single `runcell` entrypoint.
+The public API is exported from the `runcell` entrypoint.
 
 ## `createAgent(options): Agent`
 
@@ -48,7 +48,7 @@ run(options: RunOptionsBase): Promise<RunResult<undefined>>;
 | `prompt`    | `string`                   | The task prompt. Required.                                                                         |
 | `schema`    | `AgentSchema`              | Structured output contract ([Standard Schema](https://standardschema.dev)). Omit for a plain turn. |
 | `files`     | `FileInput[]`              | Files seeded into the workspace before the run. Relative paths only.                               |
-| `sandbox`   | `Sandbox \| SandboxOption` | A caller-owned handle (reused, never destroyed by runcell) or an ephemeral mode option.            |
+| `sandbox`   | `Sandbox \| SandboxOption` | A caller-owned handle that Runcell does not destroy, or an ephemeral mode option.                  |
 | `thread`    | `Thread`                   | Conversation to continue; mutated in place on success.                                             |
 | `events`    | `AgentEvents`              | Per-run lifecycle callbacks, invoked in addition to the agent-level ones.                          |
 | `sessionId` | `string`                   | Resume a previous session by id.                                                                   |
@@ -59,7 +59,7 @@ run(options: RunOptionsBase): Promise<RunResult<undefined>>;
 | Field          | Type            | Description                                                           |
 | -------------- | --------------- | --------------------------------------------------------------------- |
 | `data`         | `TData`         | Validated structured output, or `undefined` when no schema was given. |
-| `text`         | `string`        | The model's prose. Authoritative for plain turns.                     |
+| `text`         | `string`        | The model's prose and the output for plain turns.                     |
 | `files`        | `ChangedFile[]` | Files created/modified during this run (`{ path, change, bytes }`).   |
 | `finishReason` | `string`        | Why the final turn stopped, e.g. `"stop"`.                            |
 | `sessionId`    | `string`        | Identifier of the underlying run session.                             |
@@ -89,8 +89,8 @@ variables for every command.
 ### `restoreSandbox(snapshot, options?): Promise<Sandbox>`
 
 Creates a fresh virtual sandbox and writes a snapshot's files back into it.
-The snapshot is validated first — escaping or duplicate paths and malformed
-base64 reject with `InvalidOptionError` before any sandbox is created.
+The snapshot is validated before the sandbox is created. Escaping paths,
+duplicate paths, and malformed base64 throw `InvalidOptionError`.
 
 ### `Sandbox`
 
@@ -108,9 +108,9 @@ base64 reject with `InvalidOptionError` before any sandbox is created.
 | `lock(key, fn)`         | Opt-in mutex, serialized per key on this handle.                                      |
 | `destroy()`             | Dispose the sandbox. Idempotent; later operations throw. Only the caller does this.   |
 
-File paths (`readFile`, `writeFile`, `remove`, …) must stay inside the
-workspace: relative POSIX paths only, no absolute paths, no `..` — violations
-throw `InvalidOptionError`.
+File paths passed to `readFile`, `writeFile`, `remove`, and similar methods
+must be relative POSIX paths. Absolute paths and `..` throw
+`InvalidOptionError`.
 
 ### `SandboxOption` (ephemeral modes)
 
@@ -170,8 +170,8 @@ Rebuilds a thread from a persisted `ThreadState`.
 { role: 'user' | 'agent'; content: string; data?: unknown; createdAt: string }
 ```
 
-`ThreadState.continuation` is an opaque engine capture used for lossless
-resume; persist it, never inspect it. See [Threads](./threads.md).
+`ThreadState.continuation` contains opaque engine state required to resume a
+thread. Store it without modifying it. See [Threads](./threads.md).
 
 ## Tools
 
@@ -188,9 +188,9 @@ Reserved tool names: `read`, `write`, `edit`, `bash`, `grep`, `glob`, `ls`,
 
 ## Events (`AgentEvents`)
 
-`onText`, `onToolCall`, `onToolResult`, `onFileChange`, `onRepair`,
-`onFinish`, `onError`, all optional. Register them at the agent level, per
-run, or both — both sets fire. Details in
+The optional callbacks are `onText`, `onToolCall`, `onToolResult`,
+`onFileChange`, `onRepair`, `onFinish`, and `onError`. Callbacks registered at
+the agent and run levels both fire. See
 [Files, tools, and events](./files-tools-events.md).
 
 ## Files
@@ -207,14 +207,14 @@ Paths must be relative workspace paths (no absolute paths, no `..`).
 
 All runcell errors extend `RuncellError`:
 
-| Error                   | Thrown when                                                                                                                                                                                   |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `InvalidOptionError`    | Options are malformed (bad sandbox option, reserved tool name, foreign thread…).                                                                                                              |
-| `IncompleteResultError` | A structured run exhausted its repair budget without a valid payload.                                                                                                                         |
-| `TurnError`             | The engine reported a terminal error for a turn (e.g. a provider API failure); the original error is `cause`. Engine-reported aborts also surface here — inspect `cause` to distinguish them. |
-| `CredentialError`       | Credential configuration is unsafe or malformed (e.g. `local` in production).                                                                                                                 |
-| `ExtensionError`        | A supplied Pi extension failed to load or registered a colliding tool. Raised before any model request; the original error is `cause`.                                                        |
-| `NotImplementedError`   | A declared-but-unavailable capability was invoked.                                                                                                                                            |
+| Error                   | Thrown when                                                                                                                            |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `InvalidOptionError`    | Options are malformed (bad sandbox option, reserved tool name, foreign thread…).                                                       |
+| `IncompleteResultError` | A structured run exhausted its repair budget without a valid payload.                                                                  |
+| `TurnError`             | The engine reported a terminal turn error, such as a provider failure or abort. The original error is available as `cause`.            |
+| `CredentialError`       | Credential configuration is unsafe or malformed (e.g. `local` in production).                                                          |
+| `ExtensionError`        | A supplied Pi extension failed to load or registered a colliding tool. Raised before any model request; the original error is `cause`. |
+| `NotImplementedError`   | A declared-but-unavailable capability was invoked.                                                                                     |
 
 ## Schema typing helpers
 
@@ -224,9 +224,8 @@ type InferSchemaOutput<TSchema extends AgentSchema> =
   StandardSchemaV1.InferOutput<TSchema>;
 ```
 
-## Advanced / plumbing exports
+## Utility exports
 
 `normalizeFiles`, `normalizeCredentials`, `assertSafeWorkspacePath`,
-`resolveSandboxConfig`, `createSandboxProvider`: the validation and resolution
-primitives `createAgent` uses internally, exported for programmatic use and
-testing.
+`resolveSandboxConfig`, and `createSandboxProvider` expose validation and
+configuration utilities used by `createAgent`.

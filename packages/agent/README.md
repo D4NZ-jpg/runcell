@@ -1,7 +1,11 @@
 # runcell
 
-Build AI agents in TypeScript that return typed, validated data. Every run is
-sandboxed, with streaming and durable conversations built in.
+**Give an agent a workspace. Get back validated results.**
+
+Runcell is a TypeScript runtime for agents that work with files and tools.
+Select a catalog model or register a provider, seed a sandbox with files, and
+receive streamed text, file changes, or schema-validated data. Threads and
+snapshots serialize to JSON for application-managed persistence.
 
 ```ts
 import { createAgent, createThread } from 'runcell';
@@ -37,17 +41,22 @@ application can rely on:
   the schema for plain text turns.
 - **Sandboxes**: ephemeral by default. Or create a caller-owned handle:
   reuse it across runs, `exec`/read/write it directly, `snapshot()` it to
-  JSON, `restoreSandbox()` anywhere. runcell never destroys a sandbox you own.
-- **Threads**: conversation memory as a value. a readable message log plus
-  lossless continuation state. `toJSON()` it into your database; resume on
-  any sandbox, any machine.
-- **Files, tools, events**: seed files in, get changed files back as bytes,
-  expose host functions as tools, observe everything through callbacks.
+  JSON and restore it elsewhere. Runcell does not destroy caller-owned
+  sandboxes.
+- **Threads**: conversation state represented by a readable message log and
+  continuation data. Store `toJSON()` in your database and resume it on
+  another sandbox or machine.
+- **Files, tools, and events**: seed files, retrieve changed files as bytes,
+  expose host functions, receive lifecycle callbacks, and use extension hooks
+  to block tool calls.
+- **Local credentials**: `credentials: 'local'` can use supported provider
+  logins on a development machine. Provider terms govern subscription use;
+  production use requires explicit opt-in.
 
 ## Install
 
 ```bash
-npm install runcell        # zod optional — only for structured output
+npm install runcell        # zod is optional and used for structured output
 ```
 
 ## Quick start
@@ -61,7 +70,7 @@ const agent = createAgent({
   credentials: 'local',
 });
 
-// State is yours: sandboxes and threads are values you hold and persist.
+// The application owns and persists sandbox and thread state.
 const sandbox = await createVirtualSandbox();
 const thread = createThread();
 

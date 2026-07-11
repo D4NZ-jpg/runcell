@@ -16,27 +16,27 @@ const r = await agent.run({ prompt: 'What is the codename?', thread });
 
 ## What a thread contains
 
-Two parts with two different jobs:
+A thread has two parts:
 
-- **`messages`**: a neutral, readable log of turns
-  (`{ role, content, data?, createdAt }`). This is your render surface: loop
-  over it to draw a chat UI, inspect it in tests, log it.
-- **`continuation`** (inside `toJSON()`): an opaque, compressed capture of the
-  engine's exact conversation state, updated after each successful turn. This
-  is what makes memory _lossless_: the next run restores the full internal
-  state, not a summary. Never inspect or edit it.
+- `messages` is a readable log of turns
+  (`{ role, content, data?, createdAt }`). Use it to render a chat UI, inspect
+  turns in tests, or write logs.
+- `continuation`, included in `toJSON()`, is an opaque, compressed capture of
+  the engine's conversation state. It is updated after each successful turn,
+  allowing the next run to restore the internal state rather than a summary.
+  Do not inspect or edit it.
 
-If a continuation is ever missing or can't be used (say, after an engine
-upgrade), runcell falls back to replaying `messages` as context: degraded but
-functional.
+If a continuation is missing or unusable, such as after an engine upgrade,
+runcell falls back to replaying `messages` as context. Some conversation state
+may be lost, but the thread remains usable.
 
 ## Persistence: threads are plain values
 
 ```ts
-// save — anywhere that stores JSON
+// Save to any JSON store.
 await db.save(thread.id, thread.toJSON());
 
-// load — in this process or another one
+// Load in this process or another one.
 import { threadFromJSON } from 'runcell';
 const revived = threadFromJSON(await db.load(id));
 await agent.run({ prompt: 'Continue.', thread: revived });
@@ -63,8 +63,8 @@ await Promise.all([
 ]);
 ```
 
-`clone()` is also how you do "what if" forks: branch a conversation at any
-point and let both continue independently.
+Use `clone()` to branch a conversation at any point and continue both branches
+independently.
 
 ## Threads and sandboxes are independent
 
@@ -81,10 +81,11 @@ await agent.run({ prompt, thread });
 await agent.run({ prompt, thread, sandbox });
 ```
 
-A thread's continuation is portable across sandboxes: resume a conversation
-on a brand-new sandbox, a restored snapshot, or a different machine.
+A thread's continuation is portable across sandboxes. You can resume a
+conversation in a new sandbox, from a restored snapshot, or on another
+machine.
 
 ## Failed runs
 
-A thread is only updated on success. If a run throws, the thread is unchanged —
-retry with the same thread safely.
+A thread is updated only after a successful run. If a run throws, the thread
+remains unchanged and can be reused for a retry.

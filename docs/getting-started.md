@@ -14,15 +14,14 @@ The examples use Zod (v3 and v4 both work):
 npm install runcell zod
 ```
 
-Nothing else is required: the default virtual sandbox is bundled. Optional
-extras like the Vercel Sandbox provider are separate installs (see
-[Sandboxes](./sandboxes.md)).
+The default virtual sandbox is bundled, so a basic run needs no additional
+sandbox package. Providers such as Vercel Sandbox are separate installs; see
+[Sandboxes](./sandboxes.md).
 
 ## Credentials
 
-Application code defaults to environment credentials — omit `credentials` and
-provider keys are read from environment variables (`ANTHROPIC_API_KEY`,
-`OPENAI_API_KEY`, and friends):
+When `credentials` is omitted, provider keys are read from environment
+variables such as `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`:
 
 ```ts
 const agent = createAgent({ model: 'anthropic/claude-sonnet-4-5' });
@@ -66,7 +65,7 @@ const agent = createAgent({
 const reply = await agent.run({ prompt: 'Say hello in one sentence.' });
 console.log(reply.text); // the reply
 console.log(reply.finishReason); // "stop"
-console.log(reply.data); // undefined — no schema was given
+console.log(reply.data); // undefined because no schema was given
 ```
 
 ## First run: a structured task
@@ -94,12 +93,12 @@ const result = await agent.run({
 console.log(result.data.summary); // typed
 ```
 
-## Where to next
+## Next steps
 
-- Build something real: [Building a chat agent](./chat-agent.md)
-- Give runs a workspace that persists: [Sandboxes](./sandboxes.md)
-- Give runs memory: [Threads](./threads.md)
-- Stream tokens to a UI: [Streaming](./streaming.md)
+- [Build a chat agent](./chat-agent.md)
+- [Persist a sandbox workspace](./sandboxes.md)
+- [Persist a thread](./threads.md)
+- [Stream text to a UI](./streaming.md)
 
 ## Validating this repository
 

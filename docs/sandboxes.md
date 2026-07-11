@@ -4,8 +4,8 @@ Every run executes inside a sandbox workspace. There are two ways to get one:
 
 - **Ephemeral (default):** omit `sandbox`, or pass a mode option like
   `'virtual'`. runcell creates the sandbox for the run and destroys it after.
-- **Caller-owned handle:** create a `Sandbox` yourself and pass it to runs.
-  It persists across runs, and runcell never destroys it.
+- **Caller-owned handle:** create a `Sandbox` and pass it to runs. It persists
+  across runs, and the caller is responsible for destroying it.
 
 ```ts
 import { createAgent, createVirtualSandbox } from 'runcell';
@@ -19,12 +19,12 @@ await agent.run({ prompt: 'One-off task.' });
 const sandbox = await createVirtualSandbox();
 await agent.run({ prompt: 'Scaffold a TypeScript project.', sandbox });
 await agent.run({ prompt: 'Add tests and make them pass.', sandbox }); // same files
-await sandbox.destroy(); // your call, always
+await sandbox.destroy(); // Caller-owned handles require explicit cleanup.
 ```
 
 ## The Sandbox handle
 
-A handle is a live resource you can drive **with no agent at all**:
+A handle is a live resource you can use without an agent:
 
 ```ts
 const sandbox = await createVirtualSandbox();
@@ -49,7 +49,7 @@ value. `restoreSandbox()` rehydrates one into a fresh sandbox:
 
 ```ts
 const snapshot = await sandbox.snapshot(); // { version: 1, files: [...] }
-await db.save(id, snapshot); // plain JSON — store anywhere
+await db.save(id, snapshot); // Store the JSON snapshot.
 await sandbox.destroy();
 
 // later, anywhere
@@ -71,9 +71,9 @@ await Promise.all([
 ]);
 ```
 
-runcell guarantees its own bookkeeping stays consistent under concurrent use,
-but it does not referee your logic: two agents writing the same file is
-allowed, exactly like two processes on a real machine. If you want mutual
+runcell keeps its bookkeeping consistent under concurrent use, but does not
+coordinate application-level access. Two agents may write the same file, just
+as two processes may on a real machine. If you want mutual
 exclusion, one opt-in primitive is provided:
 
 ```ts
@@ -132,17 +132,17 @@ await agent.run({
 Agent-executed commands do **not** inherit the host environment. They only
 see baseline system vars (`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`,
 `TERM`, `TMPDIR`, `TEMP`, `TMP`, `LANG`, `LC_*`, `TZ`), so the agent cannot
-read your secrets with `echo $ANTHROPIC_API_KEY`. Model auth is unaffected —
-credentials are captured from your process before the sandbox starts.
+read secrets with `echo $ANTHROPIC_API_KEY`. Model credentials are captured
+from your process before the sandbox starts and are unaffected.
 
-This filter is defense-in-depth against direct inheritance, not an OS
-boundary: commands still run as your user on the host, which is why this
-mode requires external isolation. The baseline list is POSIX-oriented; if
+This filter prevents direct environment inheritance but is not an OS security
+boundary. Commands still run as your host user, so this mode requires external
+isolation. The baseline list is POSIX-oriented; if
 commands need proxies or similar host config (`HTTPS_PROXY`, …), opt them
 in via `env`.
 
-Everything else is **opt-in**: name the vars you want commands to see via
-`env`:
+Other environment variables are opt-in. Add the variables that commands need
+to `env`:
 
 ```ts
 sandbox: {
@@ -152,7 +152,7 @@ sandbox: {
   env: {
     CI: process.env.CI,
     NODE_ENV: 'test',
-    NPM_TOKEN: process.env.NPM_TOKEN, // deliberate — you named it
+    NPM_TOKEN: process.env.NPM_TOKEN, // Explicitly passed to sandbox commands.
   },
 }
 ```
@@ -160,8 +160,8 @@ sandbox: {
 Entries with `undefined` values are dropped, so `VAR: process.env.VAR`
 pass-throughs are safe when the var is not set on the host.
 
-If the process is fully trusted and you want the agent to see everything,
-the explicit escape hatch:
+If the process is fully trusted and the agent needs the complete host
+environment, set `inheritHostEnv` explicitly:
 
 ```ts
 sandbox: { type: 'host', rootDir, isolation: 'external', inheritHostEnv: true }

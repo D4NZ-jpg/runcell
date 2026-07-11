@@ -2,16 +2,7 @@ import { createAgent, createThread, createVirtualSandbox } from 'runcell';
 import { z } from 'zod';
 import { exampleCredentials, exampleModel, runExample } from './_shared.js';
 
-/**
- * Multi-phase work over one shared sandbox: consecutive `agent.run` calls
- * where each phase builds on the previous one's workspace.
- *
- * - The `thread` carries the conversation, so phase 2 can say "the file you
- *   just wrote" and be understood.
- * - The `sandbox` carries the filesystem, so the file actually still exists.
- * - The caller owns the sandbox: runcell never destroys a handle you pass in,
- *   and you can inspect or exec against it between phases.
- */
+/** Demonstrates consecutive runs that share a thread and caller-owned sandbox. */
 export async function runSharedSandboxPhases(): Promise<{
   planned: string[];
   wordCount: number;
@@ -26,7 +17,7 @@ export async function runSharedSandboxPhases(): Promise<{
   const thread = createThread();
   const sandbox = await createVirtualSandbox();
   try {
-    // ---- phase 1: produce work in the workspace ---------------------------
+    // Create the file.
     const plan = await agent.run({
       prompt:
         'Write a haiku about TypeScript to haiku.txt. Then call submitResult ' +
@@ -37,11 +28,11 @@ export async function runSharedSandboxPhases(): Promise<{
       schema: z.object({ files: z.array(z.string()) }),
     });
 
-    // ---- between phases: the caller can work the sandbox directly ---------
+    // Inspect it between runs.
     const wc = await sandbox.exec('wc -w < haiku.txt');
     const wordCount = Number(wc.stdout.trim());
 
-    // ---- phase 2: continue from phase 1's files and conversation ----------
+    // Continue with the same thread and sandbox.
     await agent.run({
       prompt:
         `The haiku you just wrote is ${wordCount} words. Write REPORT.md ` +
