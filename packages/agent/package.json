@@ -1,6 +1,6 @@
 {
   "name": "runcell",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "TypeScript runtime for running agents in sandboxes with structured results, file outputs, and persistent threads.",
   "type": "module",
   "license": "MIT",
