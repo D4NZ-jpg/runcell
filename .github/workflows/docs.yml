@@ -32,9 +32,6 @@ jobs:
 
       - name: Build site
         run: npm run docs:build
-        env:
-          # Project pages serve under /<repo>/; derive it so renames just work.
-          DOCS_BASE: /${{ github.event.repository.name }}/
 
       - name: Configure Pages
         uses: actions/configure-pages@v4

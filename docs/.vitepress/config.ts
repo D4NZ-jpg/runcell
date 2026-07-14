@@ -2,16 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { defineConfig } from 'vitepress';
 
-// GitHub Pages project sites serve under /<repo>/. The deploy workflow sets
-// DOCS_BASE accordingly; local dev and preview default to '/'.
-const base = process.env['DOCS_BASE'] ?? '/';
-
 export default defineConfig({
   title: 'Runcell',
   description:
     'Open-source TypeScript runtime for agents that use files and tools, with sandbox workspaces, validated results, and persistent threads.',
-  base,
+  base: '/',
   cleanUrls: true,
+  sitemap: { hostname: 'https://runcell.run' },
   // Attach each page's raw markdown (minus frontmatter) so the theme can offer
   // a "Copy Markdown" button, handy for pasting a page into an LLM.
   transformPageData(pageData, { siteConfig }) {
@@ -28,10 +25,7 @@ export default defineConfig({
     }
   },
   head: [
-    [
-      'link',
-      { rel: 'icon', type: 'image/svg+xml', href: `${base}favicon.svg` },
-    ],
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
   ],
   themeConfig: {
     // The lockup carries the wordmark, so no separate site title text.

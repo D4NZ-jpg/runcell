@@ -13,7 +13,7 @@ _**Give an agent a workspace. Get back validated results.**_
 ![TypeScript](https://img.shields.io/badge/TypeScript-blue?style=flat-square&logo=typescript&logoColor=white)
 ![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
 
-[Quick start](#quick-start) • [Why Runcell](#why-runcell) • [Docs](https://d4nz-jpg.github.io/runcell/) • [Examples](#examples) • [Development](#development)
+[Quick start](#quick-start) • [Why Runcell](#why-runcell) • [Docs](https://runcell.run/) • [Examples](#examples) • [Development](#development)
 
 </div>
 
@@ -131,7 +131,7 @@ Model ids can be provider-qualified when one id exists under several providers:
 
 - **Chat agents** with streamed replies, persisted conversation state, and an
   optional workspace per conversation. See the
-  [chat-agent guide](https://d4nz-jpg.github.io/runcell/chat-agent).
+  [chat-agent guide](https://runcell.run/chat-agent).
 - **File pipelines**: seed files in, let the agent work, get changed files
   back as bytes.
 - **Typed extraction and triage**: reviews, reports, classifications your
@@ -158,24 +158,24 @@ await sandbox.destroy();
 Modes: `virtual` (bundled, default) · `host` (externally-isolated CI/containers)
 · `vercel` (cloud, optional `@ai-sdk/sandbox-vercel` peer, Node 22+) ·
 `custom` (bring your own provider). Details in the
-[sandboxes guide](https://d4nz-jpg.github.io/runcell/sandboxes).
+[sandboxes guide](https://runcell.run/sandboxes).
 
 ## Docs
 
-Read the [full documentation](https://d4nz-jpg.github.io/runcell/).
+Read the [full documentation](https://runcell.run/).
 
-| Guide                                                                             |                                               |
-| --------------------------------------------------------------------------------- | --------------------------------------------- |
-| [Getting started](https://d4nz-jpg.github.io/runcell/getting-started)             | Install, credentials, models, first runs      |
-| [Building a chat agent](https://d4nz-jpg.github.io/runcell/chat-agent)            | Streaming + threads + persistence, end to end |
-| [Sandboxes](https://d4nz-jpg.github.io/runcell/sandboxes)                         | Handles, ownership, snapshot/restore, modes   |
-| [Threads](https://d4nz-jpg.github.io/runcell/threads)                             | Conversation memory and persistence           |
-| [Structured output](https://d4nz-jpg.github.io/runcell/structured-output)         | Schemas, repair turns, plain turns            |
-| [Streaming](https://d4nz-jpg.github.io/runcell/streaming)                         | `agent.stream()` and SSE                      |
-| [Files, tools, and events](https://d4nz-jpg.github.io/runcell/files-tools-events) | Workspace I/O, host tools, callbacks          |
-| [Credentials](https://d4nz-jpg.github.io/runcell/credentials)                     | env, local, API keys, shared stores           |
-| [Pi extensions](https://d4nz-jpg.github.io/runcell/pi-extensions)                 | Custom providers, auth extensions, hooks      |
-| [API reference](https://d4nz-jpg.github.io/runcell/api)                           | Every export and type                         |
+| Guide                                                              |                                               |
+| ------------------------------------------------------------------ | --------------------------------------------- |
+| [Getting started](https://runcell.run/getting-started)             | Install, credentials, models, first runs      |
+| [Building a chat agent](https://runcell.run/chat-agent)            | Streaming + threads + persistence, end to end |
+| [Sandboxes](https://runcell.run/sandboxes)                         | Handles, ownership, snapshot/restore, modes   |
+| [Threads](https://runcell.run/threads)                             | Conversation memory and persistence           |
+| [Structured output](https://runcell.run/structured-output)         | Schemas, repair turns, plain turns            |
+| [Streaming](https://runcell.run/streaming)                         | `agent.stream()` and SSE                      |
+| [Files, tools, and events](https://runcell.run/files-tools-events) | Workspace I/O, host tools, callbacks          |
+| [Credentials](https://runcell.run/credentials)                     | env, local, API keys, shared stores           |
+| [Pi extensions](https://runcell.run/pi-extensions)                 | Custom providers, auth extensions, hooks      |
+| [API reference](https://runcell.run/api)                           | Every export and type                         |
 
 ## Examples
 
