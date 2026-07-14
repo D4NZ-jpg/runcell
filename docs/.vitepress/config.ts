@@ -34,6 +34,7 @@ export default defineConfig({
     search: { provider: 'local' },
     socialLinks: [
       { icon: 'github', link: 'https://github.com/D4NZ-jpg/runcell' },
+      { icon: 'npm', link: 'https://www.npmjs.com/package/runcell' },
     ],
     nav: [
       { text: 'Guide', link: '/getting-started' },

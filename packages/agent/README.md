@@ -110,5 +110,6 @@ createAgent({ model: 'openai-codex/gpt-5.5' });
 
 ## Documentation
 
-Guides (chat agents, sandboxes, threads, streaming, structured output,
-credentials, full API reference) live in the repository's `docs/` directory.
+Visit [runcell.run](https://runcell.run/) for guides covering chat agents,
+sandboxes, threads, streaming, structured output, credentials, and the full API
+reference.

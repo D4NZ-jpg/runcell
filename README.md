@@ -9,9 +9,10 @@
 
 _**Give an agent a workspace. Get back validated results.**_
 
+[![npm version](https://img.shields.io/npm/v/runcell?style=flat-square&logo=npm)](https://www.npmjs.com/package/runcell)
 ![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-3c873a?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-blue?style=flat-square&logo=typescript&logoColor=white)
-![Status](https://img.shields.io/badge/status-experimental-blue?style=flat-square)
+![Status](https://img.shields.io/badge/status-stable-brightgreen?style=flat-square)
 
 [Quick start](#quick-start) • [Why Runcell](#why-runcell) • [Docs](https://runcell.run/) • [Examples](#examples) • [Development](#development)
 
@@ -45,8 +46,8 @@ await db.save(thread.id, thread.toJSON()); // the whole conversation, as JSON
 ```
 
 > [!NOTE]
-> Experimental. The examples in this repository run end-to-end with local
-> credentials and are the best way to try the current API.
+> Runcell 1.x is stable and follows Semantic Versioning. The examples in this
+> repository run end-to-end with local credentials.
 
 ## Why Runcell?
 
