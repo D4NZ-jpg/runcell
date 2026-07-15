@@ -26,6 +26,16 @@ export default defineConfig({
   },
   head: [
     ['link', { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
+    [
+      'script',
+      {
+        src: 'https://context7.com/widget.js',
+        'data-library': '/d4nz-jpg/runcell',
+        'data-color': '#059669',
+        'data-position': 'bottom-right',
+        async: '',
+      },
+    ],
   ],
   themeConfig: {
     // The lockup carries the wordmark, so no separate site title text.
