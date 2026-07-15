@@ -583,7 +583,7 @@ function toToolInputSchema<TSchema extends AgentSchema>(
   schema: TSchema,
 ): FlexibleSchema<InferSchemaOutput<TSchema>> {
   if (isZodSchema(schema) || hasStandardJsonSchema(schema)) {
-    return schema as unknown as FlexibleSchema<InferSchemaOutput<TSchema>>;
+    return schema;
   }
 
   return jsonSchema<InferSchemaOutput<TSchema>>(
