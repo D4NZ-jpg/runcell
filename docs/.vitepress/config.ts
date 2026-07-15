@@ -33,6 +33,9 @@ export default defineConfig({
         'data-library': '/d4nz-jpg/runcell',
         'data-color': '#059669',
         'data-position': 'bottom-right',
+        'data-placeholder': 'Ask about Runcell…',
+        'data-welcome-message':
+          "Hi! I'm the Runcell docs assistant. Ask me anything about agents, sandboxes, threads, or structured output.",
         async: '',
       },
     ],
