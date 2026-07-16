@@ -34,9 +34,22 @@ let vy = 0;
 let tx = 0;
 let ty = 0;
 
+// Pupil offset (SVG user units): current, velocity, and target.
+let px = 0;
+let py = 0;
+let pvx = 0;
+let pvy = 0;
+let ptx = 0;
+let pty = 0;
+
 const STIFFNESS = 140;
 const DAMPING = 16;
 const MAX_TILT = 12;
+
+// A looser spring makes the pupil trail the cursor like an eye.
+const PUPIL_STIFFNESS = 90;
+const PUPIL_DAMPING = 13;
+const MAX_SHIFT = 3.6;
 
 function step(last: number) {
   raf = requestAnimationFrame(now => {
@@ -46,16 +59,29 @@ function step(last: number) {
     vy += (STIFFNESS * (ty - cy) - DAMPING * vy) * dt;
     cy += vy * dt;
 
+    pvx += (PUPIL_STIFFNESS * (ptx - px) - PUPIL_DAMPING * pvx) * dt;
+    px += pvx * dt;
+    pvy += (PUPIL_STIFFNESS * (pty - py) - PUPIL_DAMPING * pvy) * dt;
+    py += pvy * dt;
+
     if (svg.value) {
       svg.value.style.transform = `rotateX(${cy.toFixed(2)}deg) rotateY(${cx.toFixed(2)}deg)`;
     }
+    cursor.value?.setAttribute(
+      'transform',
+      `translate(${px.toFixed(3)} ${py.toFixed(3)})`,
+    );
 
     const settled =
       Math.abs(tx - cx) < 0.02 &&
       Math.abs(ty - cy) < 0.02 &&
       Math.abs(vx) < 0.02 &&
-      Math.abs(vy) < 0.02;
-    if (settled && tx === 0 && ty === 0) {
+      Math.abs(vy) < 0.02 &&
+      Math.abs(ptx - px) < 0.01 &&
+      Math.abs(pty - py) < 0.01 &&
+      Math.abs(pvx) < 0.01 &&
+      Math.abs(pvy) < 0.01;
+    if (settled && tx === 0 && ty === 0 && ptx === 0 && pty === 0) {
       running = false;
       return;
     }
@@ -84,11 +110,16 @@ onMounted(() => {
     const dy = (event.clientY - box.top) / box.height - 0.5;
     tx = dx * 2 * MAX_TILT;
     ty = -dy * 2 * MAX_TILT;
+    // Pupil drifts toward the cursor, clamped inside the frame.
+    ptx = Math.max(-1, Math.min(1, dx * 2)) * MAX_SHIFT;
+    pty = Math.max(-1, Math.min(1, dy * 2)) * MAX_SHIFT;
     ensureRunning();
   };
   const onLeave = () => {
     tx = 0;
     ty = 0;
+    ptx = 0;
+    pty = 0;
     ensureRunning();
   };
 
