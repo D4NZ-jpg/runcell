@@ -38,7 +38,7 @@
   "dependencies": {
     "@ai-sdk/harness": "1.0.33",
     "@ai-sdk/provider-utils": "5.0.10",
-    "@earendil-works/pi-coding-agent": "^0.79.0",
+    "@earendil-works/pi-coding-agent": "^0.80.10",
     "typebox": "^1.1.38",
     "zod": "3.25.76"
   },

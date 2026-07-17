@@ -20,7 +20,9 @@ type FakePiTool = Pick<ToolDefinition, 'name' | 'execute'>;
 const piMock = vi.hoisted(() => {
   return {
     createAgentSession: vi.fn(),
+    modelRuntimeCreate: vi.fn(),
     customTools: [] as FakePiTool[],
+    models: [] as { id: string; name: string; provider: string }[],
     session: undefined as AgentSession | undefined,
     extensionErrors: [] as { path: string; error: string }[],
     extensions: [] as { tools: Map<string, unknown> }[],
@@ -29,10 +31,8 @@ const piMock = vi.hoisted(() => {
 
 vi.mock('@earendil-works/pi-coding-agent', () => {
   return {
-    AuthStorage: {
-      create: vi.fn(() => ({
-        setRuntimeApiKey: vi.fn(),
-      })),
+    ModelRuntime: {
+      create: piMock.modelRuntimeCreate,
     },
     createAgentSession: piMock.createAgentSession,
     DefaultResourceLoader: class {
@@ -46,12 +46,6 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
       async reload() {}
     },
     defineTool: vi.fn(tool => tool),
-    ModelRegistry: {
-      create: vi.fn(() => ({
-        getAll: vi.fn(() => []),
-        registerProvider: vi.fn(),
-      })),
-    },
     SessionManager: {
       create: vi.fn(() => ({
         getSessionFile: () => undefined,
@@ -69,14 +63,39 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
 describe('createPiSession', () => {
   beforeEach(() => {
     piMock.customTools = [];
+    piMock.models = [];
     piMock.session = undefined;
     piMock.extensionErrors = [];
     piMock.extensions = [];
     piMock.createAgentSession.mockReset();
+    piMock.modelRuntimeCreate.mockReset();
+    piMock.modelRuntimeCreate.mockImplementation(() =>
+      Promise.resolve({
+        getModels: vi.fn(() => piMock.models),
+        registerProvider: vi.fn(),
+        setRuntimeApiKey: vi.fn(() => Promise.resolve()),
+      }),
+    );
     piMock.createAgentSession.mockImplementation(async options => {
       piMock.customTools = options.customTools;
       return { session: piMock.session };
     });
+  });
+
+  it('disables model network access for adapter-created runtimes', async () => {
+    const session = await createPiSession({
+      sessionId: 'session-1',
+      sandboxSession: createSandboxSession(),
+      sessionWorkDir: '/sandbox/work',
+      skills: [],
+      settings: {},
+      isResume: false,
+    });
+
+    expect(piMock.modelRuntimeCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ allowModelNetwork: false }),
+    );
+    await session.doDestroy();
   });
 
   it('parks a pending tool turn on suspend and resumes it in-process', async () => {
@@ -323,6 +342,44 @@ describe('createPiSession', () => {
         isResume: false,
       }),
     ).rejects.toThrow(/<inline:1>: keychain unavailable/);
+  });
+
+  it('rejects a configured model id that resolves to nothing', async () => {
+    piMock.models = [
+      { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', provider: 'openai' },
+      { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', provider: 'openai-codex' },
+      { id: 'claude-opus-5', name: 'Claude Opus 5', provider: 'anthropic' },
+    ];
+
+    await expect(
+      createPiSession({
+        sessionId: 'session-bad-model',
+        sandboxSession: createSandboxSession(),
+        sessionWorkDir: '/sandbox/bad-model',
+        skills: [],
+        settings: { model: 'openai/gpt-5.6-lunna' },
+        isResume: false,
+      }),
+    ).rejects.toThrow(
+      /Unknown model "openai\/gpt-5\.6-lunna".*Did you mean.*openai\/gpt-5\.6-luna/,
+    );
+  });
+
+  it('omits suggestions when nothing in the catalog is close', async () => {
+    piMock.models = [
+      { id: 'claude-opus-5', name: 'Claude Opus 5', provider: 'anthropic' },
+    ];
+
+    await expect(
+      createPiSession({
+        sessionId: 'session-bad-model-2',
+        sandboxSession: createSandboxSession(),
+        sessionWorkDir: '/sandbox/bad-model-2',
+        skills: [],
+        settings: { model: 'totally/unrelated' },
+        isResume: false,
+      }),
+    ).rejects.toThrow(/Unknown model "totally\/unrelated"[^?]*$/);
   });
 
   it('rejects an extension tool that collides with an adapter tool', async () => {

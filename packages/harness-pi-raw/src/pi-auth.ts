@@ -1,10 +1,7 @@
-import type {
-  AuthStorage,
-  ModelRegistry,
-} from '@earendil-works/pi-coding-agent';
+import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { getAiGatewayAuthFromEnv } from '@ai-sdk/harness/utils';
 
-type ProviderConfigInput = Parameters<ModelRegistry['registerProvider']>[1];
+type ProviderConfigInput = Parameters<ModelRuntime['registerProvider']>[1];
 
 /**
  * Pi auth options. Exactly one of `gateway` or `customEnv` is honoured
@@ -41,14 +38,16 @@ const DEFAULT_GATEWAY_BASE_URL = 'https://ai-gateway.vercel.sh';
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
 
-function register(
-  registries: { authStorage: AuthStorage; modelRegistry: ModelRegistry },
+// `ModelRuntime.setRuntimeApiKey` installs an in-memory override and awaits a
+// model-availability refresh, so registration must remain async.
+async function register(
+  modelRuntime: ModelRuntime,
   provider: string,
   apiKey: string,
   config: ProviderConfigInput,
-): void {
-  registries.authStorage.setRuntimeApiKey(provider, apiKey);
-  registries.modelRegistry.registerProvider(provider, config);
+): Promise<void> {
+  await modelRuntime.setRuntimeApiKey(provider, apiKey);
+  modelRuntime.registerProvider(provider, config);
 }
 
 function hasConfiguredValue(value: unknown): boolean {
@@ -58,14 +57,14 @@ function hasConfiguredValue(value: unknown): boolean {
   return Object.values(value).some(hasConfiguredValue);
 }
 
-export function resolvePiAuth(
+export async function resolvePiAuth(
   options: PiAuthOptions | undefined,
   env: NodeJS.ProcessEnv,
-  registries: { authStorage: AuthStorage; modelRegistry: ModelRegistry },
-): PiResolverEnv {
+  modelRuntime: ModelRuntime,
+): Promise<PiResolverEnv> {
   const customEnvConfigured = hasConfiguredValue(options?.customEnv);
   if (customEnvConfigured) {
-    return applyCustomEnv(options!.customEnv ?? {}, registries);
+    return applyCustomEnv(options!.customEnv ?? {}, modelRuntime);
   }
 
   const gatewayConfigured = hasConfiguredValue(options?.gateway);
@@ -74,7 +73,7 @@ export function resolvePiAuth(
     const apiKey = options!.gateway?.apiKey ?? gatewayAuthFromEnv.apiKey;
     const baseUrl = options!.gateway?.baseUrl ?? gatewayAuthFromEnv.baseUrl;
     if (apiKey) {
-      register(registries, 'vercel-ai-gateway', apiKey, {
+      await register(modelRuntime, 'vercel-ai-gateway', apiKey, {
         apiKey,
         baseUrl,
         authHeader: true,
@@ -86,7 +85,7 @@ export function resolvePiAuth(
 
   // Ambient gateway fallback.
   if (gatewayAuthFromEnv.apiKey) {
-    register(registries, 'vercel-ai-gateway', gatewayAuthFromEnv.apiKey, {
+    await register(modelRuntime, 'vercel-ai-gateway', gatewayAuthFromEnv.apiKey, {
       apiKey: gatewayAuthFromEnv.apiKey,
       baseUrl: gatewayAuthFromEnv.baseUrl,
       authHeader: true,
@@ -100,16 +99,16 @@ export function resolvePiAuth(
   return {};
 }
 
-function applyCustomEnv(
+async function applyCustomEnv(
   customEnv: Record<string, string>,
-  registries: { authStorage: AuthStorage; modelRegistry: ModelRegistry },
-): PiResolverEnv {
+  modelRuntime: ModelRuntime,
+): Promise<PiResolverEnv> {
   const out: PiResolverEnv = {};
 
   const gatewayKey = customEnv.AI_GATEWAY_API_KEY;
   if (gatewayKey) {
     const baseUrl = customEnv.AI_GATEWAY_BASE_URL ?? DEFAULT_GATEWAY_BASE_URL;
-    register(registries, 'vercel-ai-gateway', gatewayKey, {
+    await register(modelRuntime, 'vercel-ai-gateway', gatewayKey, {
       apiKey: gatewayKey,
       baseUrl,
       authHeader: true,
@@ -120,7 +119,7 @@ function applyCustomEnv(
 
   if (customEnv.OPENAI_API_KEY) {
     const baseUrl = customEnv.OPENAI_BASE_URL ?? DEFAULT_OPENAI_BASE_URL;
-    register(registries, 'openai', customEnv.OPENAI_API_KEY, {
+    await register(modelRuntime, 'openai', customEnv.OPENAI_API_KEY, {
       apiKey: customEnv.OPENAI_API_KEY,
       baseUrl,
       authHeader: true,
@@ -129,7 +128,7 @@ function applyCustomEnv(
 
   if (customEnv.ANTHROPIC_API_KEY) {
     const baseUrl = customEnv.ANTHROPIC_BASE_URL ?? DEFAULT_ANTHROPIC_BASE_URL;
-    register(registries, 'anthropic', customEnv.ANTHROPIC_API_KEY, {
+    await register(modelRuntime, 'anthropic', customEnv.ANTHROPIC_API_KEY, {
       apiKey: customEnv.ANTHROPIC_API_KEY,
       baseUrl,
       ...(customEnv.ANTHROPIC_AUTH_TOKEN
@@ -159,7 +158,7 @@ function applyCustomEnv(
     if (!baseUrl) {
       continue;
     }
-    register(registries, provider, apiKey, {
+    await register(modelRuntime, provider, apiKey, {
       apiKey,
       baseUrl,
       authHeader: true,

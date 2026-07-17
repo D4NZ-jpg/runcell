@@ -1,17 +1,14 @@
-import { AuthStorage, ModelRegistry } from '@earendil-works/pi-coding-agent';
-import { describe, expect, it, vi } from 'vitest';
+import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
+import { describe, expect, it } from 'vitest';
 import {
   createPiModelResolver,
   DEFAULT_PI_GATEWAY_MODEL_ID,
 } from './pi-model-resolver';
 
-type PiModel = ReturnType<ModelRegistry['getAll']>[number];
+type PiModel = ReturnType<ModelRuntime['getModels']>[number];
 
-function makeRegistry(models: PiModel[] = []) {
-  const authStorage = AuthStorage.inMemory();
-  const registry = ModelRegistry.inMemory(authStorage);
-  vi.spyOn(registry, 'getAll').mockReturnValue(models);
-  return registry;
+function makeRuntime(models: PiModel[] = []) {
+  return { getModels: () => models } as unknown as ModelRuntime;
 }
 
 const sampleModel: PiModel = {
@@ -37,12 +34,12 @@ const defaultGatewayModel: PiModel = {
 
 describe('createPiModelResolver', () => {
   it('returns matching model by id', () => {
-    const resolve = createPiModelResolver(makeRegistry([sampleModel]), {});
+    const resolve = createPiModelResolver(makeRuntime([sampleModel]), {});
     expect(resolve('my/model')).toEqual(sampleModel);
   });
 
   it('returns matching model by name', () => {
-    const resolve = createPiModelResolver(makeRegistry([sampleModel]), {});
+    const resolve = createPiModelResolver(makeRuntime([sampleModel]), {});
     expect(resolve('My Model')).toEqual(sampleModel);
   });
 
@@ -59,40 +56,40 @@ describe('createPiModelResolver', () => {
       name: 'GPT-5.5',
       provider: 'openai-codex',
     };
-    const resolve = createPiModelResolver(makeRegistry([azure, codex]), {});
+    const resolve = createPiModelResolver(makeRuntime([azure, codex]), {});
     expect(resolve('openai-codex/gpt-5.5')).toEqual(codex);
     // A bare id still resolves to the first catalog entry.
     expect(resolve('gpt-5.5')).toEqual(azure);
   });
 
   it('looks up the gateway default when no id and AI_GATEWAY_API_KEY is set', () => {
-    const resolve = createPiModelResolver(makeRegistry([defaultGatewayModel]), {
+    const resolve = createPiModelResolver(makeRuntime([defaultGatewayModel]), {
       AI_GATEWAY_API_KEY: 'sk-test',
     });
     expect(resolve(undefined)).toEqual(defaultGatewayModel);
   });
 
   it('looks up the gateway default when VERCEL_OIDC_TOKEN is set', () => {
-    const resolve = createPiModelResolver(makeRegistry([defaultGatewayModel]), {
+    const resolve = createPiModelResolver(makeRuntime([defaultGatewayModel]), {
       VERCEL_OIDC_TOKEN: 'oidc-token',
     });
     expect(resolve(undefined)).toEqual(defaultGatewayModel);
   });
 
   it('returns undefined for unknown model id', () => {
-    const resolve = createPiModelResolver(makeRegistry([sampleModel]), {
+    const resolve = createPiModelResolver(makeRuntime([sampleModel]), {
       AI_GATEWAY_API_KEY: 'sk-test',
     });
     expect(resolve('unknown')).toBeUndefined();
   });
 
   it('returns undefined when no model id and no gateway creds', () => {
-    const resolve = createPiModelResolver(makeRegistry([sampleModel]), {});
+    const resolve = createPiModelResolver(makeRuntime([sampleModel]), {});
     expect(resolve(undefined)).toBeUndefined();
   });
 
   it('returns undefined when gateway default id is missing from the registry', () => {
-    const resolve = createPiModelResolver(makeRegistry([sampleModel]), {
+    const resolve = createPiModelResolver(makeRuntime([sampleModel]), {
       AI_GATEWAY_API_KEY: 'sk-test',
     });
     expect(resolve(undefined)).toBeUndefined();

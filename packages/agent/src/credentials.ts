@@ -4,8 +4,14 @@ import { CredentialError } from './errors.js';
  * A single stored credential for a provider.
  */
 export type StoredCredential =
-  | { type: 'api_key'; key: string; env?: Record<string, string> }
-  | { type: 'oauth'; access: string; refresh: string; expires: number };
+  | { type: 'api_key'; key?: string; env?: Record<string, string> }
+  | {
+      type: 'oauth';
+      access: string;
+      refresh: string;
+      expires: number;
+      [key: string]: unknown;
+    };
 
 /**
  * The full credential blob persisted by a {@link CredentialStore}, keyed by
@@ -17,7 +23,8 @@ export type AuthBlob = Record<string, StoredCredential>;
  * A shared, lockable credential store for production deployments that use
  * OAuth. Implementations back this with a database, KV store or secret
  * manager and provide a distributed lock so that concurrent deployments never
- * clobber a rotated refresh token.
+ * clobber a rotated refresh token. Concurrent calls to `withLock` must wait for
+ * the lock rather than fail, because Pi may read multiple providers in parallel.
  */
 export interface CredentialStore {
   withLock<T>(

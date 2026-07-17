@@ -1,7 +1,7 @@
-import type { ModelRegistry } from '@earendil-works/pi-coding-agent';
+import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { getAiGatewayAuthFromEnv } from '@ai-sdk/harness/utils';
 
-type PiModel = ReturnType<ModelRegistry['getAll']>[number];
+type PiModel = ReturnType<ModelRuntime['getModels']>[number];
 
 /**
  * Default model id used when no `model` is configured AND gateway credentials
@@ -12,17 +12,17 @@ type PiModel = ReturnType<ModelRegistry['getAll']>[number];
 export const DEFAULT_PI_GATEWAY_MODEL_ID = 'anthropic/claude-sonnet-4.6';
 
 export function createPiModelResolver(
-  modelRegistry: ModelRegistry,
+  modelRuntime: ModelRuntime,
   env: NodeJS.ProcessEnv = process.env,
 ) {
-  let cachedModels: PiModel[] | undefined;
+  let cachedModels: readonly PiModel[] | undefined;
 
-  const loadModels = (): PiModel[] => {
+  const loadModels = (): readonly PiModel[] => {
     if (cachedModels) {
       return cachedModels;
     }
     try {
-      cachedModels = modelRegistry.getAll();
+      cachedModels = modelRuntime.getModels();
     } catch {
       cachedModels = [];
     }

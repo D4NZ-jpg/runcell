@@ -1,22 +1,24 @@
-import { AuthStorage, ModelRegistry } from '@earendil-works/pi-coding-agent';
+import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { describe, expect, it, vi } from 'vitest';
 import { resolvePiAuth } from './pi-auth';
 
-function makeRegistries() {
-  const authStorage = AuthStorage.inMemory();
-  const modelRegistry = ModelRegistry.inMemory(authStorage);
-  const setRuntimeApiKey = vi.spyOn(authStorage, 'setRuntimeApiKey');
-  const registerProvider = vi.spyOn(modelRegistry, 'registerProvider');
-  return { authStorage, modelRegistry, setRuntimeApiKey, registerProvider };
+function makeRuntime() {
+  const setRuntimeApiKey = vi.fn().mockResolvedValue(undefined);
+  const registerProvider = vi.fn();
+  const modelRuntime = {
+    setRuntimeApiKey,
+    registerProvider,
+  } as unknown as ModelRuntime;
+  return { modelRuntime, setRuntimeApiKey, registerProvider };
 }
 
 describe('resolvePiAuth', () => {
-  it('uses explicit gateway settings when configured', () => {
-    const r = makeRegistries();
-    const env = resolvePiAuth(
+  it('uses explicit gateway settings when configured', async () => {
+    const r = makeRuntime();
+    const env = await resolvePiAuth(
       { gateway: { apiKey: 'gw-key', baseUrl: 'https://gw.example' } },
       {},
-      { authStorage: r.authStorage, modelRegistry: r.modelRegistry },
+      r.modelRuntime,
     );
     expect(env).toEqual({
       AI_GATEWAY_API_KEY: 'gw-key',
@@ -33,12 +35,12 @@ describe('resolvePiAuth', () => {
     });
   });
 
-  it('uses env gateway auth when explicit gateway only sets base URL', () => {
-    const r = makeRegistries();
-    const env = resolvePiAuth(
+  it('uses env gateway auth when explicit gateway only sets base URL', async () => {
+    const r = makeRuntime();
+    const env = await resolvePiAuth(
       { gateway: { baseUrl: 'https://gw.example' } },
       { VERCEL_OIDC_TOKEN: 'oidc-env' },
-      { authStorage: r.authStorage, modelRegistry: r.modelRegistry },
+      r.modelRuntime,
     );
     expect(env).toEqual({
       AI_GATEWAY_API_KEY: 'oidc-env',
@@ -51,9 +53,9 @@ describe('resolvePiAuth', () => {
     });
   });
 
-  it('uses customEnv when provided and registers all known providers', () => {
-    const r = makeRegistries();
-    const env = resolvePiAuth(
+  it('uses customEnv when provided and registers all known providers', async () => {
+    const r = makeRuntime();
+    const env = await resolvePiAuth(
       {
         customEnv: {
           AI_GATEWAY_API_KEY: 'gw',
@@ -63,7 +65,7 @@ describe('resolvePiAuth', () => {
         },
       },
       {},
-      { authStorage: r.authStorage, modelRegistry: r.modelRegistry },
+      r.modelRuntime,
     );
     expect(env.AI_GATEWAY_API_KEY).toBe('gw');
     const registeredProviders = r.registerProvider.mock.calls
@@ -82,9 +84,9 @@ describe('resolvePiAuth', () => {
     });
   });
 
-  it('registers arbitrary <PREFIX>_API_KEY + <PREFIX>_BASE_URL via customEnv', () => {
-    const r = makeRegistries();
-    resolvePiAuth(
+  it('registers arbitrary <PREFIX>_API_KEY + <PREFIX>_BASE_URL via customEnv', async () => {
+    const r = makeRuntime();
+    await resolvePiAuth(
       {
         customEnv: {
           MISTRAL_API_KEY: 'mk',
@@ -92,7 +94,7 @@ describe('resolvePiAuth', () => {
         },
       },
       {},
-      { authStorage: r.authStorage, modelRegistry: r.modelRegistry },
+      r.modelRuntime,
     );
     expect(r.setRuntimeApiKey).toHaveBeenCalledWith('mistral', 'mk');
     expect(r.registerProvider).toHaveBeenCalledWith('mistral', {
@@ -102,12 +104,12 @@ describe('resolvePiAuth', () => {
     });
   });
 
-  it('falls back to ambient AI_GATEWAY_API_KEY when no options', () => {
-    const r = makeRegistries();
-    const env = resolvePiAuth(
+  it('falls back to ambient AI_GATEWAY_API_KEY when no options', async () => {
+    const r = makeRuntime();
+    const env = await resolvePiAuth(
       undefined,
       { AI_GATEWAY_API_KEY: 'ambient', AI_GATEWAY_BASE_URL: 'https://amb' },
-      { authStorage: r.authStorage, modelRegistry: r.modelRegistry },
+      r.modelRuntime,
     );
     expect(env).toEqual({
       AI_GATEWAY_API_KEY: 'ambient',
@@ -115,26 +117,19 @@ describe('resolvePiAuth', () => {
     });
   });
 
-  it('falls back to ambient VERCEL_OIDC_TOKEN when AI_GATEWAY_API_KEY is missing', () => {
-    const r = makeRegistries();
-    const env = resolvePiAuth(
+  it('falls back to ambient VERCEL_OIDC_TOKEN when AI_GATEWAY_API_KEY is missing', async () => {
+    const r = makeRuntime();
+    const env = await resolvePiAuth(
       undefined,
       { VERCEL_OIDC_TOKEN: 'oidc' },
-      { authStorage: r.authStorage, modelRegistry: r.modelRegistry },
+      r.modelRuntime,
     );
     expect(env.AI_GATEWAY_API_KEY).toBe('oidc');
   });
 
-  it('returns {} when no auth is configured anywhere', () => {
-    const r = makeRegistries();
-    const env = resolvePiAuth(
-      undefined,
-      {},
-      {
-        authStorage: r.authStorage,
-        modelRegistry: r.modelRegistry,
-      },
-    );
+  it('returns {} when no auth is configured anywhere', async () => {
+    const r = makeRuntime();
+    const env = await resolvePiAuth(undefined, {}, r.modelRuntime);
     expect(env).toEqual({});
     expect(r.setRuntimeApiKey).not.toHaveBeenCalled();
     expect(r.registerProvider).not.toHaveBeenCalled();

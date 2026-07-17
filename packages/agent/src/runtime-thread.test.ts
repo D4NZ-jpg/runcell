@@ -79,11 +79,13 @@ class MockHarnessAgent {
   readonly settings: {
     tools: Record<string, { execute(input: unknown): unknown }>;
     sandbox?: { createSession(options: object): Promise<unknown> };
-    onSandboxSession?: (opts: {
-      session: FakeSandbox;
-      sessionWorkDir: string;
-      abortSignal?: AbortSignal;
-    }) => Promise<void>;
+    sandboxConfig?: {
+      onSession?: (opts: {
+        session: FakeSandbox;
+        sessionWorkDir: string;
+        abortSignal?: AbortSignal;
+      }) => Promise<void>;
+    };
   };
   readonly streamCalls: { prompt: string }[] = [];
   readonly createSessionCalls: { sessionId?: string; resumeFrom?: unknown }[] =
@@ -102,7 +104,7 @@ class MockHarnessAgent {
   }): Promise<MockSession> {
     this.createSessionCalls.push(options ?? {});
     await this.settings.sandbox?.createSession({});
-    await this.settings.onSandboxSession?.({
+    await this.settings.sandboxConfig?.onSession?.({
       session: this.sandbox,
       sessionWorkDir: '/work',
     });
@@ -133,7 +135,6 @@ function installMocks(): void {
     createPi: (settings: unknown) => ({ settings }),
   }));
   vi.doMock('@earendil-works/pi-coding-agent', () => ({
-    AuthStorage: { fromStorage: (s: unknown) => ({ storage: s }) },
     getAgentDir: () => '/agent-dir',
   }));
   // '@ai-sdk/sandbox-just-bash' is intentionally left real.

@@ -11,6 +11,7 @@ export type { PiHarnessSettings } from './pi-harness';
 export type { PiAuthOptions } from './pi-auth';
 export { PiExtensionError } from './pi-session';
 export type {
+  PiCredentialStore,
   PiResourceLoaderOptions,
   PiSessionSettings,
   PiThinkingLevel,

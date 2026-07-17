@@ -1,13 +1,13 @@
 import {
-  AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
   defineTool,
-  ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
   type AgentSession,
   type AgentToolResult,
+  type CreateModelRuntimeOptions,
   type ExtensionFactory,
   type ResourceLoader,
   type Skill,
@@ -254,6 +254,15 @@ const PI_NATIVE_TOOL_KINDS: Readonly<
   ls: 'readonly',
 };
 
+/**
+ * pi-ai's `CredentialStore` contract, extracted from `ModelRuntime.create`
+ * options so downstream packages type against Pi's SDK surface without a
+ * direct `@earendil-works/pi-ai` dependency.
+ */
+export type PiCredentialStore = NonNullable<
+  CreateModelRuntimeOptions['credentials']
+>;
+
 export type PiThinkingLevel =
   | 'off'
   | 'minimal'
@@ -282,10 +291,17 @@ export interface PiSessionSettings {
   readonly agentDir?: string;
 
   /** Bring your own raw Pi SDK services. */
-  readonly authStorage?: AuthStorage;
-  readonly modelRegistry?: ModelRegistry;
+  readonly modelRuntime?: ModelRuntime;
   readonly settingsManager?: SettingsManager;
   readonly resourceLoader?: ResourceLoader;
+
+  /**
+   * Credential storage backing the adapter-created `ModelRuntime`. Ignored
+   * when `modelRuntime` is supplied (a runtime carries its own store). Use
+   * this to keep secrets out of the agent-dir `auth.json` — e.g. runcell's
+   * shared credential store.
+   */
+  readonly piCredentials?: PiCredentialStore;
 
   /** Raw `DefaultResourceLoader` knobs for extensions, prompts, themes, etc. */
   readonly resourceLoaderOptions?: PiResourceLoaderOptions;
@@ -335,12 +351,74 @@ interface ActivePiTurn {
   readonly done: Promise<void>;
 }
 
+/**
+ * Up to five candidate ids for an unresolved model. Matches on the last path
+ * segment in both directions (so a truncated or over-typed id still finds
+ * `gpt-5.6*` entries), then falls back to same-provider entries when the id
+ * was provider-qualified. Formatted as an error-message suffix; empty when
+ * the catalog has nothing close.
+ */
+function formatModelSuggestions(
+  modelRuntime: ModelRuntime,
+  unresolvedId: string,
+): string {
+  let models: ReturnType<ModelRuntime['getModels']>;
+  try {
+    models = modelRuntime.getModels();
+  } catch {
+    return '';
+  }
+
+  const needle = (unresolvedId.split('/').pop() ?? unresolvedId).toLowerCase();
+  const providerSegment = unresolvedId.includes('/')
+    ? unresolvedId.slice(0, unresolvedId.indexOf('/')).toLowerCase()
+    : undefined;
+
+  const commonPrefixLength = (a: string, b: string): number => {
+    const max = Math.min(a.length, b.length);
+    let i = 0;
+    while (i < max && a[i] === b[i]) i += 1;
+    return i;
+  };
+
+  /*
+   * Score each catalog entry by its longest shared prefix with the typo'd
+   * last segment (id or display name, case-insensitive). A prefix of ≥ 4
+   * characters keeps `gpt-5.6-lunna` → `gpt-5.6-luna` while dropping
+   * unrelated ids; same-provider entries get a floor score so a qualified id
+   * with no close match still lists that provider's catalog.
+   */
+  const scored: { qualified: string; score: number }[] = [];
+  const seen = new Set<string>();
+  for (const model of models) {
+    const qualified = `${model.provider}/${model.id}`;
+    if (seen.has(qualified)) continue;
+    seen.add(qualified);
+    const prefixScore = Math.max(
+      commonPrefixLength(model.id.toLowerCase(), needle),
+      commonPrefixLength(model.name.toLowerCase(), needle),
+    );
+    const sameProvider = model.provider.toLowerCase() === providerSegment;
+    const score = prefixScore >= 4 ? prefixScore : sameProvider ? 1 : 0;
+    if (score > 0) scored.push({ qualified, score });
+  }
+
+  const candidates = scored
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5)
+    .map(entry => entry.qualified);
+
+  return candidates.length > 0
+    ? ` Did you mean: ${candidates.join(', ')}?`
+    : '';
+}
+
 function applyPendingProviderRegistrations({
   resourceLoader,
-  modelRegistry,
+  modelRuntime,
 }: {
   resourceLoader: ResourceLoader;
-  modelRegistry: ModelRegistry;
+  modelRuntime: ModelRuntime;
 }): void {
   const extensionsResult = resourceLoader.getExtensions();
   const pendingRegistrations = [
@@ -349,7 +427,7 @@ function applyPendingProviderRegistrations({
 
   for (const { name, config, extensionPath } of pendingRegistrations) {
     try {
-      modelRegistry.registerProvider(name, config);
+      modelRuntime.registerProvider(name, config);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(`Extension "${extensionPath}" error: ${message}`);
@@ -472,22 +550,29 @@ export async function createPiSession(
         : [],
     });
 
-    // Pi auth + model registry are global to this Pi session. These live on the
+    // Pi auth + model catalog are global to this Pi session. These live on the
     // real host filesystem (`hostAgentDir`), never in the sandbox/workspace.
-    const authStorage =
-      input.settings.authStorage ??
-      AuthStorage.create(path.join(hostAgentDir, 'auth.json'));
-    const modelRegistry =
-      input.settings.modelRegistry ??
-      ModelRegistry.create(authStorage, path.join(hostAgentDir, 'models.json'));
+    const modelRuntime =
+      input.settings.modelRuntime ??
+      (await ModelRuntime.create({
+        authPath: path.join(hostAgentDir, 'auth.json'),
+        modelsPath: path.join(hostAgentDir, 'models.json'),
+        // runcell is a server library: do not make unrequested network calls,
+        // mutate the caller's agentDir, or risk a 15-second startup stall.
+        allowModelNetwork: false,
+        ...(input.settings.piCredentials
+          ? { credentials: input.settings.piCredentials }
+          : {}),
+      }));
     const settingsManager =
       input.settings.settingsManager ?? SettingsManager.inMemory();
 
     // Run-scoped env (for the model resolver's gateway fallback heuristic).
-    const resolverEnv = resolvePiAuth(input.settings.auth, process.env, {
-      authStorage,
-      modelRegistry,
-    });
+    const resolverEnv = await resolvePiAuth(
+      input.settings.auth,
+      process.env,
+      modelRuntime,
+    );
 
     const resourceLoaderOptions = input.settings.resourceLoaderOptions ?? {};
     const userSkillsOverride = resourceLoaderOptions.skillsOverride;
@@ -556,18 +641,32 @@ export async function createPiSession(
       );
     }
 
-    applyPendingProviderRegistrations({ resourceLoader, modelRegistry });
+    applyPendingProviderRegistrations({ resourceLoader, modelRuntime });
 
-    const resolveModel = createPiModelResolver(modelRegistry, resolverEnv);
+    const resolveModel = createPiModelResolver(modelRuntime, resolverEnv);
     // Resolve once: deterministic given the configured model. This is the Pi
     // `Model` object handed to `createAgentSession`.
     const resolvedModel = resolveModel(input.settings.model);
+    /*
+     * A configured model id that fails to resolve must be a hard error.
+     * Passing no `model` to `createAgentSession` silently falls back to the
+     * agent dir's settings default (or Pi's own default), which sends traffic
+     * to whatever model — and provider — the host happens to have configured.
+     */
+    if (input.settings.model && !resolvedModel) {
+      throw new Error(
+        `Unknown model "${input.settings.model}": no matching entry in Pi's ` +
+          `model catalog.${formatModelSuggestions(
+            modelRuntime,
+            input.settings.model,
+          )}`,
+      );
+    }
 
     return {
       resumeSessionFilePath,
       paths,
-      authStorage,
-      modelRegistry,
+      modelRuntime,
       settingsManager,
       resourceLoader,
       resolvedModel,
@@ -588,8 +687,7 @@ export async function createPiSession(
   const {
     resumeSessionFilePath,
     paths,
-    authStorage,
-    modelRegistry,
+    modelRuntime,
     settingsManager,
     resourceLoader,
     resolvedModel,
@@ -817,8 +915,7 @@ export async function createPiSession(
     const { session } = await createAgentSession({
       cwd: sessionWorkDir,
       agentDir: hostAgentDir,
-      authStorage,
-      modelRegistry,
+      modelRuntime,
       sessionManager,
       settingsManager,
       resourceLoader,

@@ -344,13 +344,18 @@ describe('defaultRuntime', () => {
     ]);
   });
 
-  it('maps shared credentials to Pi auth storage', async () => {
+  it('maps shared credentials to a pi-ai credential store', async () => {
+    let blob: AuthBlob = {
+      anthropic: { type: 'api_key', key: 'stored-key' },
+    };
+    let writes = 0;
     const store: CredentialStore = {
       async withLock(_key, fn) {
-        const current: AuthBlob = {
-          anthropic: { type: 'api_key', key: 'stored-key' },
-        };
-        const { result } = await fn(current);
+        const { result, next } = await fn(blob);
+        if (next !== undefined) {
+          blob = next;
+          writes += 1;
+        }
         return result;
       },
     };
@@ -368,10 +373,120 @@ describe('defaultRuntime', () => {
       }),
     );
 
-    expect(state.authStorageBackends).toHaveLength(1);
-    expect(state.piSettings[0]).toMatchObject({
-      authStorage: { storage: state.authStorageBackends[0] },
+    const settings = state.piSettings[0] as {
+      piCredentials?: {
+        read(providerId: string): Promise<unknown>;
+        modify(
+          providerId: string,
+          fn: (current: unknown) => Promise<unknown>,
+        ): Promise<unknown>;
+        list(): Promise<readonly unknown[]>;
+        delete(providerId: string): Promise<void>;
+      };
+    };
+    const piCredentials = settings.piCredentials;
+    if (!piCredentials) {
+      throw new Error('expected piCredentials in the Pi settings');
+    }
+    // The adapter round-trips runcell's blob store through pi-ai's
+    // per-provider CredentialStore contract: pre-seeded blob entries are
+    // readable, writes persist through the lock, deletes drop the key.
+    await expect(piCredentials.read('anthropic')).resolves.toEqual({
+      type: 'api_key',
+      key: 'stored-key',
     });
+    const originalBlob = structuredClone(blob);
+    await expect(
+      piCredentials.modify('anthropic', () => Promise.resolve(undefined)),
+    ).resolves.toEqual(blob['anthropic']);
+    expect(blob).toEqual(originalBlob);
+    expect(writes).toBe(0);
+
+    const rotated = { type: 'api_key' as const, key: 'sk-tenant-a' };
+    await piCredentials.modify('anthropic', () => Promise.resolve(rotated));
+    await expect(piCredentials.read('anthropic')).resolves.toEqual(rotated);
+
+    const keyless = { type: 'api_key' as const };
+    await piCredentials.modify('amazon-bedrock', () =>
+      Promise.resolve(keyless),
+    );
+    await expect(piCredentials.read('amazon-bedrock')).resolves.toEqual(
+      keyless,
+    );
+
+    const oauth = {
+      type: 'oauth' as const,
+      access: 'access-token',
+      refresh: 'refresh-token',
+      expires: 123,
+      accountId: 'account-1',
+    };
+    await piCredentials.modify('openai-codex', () => Promise.resolve(oauth));
+    await expect(piCredentials.read('openai-codex')).resolves.toEqual(oauth);
+
+    await expect(piCredentials.list()).resolves.toEqual([
+      { providerId: 'anthropic', type: 'api_key' },
+      { providerId: 'amazon-bedrock', type: 'api_key' },
+      { providerId: 'openai-codex', type: 'oauth' },
+    ]);
+    await piCredentials.delete('anthropic');
+    await expect(piCredentials.read('anthropic')).resolves.toBeUndefined();
+  });
+
+  it('supports concurrent shared credential reads through a queueing store', async () => {
+    const blob: AuthBlob = {
+      anthropic: { type: 'api_key', key: 'stored-key' },
+    };
+    let tail = Promise.resolve();
+    const store: CredentialStore = {
+      async withLock(_key, fn) {
+        const previous = tail;
+        let release!: () => void;
+        tail = new Promise<void>(resolve => {
+          release = resolve;
+        });
+        await previous;
+        try {
+          await new Promise(resolve => setTimeout(resolve, 1));
+          return await fn(blob).then(({ result }) => result);
+        } finally {
+          release();
+        }
+      },
+    };
+    const state = installRuntimeMocks([
+      agent => {
+        agent.submit({ ok: true });
+        return [];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() }), {
+        config: { credentials: { mode: 'shared', key: 'tenant-a', store } },
+      }),
+    );
+
+    const piCredentials = (
+      state.piSettings[0] as {
+        piCredentials?: { read(providerId: string): Promise<unknown> };
+      }
+    ).piCredentials;
+    if (!piCredentials) {
+      throw new Error('expected piCredentials in the Pi settings');
+    }
+
+    await expect(
+      Promise.all(
+        Array.from({ length: 5 }, () => piCredentials.read('anthropic')),
+      ),
+    ).resolves.toEqual(
+      Array.from({ length: 5 }, () => ({
+        type: 'api_key',
+        key: 'stored-key',
+      })),
+    );
   });
 
   it('forwards visible stream events and collects changed files', async () => {
@@ -833,7 +948,7 @@ function installRuntimeMocks(scripts: StreamScript[] = []): TestState {
   const state: TestState = {
     instances: [],
     piSettings: [],
-    authStorageBackends: [],
+
     sandboxSettings: [],
     sandboxSession: new TestSandboxSession(),
     scripts: [...scripts],
@@ -857,7 +972,7 @@ function installRuntimeMocks(scripts: StreamScript[] = []): TestState {
           options.sessionId ?? 'test-session',
         );
         this.session = session;
-        if (this.settings.onSandboxSession) {
+        if (this.settings.sandboxConfig?.onSession) {
           const request: SandboxSessionRequest = {
             session: state.sandboxSession,
             sessionWorkDir: '/work',
@@ -865,7 +980,7 @@ function installRuntimeMocks(scripts: StreamScript[] = []): TestState {
           if (options.abortSignal) {
             request.abortSignal = options.abortSignal;
           }
-          await this.settings.onSandboxSession(request);
+          await this.settings.sandboxConfig.onSession(request);
         }
         return session;
       }
@@ -902,12 +1017,6 @@ function installRuntimeMocks(scripts: StreamScript[] = []): TestState {
   }));
 
   vi.doMock('@earendil-works/pi-coding-agent', () => ({
-    AuthStorage: {
-      fromStorage(storage: unknown) {
-        state.authStorageBackends.push(storage);
-        return { storage };
-      },
-    },
     getAgentDir() {
       return '/agent-dir';
     },
@@ -947,7 +1056,7 @@ interface StreamPart {
 interface TestState {
   instances: TestHarnessAgent[];
   piSettings: unknown[];
-  authStorageBackends: unknown[];
+
   sandboxSettings: (SandboxSettings | undefined)[];
   sandboxSession: TestSandboxSession;
   scripts: StreamScript[];
@@ -963,7 +1072,9 @@ interface TestHarnessAgent {
 interface HarnessSettings {
   instructions: string;
   tools: Record<string, ToolLike>;
-  onSandboxSession?: (request: SandboxSessionRequest) => void | Promise<void>;
+  sandboxConfig?: {
+    onSession?: (request: SandboxSessionRequest) => void | Promise<void>;
+  };
 }
 
 interface ToolLike {

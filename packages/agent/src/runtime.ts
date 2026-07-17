@@ -16,9 +16,10 @@ import type {
   StandardJSONSchemaV1,
   StandardSchemaV1,
 } from '@standard-schema/spec';
-import { AuthStorage, getAgentDir } from '@earendil-works/pi-coding-agent';
+import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import {
   createPi,
+  type PiCredentialStore,
   type PiHarnessSettings,
   type PiThinkingLevel,
 } from '@local/harness-pi-raw';
@@ -160,23 +161,25 @@ async function runWithHarness({
       ? 'When the task is complete, call submitResult with the structured result.'
       : '',
     tools,
-    onSandboxSession: async ({ session, sessionWorkDir, abortSignal }) => {
-      sandboxContext = { session, workDir: sessionWorkDir };
-      // Re-materialize the journal before Pi starts so a fresh sandbox resumes.
-      if (continuation) {
-        await writeJournal({
+    sandboxConfig: {
+      onSession: async ({ session, sessionWorkDir, abortSignal }) => {
+        sandboxContext = { session, workDir: sessionWorkDir };
+        // Re-materialize the journal before Pi starts so a fresh sandbox resumes.
+        if (continuation) {
+          await writeJournal({
+            session,
+            workDir: sessionWorkDir,
+            continuation,
+            abortSignal,
+          });
+        }
+        await seedFiles({
           session,
           workDir: sessionWorkDir,
-          continuation,
+          files,
           abortSignal,
         });
-      }
-      await seedFiles({
-        session,
-        workDir: sessionWorkDir,
-        files,
-        abortSignal,
-      });
+      },
     },
   });
 
@@ -869,8 +872,9 @@ function createPiSettings(
     case 'shared':
       return {
         ...base,
-        authStorage: AuthStorage.fromStorage(
-          createSharedAuthBackend(credentials.key, credentials.store),
+        piCredentials: createSharedCredentialStore(
+          credentials.key,
+          credentials.store,
         ),
       };
   }
@@ -910,47 +914,75 @@ function providerToEnvPrefix(provider: string): string {
   return `${normalized}_API_KEY`;
 }
 
-function createSharedAuthBackend(key: string, store: CredentialStore) {
-  let cached: AuthBlob | undefined;
-
+/*
+ * Adapt runcell's shared {@link CredentialStore} (a whole-blob store with a
+ * distributed lock) to pi-ai's per-provider `CredentialStore` contract, which
+ * is what Pi 0.80's `ModelRuntime` consumes.
+ *
+ * Blob compatibility: runcell's `AuthBlob` is `Record<providerId,
+ * StoredCredential>` and `StoredCredential` is assignable to pi-ai's
+ * `Credential` (`{ type: 'api_key', key?, env? }` / `{ type: 'oauth', access,
+ * refresh, expires, ... }`), which is also the on-disk shape of Pi's `auth.json`.
+ * Blobs written by runcell ≤ 1.1.x (through Pi 0.79's AuthStorage) therefore
+ * keep working unchanged — no migration step.
+ *
+ * Every operation runs under the store's lock on the whole blob, so
+ * `modify`'s read-modify-write is atomic across processes exactly as pi-ai
+ * requires (an OAuth refresh in one deployment cannot clobber a rotation in
+ * another).
+ */
+function createSharedCredentialStore(
+  key: string,
+  store: CredentialStore,
+): PiCredentialStore {
   return {
-    withLock<T>(
-      fn: (current: string | undefined) => {
-        result: T;
-        next?: string | undefined;
-      },
-    ): T {
-      const { result, next } = fn(serializeAuthBlob(cached));
-      if (next !== undefined) {
-        cached = parseAuthBlob(next);
-      }
-      return result;
+    async read(providerId) {
+      return store.withLock(key, current => {
+        return Promise.resolve({
+          result: current?.[providerId],
+        });
+      });
     },
-    async withLockAsync<T>(
-      fn: (
-        current: string | undefined,
-      ) => Promise<{ result: T; next?: string | undefined }>,
-    ): Promise<T> {
+
+    async list() {
+      return store.withLock(key, current => {
+        return Promise.resolve({
+          result: Object.entries(current ?? {}).map(
+            ([providerId, credential]) => ({
+              providerId,
+              type: credential.type,
+            }),
+          ),
+        });
+      });
+    },
+
+    async modify(providerId, fn) {
       return store.withLock(key, async current => {
-        cached = current;
-        const { result, next } = await fn(serializeAuthBlob(current));
-        const parsed = next === undefined ? undefined : parseAuthBlob(next);
-        if (parsed !== undefined) {
-          cached = parsed;
-          return { result, next: parsed };
+        const existing = current?.[providerId];
+        const updated = await fn(existing);
+        // `undefined` means "leave the entry unchanged" per the pi-ai contract.
+        if (updated === undefined) {
+          return { result: existing };
         }
-        return { result };
+        const next: AuthBlob = {
+          ...current,
+          [providerId]: updated,
+        };
+        return { result: updated, next };
+      });
+    },
+
+    async delete(providerId) {
+      await store.withLock(key, current => {
+        if (!current || !(providerId in current)) {
+          return Promise.resolve({ result: undefined });
+        }
+        const { [providerId]: _removed, ...rest } = current;
+        return Promise.resolve({ result: undefined, next: rest });
       });
     },
   };
-}
-
-function serializeAuthBlob(blob: AuthBlob | undefined): string | undefined {
-  return blob === undefined ? undefined : JSON.stringify(blob, null, 2);
-}
-
-function parseAuthBlob(value: string): AuthBlob {
-  return JSON.parse(value) as AuthBlob;
 }
 
 function joinSections(...sections: (string | undefined)[]): string {
