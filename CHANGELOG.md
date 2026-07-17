@@ -4,6 +4,16 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- Fixed Next.js/Turbopack (and webpack) builds failing with
+  `Module not found: Can't resolve '@ai-sdk/sandbox-vercel'` when the
+  optional Vercel sandbox is not installed: the optional-provider import is
+  now opaque to static analysis and only resolved at runtime. Also documented
+  `serverExternalPackages: ['runcell']` for Next.js consumers.
+
 ## 1.1.0 - 2026-07-16
 
 ### Added

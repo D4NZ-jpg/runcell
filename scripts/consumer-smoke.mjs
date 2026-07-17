@@ -193,6 +193,20 @@ function main() {
     }
     process.stdout.write('  packed .d.ts free of @local/ specifiers ✓\n');
 
+    // Optional providers must be loaded via a runtime-computed specifier:
+    // a statically-analyzable `import('<literal>')` makes bundlers
+    // (Turbopack, webpack) resolve the optional package at build time and
+    // hard-fail for consumers who don't install it.
+    for (const file of readdirSync(distDir).filter(f => f.endsWith('.js'))) {
+      const js = readFileSync(path.join(distDir, file), 'utf8');
+      if (/import\(\s*["']@ai-sdk\/sandbox-vercel["']/.test(js)) {
+        throw new Error(
+          `packed ${file} statically imports the optional vercel sandbox`,
+        );
+      }
+    }
+    process.stdout.write('  optional providers imported opaquely ✓\n');
+
     writeFileSync(path.join(app, 'tsconfig.json'), TSCONFIG);
     writeFileSync(path.join(app, 'consumer.ts'), CONSUMER_TS);
     run('./node_modules/.bin/tsc -p tsconfig.json', app);

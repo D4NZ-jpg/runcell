@@ -194,6 +194,26 @@ await agent.run({ prompt, sandbox: { type: 'custom', provider } });
 `provider` implements the sandbox provider interface; see
 [API reference](./api.md#sandboxprovider).
 
+## Using runcell with Next.js and other bundlers
+
+runcell loads optional providers (like `@ai-sdk/sandbox-vercel`) at runtime,
+only when the matching sandbox type is requested. The import is deliberately
+opaque to static analysis so bundlers don't try to resolve packages you never
+installed.
+
+Even so, runcell runs processes, reads credentials, and loads Pi resources —
+it belongs on the server, outside the bundle. In Next.js, mark it external:
+
+```ts
+// next.config.ts
+const nextConfig = {
+  serverExternalPackages: ['runcell'],
+};
+```
+
+This keeps Node's module resolution in charge (optional peers stay optional)
+and avoids bundling the runtime into route chunks.
+
 ## Ownership rules, in one table
 
 | What you pass to `run`              | Who creates it | Who destroys it | Files persist across runs |

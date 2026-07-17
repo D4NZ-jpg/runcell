@@ -56,6 +56,21 @@ function baseHostEnv(
 
 const VERCEL_SANDBOX_PACKAGE = '@ai-sdk/sandbox-vercel';
 
+/*
+ * Import an optional module in a way bundlers cannot statically resolve.
+ * `await import('<const string>')` is analyzable: Turbopack/webpack resolve
+ * the specifier at build time and hard-fail when the optional package is
+ * not installed — the runtime `.catch` fallback never runs. Building the
+ * specifier at runtime keeps the decision where it belongs, and the
+ * `webpackIgnore` hint covers webpack configurations that would otherwise
+ * turn the expression into a context module. Use this for every optional
+ * provider import (future sandbox backends included).
+ */
+function loadOptionalModule(specifier: string): Promise<unknown> {
+  const opaque = specifier.split('/').join('/');
+  return import(/* webpackIgnore: true */ opaque);
+}
+
 export type SandboxProvider = HarnessV1SandboxProvider;
 
 export type SandboxOption =
@@ -246,14 +261,14 @@ class LazyVercelSandboxProvider implements SandboxProvider {
 async function loadVercelSandboxProvider(
   settings: VercelSandboxOption,
 ): Promise<SandboxProvider> {
-  const imported: unknown = await import(VERCEL_SANDBOX_PACKAGE).catch(
-    (error: unknown) => {
-      throw new InvalidOptionError(
-        'sandbox.type "vercel" requires installing @ai-sdk/sandbox-vercel.',
-        { cause: error },
-      );
-    },
-  );
+  const imported: unknown = await loadOptionalModule(
+    VERCEL_SANDBOX_PACKAGE,
+  ).catch((error: unknown) => {
+    throw new InvalidOptionError(
+      'sandbox.type "vercel" requires installing @ai-sdk/sandbox-vercel.',
+      { cause: error },
+    );
+  });
 
   if (!isVercelSandboxModule(imported)) {
     throw new InvalidOptionError(
