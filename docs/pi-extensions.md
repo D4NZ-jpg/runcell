@@ -2,8 +2,37 @@
 
 runcell runs on the [Pi coding agent](https://pi.dev) engine. Pi extensions are
 host-side plugins that can register custom model providers, hook the agent
-lifecycle, transform requests, or add tools.
-`pi.extensions` is runcell's escape hatch into that system.
+lifecycle, transform requests, or add tools. The `pi` option exposes
+Pi-specific configuration, including thinking effort and extensions.
+
+## Thinking effort
+
+Set `pi.thinkingLevel` when creating an agent to choose its default reasoning
+or thinking effort. Override it for one run with the run-level `pi` option:
+
+```ts
+import { createAgent } from 'runcell';
+
+const agent = createAgent({
+  model: 'anthropic/claude-sonnet-4-5',
+  pi: { thinkingLevel: 'high' },
+});
+
+const result = await agent.run({
+  prompt: 'Solve this difficult problem.',
+  pi: { thinkingLevel: 'xhigh' }, // this run only
+});
+```
+
+The available levels are `'off'`, `'minimal'`, `'low'`, `'medium'`, `'high'`,
+and `'xhigh'` (`PiThinkingLevel`, exported from `runcell`). Pi maps the selected
+level to the provider's native control, such as Anthropic's thinking budget or
+OpenAI's `reasoning_effort`, and clamps it to what the model supports. If the
+option is omitted, Pi uses its default for the selected model.
+
+Only `thinkingLevel` is accepted in a run-level `pi` object; extensions remain
+agent-level. Invalid levels throw `InvalidOptionError` eagerly: during
+`createAgent()` for the agent default, or during `run()` for an override.
 
 ::: warning Security
 Extensions execute in your host Node process with access to the filesystem,
@@ -123,5 +152,5 @@ createAgent({ model: 'corporate-ai/coder', pi: { extensions: [corp] } });
 
 ## Versioning
 
-The `pi.extensions` and `runcell/pi` APIs track Pi's extension API and
-versioning. They are outside Runcell's core stability guarantee.
+The `pi` options and `runcell/pi` APIs track Pi's API and versioning. They are
+outside Runcell's core stability guarantee.

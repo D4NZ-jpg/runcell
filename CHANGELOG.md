@@ -12,6 +12,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   results. Image bytes are validated and normalized to base64 before Pi sends
   real image blocks to the model; tool-result events expose the normalized,
   JSON-safe content array.
+- Added configurable model reasoning effort through `pi.thinkingLevel`, with a
+  per-run override that takes precedence over the agent-level default.
 
 ## 1.0.1 - 2026-07-15
 

@@ -27,7 +27,27 @@ const agent = createAgent({
 | `events`       | `AgentEvents`                    | Lifecycle callbacks.                                                                        |
 | `sandbox`      | `SandboxOption`                  | Agent-level default sandbox mode. Defaults to `'virtual'`.                                  |
 | `maxRepairs`   | `number`                         | Repair-turn budget for structured runs. Defaults to `1`.                                    |
-| `pi`           | `PiOptions`                      | Pi engine escape hatch. See [Pi extensions](./pi-extensions.md).                            |
+| `pi`           | `PiOptions`                      | Pi engine options. See [Pi options](./pi-extensions.md).                                    |
+
+### `PiOptions`
+
+```ts
+type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
+interface PiOptions {
+  extensions?: readonly ExtensionFactory[];
+  thinkingLevel?: PiThinkingLevel;
+}
+```
+
+`thinkingLevel` sets the agent-level default reasoning effort. Pi maps it to
+such provider-native controls as Anthropic's thinking budget and OpenAI's
+`reasoning_effort`, then clamps it to what the selected model supports. When
+unset, Pi's default for that model applies. Invalid values throw
+`InvalidOptionError` when `createAgent()` is called.
+
+`PiThinkingLevel` is exported from `runcell`. See
+[Pi options](./pi-extensions.md) for examples and extension semantics.
 
 ## `agent.run(options)`
 
@@ -43,16 +63,21 @@ run(options: RunOptionsBase): Promise<RunResult<undefined>>;
 
 ### Run options
 
-| Option      | Type                       | Description                                                                                        |
-| ----------- | -------------------------- | -------------------------------------------------------------------------------------------------- |
-| `prompt`    | `string`                   | The task prompt. Required.                                                                         |
-| `schema`    | `AgentSchema`              | Structured output contract ([Standard Schema](https://standardschema.dev)). Omit for a plain turn. |
-| `files`     | `FileInput[]`              | Files seeded into the workspace before the run. Relative paths only.                               |
-| `sandbox`   | `Sandbox \| SandboxOption` | A caller-owned handle that Runcell does not destroy, or an ephemeral mode option.                  |
-| `thread`    | `Thread`                   | Conversation to continue; mutated in place on success.                                             |
-| `events`    | `AgentEvents`              | Per-run lifecycle callbacks, invoked in addition to the agent-level ones.                          |
-| `sessionId` | `string`                   | Resume a previous session by id.                                                                   |
-| `signal`    | `AbortSignal`              | Cancels the run.                                                                                   |
+| Option      | Type                                  | Description                                                                                        |
+| ----------- | ------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `prompt`    | `string`                              | The task prompt. Required.                                                                         |
+| `schema`    | `AgentSchema`                         | Structured output contract ([Standard Schema](https://standardschema.dev)). Omit for a plain turn. |
+| `files`     | `FileInput[]`                         | Files seeded into the workspace before the run. Relative paths only.                               |
+| `sandbox`   | `Sandbox \| SandboxOption`            | A caller-owned handle that Runcell does not destroy, or an ephemeral mode option.                  |
+| `thread`    | `Thread`                              | Conversation to continue; mutated in place on success.                                             |
+| `events`    | `AgentEvents`                         | Per-run lifecycle callbacks, invoked in addition to the agent-level ones.                          |
+| `pi`        | `{ thinkingLevel?: PiThinkingLevel }` | Per-run thinking-level override. Only `thinkingLevel` is accepted; it wins for this run only.      |
+| `sessionId` | `string`                              | Resume a previous session by id.                                                                   |
+| `signal`    | `AbortSignal`                         | Cancels the run.                                                                                   |
+
+The per-run `pi` object accepts only `thinkingLevel`; extensions remain
+agent-level. Invalid values throw `InvalidOptionError` eagerly when `run()` is
+called.
 
 ### `RunResult<TData>`
 
