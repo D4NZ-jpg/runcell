@@ -186,6 +186,87 @@ interface ToolDefinition<TSchema extends AgentSchema = AgentSchema> {
 Reserved tool names: `read`, `write`, `edit`, `bash`, `grep`, `glob`, `ls`,
 `submitResult`, `fileChange`.
 
+### `toolContent(parts): ToolContent`
+
+Builds an explicit multi-part result for a host tool. Return it from `execute()`
+to send text verbatim and images as real image blocks instead of JSON-stringified
+text.
+
+```ts
+const result = toolContent([
+  { type: 'text', text: 'Rendered page:' },
+  { type: 'image', data: pngBytes, mediaType: 'image/png' },
+]);
+```
+
+`parts` must be a non-empty array. Image `data` accepts `Uint8Array` or a
+base64 string; bytes are base64-encoded by the helper. A base64 string must be
+standard padded canonical base64 — no whitespace, no `data:` URL prefix, no
+base64url alphabet. Supported media types are `image/png`,
+`image/jpeg`, `image/gif`, and `image/webp`. Matching is case-insensitive and
+`image/jpg` normalizes to `image/jpeg`. Each image is limited to 5 MB decoded.
+Invalid inputs throw eagerly. Text-only content is valid.
+
+The returned envelope has
+`{ type: 'runcell.tool-content', version: 1, content: [...] }`. It is an explicit
+discriminator, not a duck-typed array: returning a bare content-like array from
+a tool keeps the ordinary JSON-stringified behavior. Tool-result events and
+result projections expose only the normalized `content` array, with base64
+image data.
+
+### `isToolContent(value): value is ToolContent`
+
+Returns whether `value` is a valid normalized `ToolContent` envelope. Beyond
+the structural shape (discriminator, version, part shapes, supported media
+types) it re-checks the data invariants: image `data` must be canonical padded
+base64 and at most 5 MB decoded. A hand-built or deserialized envelope that
+violates these is rejected.
+
+### Tool content types
+
+```ts
+type ToolContentPartInput = ToolContentTextPart | ToolContentImageInput;
+type ToolContentPart = ToolContentTextPart | ToolContentImagePart;
+type ToolContentImageMediaType =
+  | 'image/png'
+  | 'image/jpeg'
+  | 'image/gif'
+  | 'image/webp';
+
+interface ToolContentTextPart {
+  readonly type: 'text';
+  readonly text: string;
+}
+
+interface ToolContentImageInput {
+  readonly type: 'image';
+  readonly data: Uint8Array | string;
+  readonly mediaType: string;
+}
+
+interface ToolContentImagePart {
+  readonly type: 'image';
+  readonly data: string;
+  readonly mediaType: ToolContentImageMediaType;
+}
+
+interface ToolContent {
+  readonly type: typeof TOOL_CONTENT_TYPE;
+  readonly version: 1;
+  readonly content: readonly ToolContentPart[];
+}
+
+const TOOL_CONTENT_TYPE = 'runcell.tool-content';
+```
+
+`ToolContent`, `ToolContentPart`, `ToolContentPartInput`,
+`ToolContentTextPart`, `ToolContentImagePart`, `ToolContentImageInput`,
+`ToolContentImageMediaType`, and `TOOL_CONTENT_TYPE` are exported from
+`runcell`.
+
+Runcell does not pre-check model vision support. Provider failures surface
+through `onError` like other model errors.
+
 ## Events (`AgentEvents`)
 
 The optional callbacks are `onText`, `onToolCall`, `onToolResult`,

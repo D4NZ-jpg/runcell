@@ -4,6 +4,15 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Added `toolContent()` for host tools that return multi-part text and image
+  results. Image bytes are validated and normalized to base64 before Pi sends
+  real image blocks to the model; tool-result events expose the normalized,
+  JSON-safe content array.
+
 ## 1.0.1 - 2026-07-15
 
 ### Changed

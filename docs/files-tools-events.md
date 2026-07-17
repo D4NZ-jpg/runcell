@@ -66,6 +66,58 @@ const agent = createAgent({
   `grep`, `glob`, `ls`, `submitResult`, `fileChange`. Registering one throws
   at `createAgent` time.
 
+### Multi-part and image results
+
+Use `toolContent()` when a host tool needs to return real content blocks to the
+model, such as a rendered PDF page:
+
+```ts
+import { createAgent, toolContent } from 'runcell';
+import { z } from 'zod';
+
+const agent = createAgent({
+  model,
+  tools: {
+    renderPdfPage: {
+      description: 'Render one page of a PDF for visual inspection.',
+      schema: z.object({ page: z.number().int().positive() }),
+      execute: async ({ page }) => {
+        const png: Uint8Array = await renderPage(page);
+        return toolContent([
+          { type: 'text', text: `Rendered PDF page ${page}:` },
+          { type: 'image', data: png, mediaType: 'image/png' },
+        ]);
+      },
+    },
+  },
+});
+```
+
+| Tool return value    | What the model receives                                                                                            |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `toolContent([...])` | Verbatim text parts and real image blocks                                                                          |
+| A string             | The string verbatim, unchanged from ordinary tool results                                                          |
+| Anything else        | `JSON.stringify` text (values that serialize to `undefined` become `'null'`), unchanged from ordinary tool results |
+
+`toolContent()` accepts a non-empty array of text and image parts. Image data
+may be a `Uint8Array` or a base64 string; a base64 string must be standard
+padded canonical base64 — no whitespace, no `data:` URL prefix, no base64url
+alphabet. Raw bytes are base64-encoded once;
+media types are matched case-insensitively, with `image/jpg` normalized to
+`image/jpeg`. Supported types are `image/png`, `image/jpeg`, `image/gif`, and
+`image/webp`, with a 5 MB decoded limit per image. Invalid input throws eagerly
+from `toolContent()`.
+
+The helper is an explicit opt-in. Returning a bare array that looks like content
+parts still follows the ordinary JSON-stringified path. Text-only
+`toolContent([...])` is also valid. For these results, `onToolResult` and result
+tool projections expose the normalized, JSON-safe content array with base64
+image data. Runcell does not pre-check whether a model supports vision; a
+provider rejection surfaces through `onError` like other model errors.
+
+See the runnable `examples/11-image-tool-results.ts` with
+`npm run example:11`.
+
 ## Events
 
 Lifecycle callbacks support logging, UIs, and metrics. They are optional and
