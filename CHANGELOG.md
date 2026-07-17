@@ -15,6 +15,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Added configurable model reasoning effort through `pi.thinkingLevel`, with a
   per-run override that takes precedence over the agent-level default.
 
+### Fixed
+
+- Fixed virtual-sandbox runs failing at session startup (`cd: no such file or
+directory`): just-bash ignores the per-run `env` option, so the harness's
+  workspace bootstrap silently no-oped. Env vars are now inlined into the
+  command as `export` prefixes.
+
 ## 1.0.1 - 2026-07-15
 
 ### Changed
