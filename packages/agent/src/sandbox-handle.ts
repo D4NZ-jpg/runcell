@@ -1,10 +1,10 @@
-import { createJustBashSandbox } from '@ai-sdk/sandbox-just-bash';
 import type {
   HarnessV1NetworkSandboxSession,
   HarnessV1SandboxProvider,
 } from '@ai-sdk/harness';
 import { HARNESS_ID } from '@local/harness-pi-raw';
 import { InvalidOptionError } from './errors.js';
+import { createPatchedJustBashSandbox } from './just-bash-env.js';
 import { assertSafeWorkspacePath } from './paths.js';
 import { shellQuote } from './shell.js';
 import { randomUUID } from 'node:crypto';
@@ -147,7 +147,7 @@ export function getSandboxInternals(
 export async function createVirtualSandbox(
   options: VirtualSandboxOptions = {},
 ): Promise<Sandbox> {
-  const provider = createJustBashSandbox(
+  const provider = createPatchedJustBashSandbox(
     options.env ? { env: options.env } : {},
   );
   const session = await provider.createSession();

@@ -1,4 +1,4 @@
-import { createJustBashSandbox } from '@ai-sdk/sandbox-just-bash';
+import { createPatchedJustBashSandbox } from './just-bash-env.js';
 import { shellQuote } from './shell.js';
 import type {
   HarnessV1NetworkSandboxSession,
@@ -175,7 +175,7 @@ export function resolveSandboxConfig(sandbox: unknown): SandboxConfig {
 export function createSandboxProvider(config: SandboxConfig): SandboxProvider {
   switch (config.type) {
     case 'virtual':
-      return createJustBashSandbox();
+      return createPatchedJustBashSandbox();
 
     case 'host':
       return new HostSandboxProvider(config);
