@@ -110,6 +110,79 @@ describe('defaultRuntime', () => {
     });
   });
 
+  it('wires the agent-level thinking level into the harness settings', async () => {
+    const state = installRuntimeMocks([
+      agent => {
+        agent.submit({ ok: true });
+        return [];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() }), {
+        agentOptions: { pi: { thinkingLevel: 'high' } },
+      }),
+    );
+
+    expect(state.piSettings[0]).toMatchObject({ thinkingLevel: 'high' });
+  });
+
+  it('lets a per-run thinking level override the agent-level one', async () => {
+    const state = installRuntimeMocks([
+      agent => {
+        agent.submit({ ok: true });
+        return [];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() }), {
+        agentOptions: { pi: { thinkingLevel: 'low' } },
+        runOptions: { pi: { thinkingLevel: 'xhigh' } },
+      }),
+    );
+
+    expect(state.piSettings[0]).toMatchObject({ thinkingLevel: 'xhigh' });
+  });
+
+  it('lets a per-run "off" override a non-off agent-level default', async () => {
+    // The most regression-prone combination: an explicit 'off' must survive
+    // both the `??` merge with the agent default and the truthy spread.
+    const state = installRuntimeMocks([
+      agent => {
+        agent.submit({ ok: true });
+        return [];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() }), {
+        agentOptions: { pi: { thinkingLevel: 'high' } },
+        runOptions: { pi: { thinkingLevel: 'off' } },
+      }),
+    );
+
+    expect(state.piSettings[0]).toMatchObject({ thinkingLevel: 'off' });
+  });
+
+  it('omits thinkingLevel from the settings when no level is set', async () => {
+    const state = installRuntimeMocks([
+      agent => {
+        agent.submit({ ok: true });
+        return [];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    await runtime.run(createRuntimeInput(z.object({ ok: z.boolean() })));
+
+    const settings = state.piSettings[0] as Record<string, unknown>;
+    expect('thinkingLevel' in settings).toBe(false);
+  });
+
   it('omits extension settings when no pi option is given', async () => {
     const state = installRuntimeMocks([
       agent => {
@@ -448,6 +521,7 @@ describe('defaultRuntime', () => {
           sandbox: { type: 'virtual' },
           maxRepairs: 1,
           extensions: [],
+          thinkingLevel: undefined,
         },
         runOptions: { prompt: 'say hi' },
       }),
@@ -612,6 +686,7 @@ describe('defaultRuntime', () => {
         sandbox: { type: 'virtual' },
         maxRepairs: 1,
         extensions: [],
+        thinkingLevel: undefined,
       },
       runOptions: { prompt: 'say hi' },
     });
@@ -743,6 +818,7 @@ function createRuntimeInput<TSchema extends AgentSchema>(
       sandbox: { type: 'virtual' },
       maxRepairs: 1,
       extensions: agentOptions.pi?.extensions ?? [],
+      thinkingLevel: agentOptions.pi?.thinkingLevel,
       ...overrides.config,
     },
     runOptions: {

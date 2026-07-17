@@ -1,4 +1,4 @@
-import type { ExtensionFactory } from '@local/harness-pi-raw';
+import type { ExtensionFactory, PiThinkingLevel } from '@local/harness-pi-raw';
 import { normalizeCredentials, type CredentialPlan } from './credentials.js';
 import { InvalidOptionError } from './errors.js';
 import { normalizeFiles } from './files.js';
@@ -40,6 +40,33 @@ export interface ResolvedAgentConfig {
   sandbox: SandboxConfig;
   maxRepairs: number;
   extensions: readonly ExtensionFactory[];
+  thinkingLevel: PiThinkingLevel | undefined;
+}
+
+const THINKING_LEVELS: readonly PiThinkingLevel[] = [
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+];
+
+function validateThinkingLevel(
+  value: unknown,
+  label: string,
+): PiThinkingLevel | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!THINKING_LEVELS.includes(value as PiThinkingLevel)) {
+    throw new InvalidOptionError(
+      `${label} must be one of ${THINKING_LEVELS.join(', ')}, received: ${JSON.stringify(
+        value,
+      )}`,
+    );
+  }
+  return value as PiThinkingLevel;
 }
 
 /**
@@ -85,6 +112,11 @@ export function resolveAgentConfig(
     );
   }
 
+  const thinkingLevel = validateThinkingLevel(
+    options.pi?.thinkingLevel,
+    '"pi.thinkingLevel"',
+  );
+
   return {
     model: options.model,
     systemPrompt: options.systemPrompt,
@@ -93,6 +125,7 @@ export function resolveAgentConfig(
     sandbox,
     maxRepairs,
     extensions,
+    thinkingLevel,
   };
 }
 
@@ -131,6 +164,7 @@ export function validateRunOptions(
       'run "thread" must be created with createThread or threadFromJSON.',
     );
   }
+  validateThinkingLevel(options.pi?.thinkingLevel, 'run "pi.thinkingLevel"');
 }
 
 function isAgentSchema(value: unknown): value is AgentSchema {

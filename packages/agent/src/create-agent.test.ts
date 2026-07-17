@@ -18,6 +18,7 @@ describe('resolveAgentConfig', () => {
       sandbox: { type: 'virtual' },
       maxRepairs: 1,
       extensions: [],
+      thinkingLevel: undefined,
     });
   });
 
@@ -125,6 +126,36 @@ describe('resolveAgentConfig', () => {
     ).toThrow(InvalidOptionError);
   });
 
+  it('accepts every valid pi thinking level and rejects unknown ones', () => {
+    for (const level of [
+      'off',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+    ] as const) {
+      expect(
+        resolveAgentConfig(
+          { model: 'm', pi: { thinkingLevel: level } },
+          { nodeEnv: 'development' },
+        ).thinkingLevel,
+      ).toBe(level);
+    }
+
+    expect(
+      resolveAgentConfig({ model: 'm' }, { nodeEnv: 'development' })
+        .thinkingLevel,
+    ).toBeUndefined();
+
+    expect(() =>
+      resolveAgentConfig(
+        { model: 'm', pi: { thinkingLevel: 'ultra' as never } },
+        { nodeEnv: 'development' },
+      ),
+    ).toThrow(InvalidOptionError);
+  });
+
   it('allows non-runtime tool names', () => {
     const config = resolveAgentConfig(
       {
@@ -153,6 +184,22 @@ describe('createAgent', () => {
 
     await expect(
       agent.run({ prompt: '   ', schema: z.object({}) }),
+    ).rejects.toBeInstanceOf(InvalidOptionError);
+    expect(runtime.calls).toHaveLength(0);
+  });
+
+  it('rejects an invalid per-run pi thinking level', async () => {
+    const runtime = createRuntimeMock();
+    const agent = createAgent(
+      { model: 'anthropic/claude-sonnet-4-5' },
+      { nodeEnv: 'development', runtime },
+    );
+
+    await expect(
+      agent.run({
+        prompt: 'do a thing',
+        pi: { thinkingLevel: 'turbo' as never },
+      }),
     ).rejects.toBeInstanceOf(InvalidOptionError);
     expect(runtime.calls).toHaveLength(0);
   });

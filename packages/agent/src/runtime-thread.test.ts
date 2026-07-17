@@ -155,6 +155,7 @@ const config: ResolvedAgentConfig = {
   sandbox: { type: 'virtual' },
   maxRepairs: 1,
   extensions: [],
+  thinkingLevel: undefined,
 };
 
 function makeInput(

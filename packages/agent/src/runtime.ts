@@ -17,7 +17,11 @@ import type {
   StandardSchemaV1,
 } from '@standard-schema/spec';
 import { AuthStorage, getAgentDir } from '@earendil-works/pi-coding-agent';
-import { createPi, type PiHarnessSettings } from '@local/harness-pi-raw';
+import {
+  createPi,
+  type PiHarnessSettings,
+  type PiThinkingLevel,
+} from '@local/harness-pi-raw';
 import path from 'node:path';
 import type { ResolvedAgentConfig } from './create-agent.js';
 import type { AuthBlob, CredentialStore } from './credentials.js';
@@ -149,7 +153,7 @@ async function runWithHarness({
 
   const harnessAgent = new HarnessAgent({
     id: 'runcell',
-    harness: createPi(createPiSettings(config)),
+    harness: createPi(createPiSettings(config, runOptions.pi?.thinkingLevel)),
     sandbox: sandboxProvider,
     permissionMode: 'allow-all',
     instructions: schema
@@ -820,10 +824,15 @@ function isFileChangePayload(
   );
 }
 
-function createPiSettings(config: ResolvedAgentConfig): PiHarnessSettings {
+function createPiSettings(
+  config: ResolvedAgentConfig,
+  runThinkingLevel?: PiThinkingLevel,
+): PiHarnessSettings {
   const { credentials, model, systemPrompt, extensions } = config;
+  const thinkingLevel = runThinkingLevel ?? config.thinkingLevel;
   const base = {
     model,
+    ...(thinkingLevel ? { thinkingLevel } : {}),
     ...(systemPrompt
       ? {
           resourceLoaderOptions: {

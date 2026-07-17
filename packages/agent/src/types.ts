@@ -1,5 +1,5 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
-import type { ExtensionFactory } from '@local/harness-pi-raw';
+import type { ExtensionFactory, PiThinkingLevel } from '@local/harness-pi-raw';
 import type { Credentials } from './credentials.js';
 import type { FileInput } from './files.js';
 import type { SandboxOption } from './sandbox.js';
@@ -89,6 +89,13 @@ export interface PiOptions {
    * rejects the run with {@link ExtensionError}.
    */
   extensions?: readonly ExtensionFactory[];
+  /**
+   * Reasoning/thinking effort for the model. Pi maps this to each provider's
+   * native knob (Anthropic thinking budget, OpenAI reasoning_effort) and
+   * clamps to what the model supports. Defaults to Pi's default for the
+   * model.
+   */
+  thinkingLevel?: PiThinkingLevel;
 }
 
 /**
@@ -147,6 +154,12 @@ export interface RunOptionsBase {
   sessionId?: string;
   /** Abort signal to cancel the run. */
   signal?: AbortSignal;
+  /**
+   * Per-run Pi engine overrides, merged over the agent-level `pi` options.
+   * `extensions` intentionally stays agent-level: extensions are loaded once
+   * per agent, not per run.
+   */
+  pi?: Pick<PiOptions, 'thinkingLevel'>;
 }
 
 /**

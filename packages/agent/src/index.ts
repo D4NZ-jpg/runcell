@@ -6,6 +6,7 @@ export {
   TOOL_CONTENT_TYPE,
 } from '@local/harness-pi-raw';
 export type {
+  PiThinkingLevel,
   ToolContent,
   ToolContentImageInput,
   ToolContentImageMediaType,
