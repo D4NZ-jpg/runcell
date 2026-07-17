@@ -22,6 +22,38 @@ await agent.run({ prompt: 'Add tests and make them pass.', sandbox }); // same f
 await sandbox.destroy(); // Caller-owned handles require explicit cleanup.
 ```
 
+## Sharing one sandbox across runs
+
+Use `createSandbox()` to create a caller-owned handle on any backend. Create it
+once at pipeline startup, pass the same handle to every agent run, and destroy
+it in `finally`:
+
+```ts
+import { createAgent, createSandbox } from 'runcell';
+
+const lead = createAgent({ model: 'anthropic/claude-sonnet-4-5' });
+const worker = createAgent({ model: 'openai/gpt-5.1-codex' });
+const reviewer = createAgent({ model: 'anthropic/claude-sonnet-4-5' });
+
+const sandbox = await createSandbox({
+  type: 'vercel',
+  runtime: 'node24',
+  ports: [3000],
+});
+try {
+  await lead.run({ prompt: 'Plan and scaffold the project.', sandbox });
+  await worker.run({ prompt: 'Implement the plan.', sandbox });
+  await reviewer.run({ prompt: 'Review and fix the implementation.', sandbox });
+} finally {
+  await sandbox.destroy();
+}
+```
+
+This creates one provider session (one Vercel VM in this example). Each run
+uses the same workspace, and runcell does not stop or destroy the caller-owned
+session between runs. Omitting the option defaults to a virtual sandbox:
+`createSandbox()` is equivalent to `createSandbox({ type: 'virtual' })`.
+
 ## The Sandbox handle
 
 A handle is a live resource you can use without an agent:
@@ -95,8 +127,18 @@ if (sandbox.capabilities.ports) {
 }
 ```
 
-The bundled virtual sandbox reports `{ ports: false, nativeSnapshot: false,
-resume: false }`. Portable file snapshots work everywhere regardless.
+Capability defaults by backend:
+
+| Backend | `ports` | `nativeSnapshot` | `resume`                     |
+| ------- | ------- | ---------------- | ---------------------------- |
+| virtual | false   | false            | false                        |
+| host    | false   | false            | true                         |
+| Vercel  | true    | false            | true                         |
+| custom  | false   | false            | provider has `resumeSession` |
+
+Custom providers report `ports: false` conservatively because the Harness
+network-session interface requires `getPortUrl` even for backends where it
+throws. Portable file snapshots work everywhere regardless.
 
 ## Sandbox modes (ephemeral)
 

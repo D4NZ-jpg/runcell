@@ -115,6 +115,16 @@ const final = await result; // always await this
 
 ## Sandboxes
 
+### `createSandbox(option?: SandboxOption): Promise<Sandbox>`
+
+Creates a caller-owned sandbox handle on any backend (`virtual`, `host`,
+`vercel`, or `custom`). The option defaults to `{ type: 'virtual' }`. Pass the
+same handle to multiple `agent.run()` calls to share one live provider session
+and workspace; runcell does not destroy caller-owned handles.
+
+If provider session creation succeeds but workspace setup fails, runcell
+destroys the session before rejecting.
+
 ### `createVirtualSandbox(options?): Promise<Sandbox>`
 
 Creates a caller-owned in-memory sandbox. `options.env` sets environment

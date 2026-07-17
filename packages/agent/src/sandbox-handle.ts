@@ -5,6 +5,13 @@ import type {
 import { HARNESS_ID } from '@local/harness-pi-raw';
 import { InvalidOptionError } from './errors.js';
 import { createPatchedJustBashSandbox } from './just-bash-env.js';
+import {
+  createSandboxProvider,
+  resolveSandboxConfig,
+  type SandboxConfig,
+  type SandboxOption,
+  type SandboxProvider,
+} from './sandbox.js';
 import { assertSafeWorkspacePath } from './paths.js';
 import { shellQuote } from './shell.js';
 import { randomUUID } from 'node:crypto';
@@ -117,11 +124,29 @@ export interface VirtualSandboxOptions {
 }
 
 /**
+ * Create a caller-owned sandbox handle on any configured backend. The handle
+ * can be passed to multiple {@link Agent.run} calls to share one live
+ * workspace; the caller must eventually call {@link Sandbox.destroy}.
+ *
+ * Defaults to the bundled virtual sandbox.
+ */
+export async function createSandbox(
+  option: SandboxOption = { type: 'virtual' },
+): Promise<Sandbox> {
+  const config = resolveSandboxConfig(option);
+  return createHandleFromProvider(
+    createSandboxProvider(config),
+    capabilitiesFor(config),
+  );
+}
+
+/**
  * Internal handle state needed to reuse a sandbox inside an agent run. Not part
  * of the public surface.
  */
 interface SandboxInternals {
   session: HarnessV1NetworkSandboxSession;
+  reusedSession: HarnessV1NetworkSandboxSession;
   sessionToken: string;
 }
 
@@ -150,20 +175,68 @@ export async function createVirtualSandbox(
   const provider = createPatchedJustBashSandbox(
     options.env ? { env: options.env } : {},
   );
-  const session = await provider.createSession();
-  const sessionToken = randomUUID();
-  // Match the working directory the harness composes for this session, so the
-  // handle and a later agent run operate on exactly the same files.
-  const workDir = `${session.defaultWorkingDirectory}/${HARNESS_ID}-${sessionToken}`;
-  await session.run({ command: `mkdir -p ${shellQuote(workDir)}` });
+  return createHandleFromProvider(provider, {
+    ports: false,
+    nativeSnapshot: false,
+    resume: false,
+  });
+}
 
-  const sandbox = new SessionSandbox(
-    session,
-    { ports: false, nativeSnapshot: false, resume: false },
-    workDir,
-  );
-  internalsRegistry.set(sandbox, { session, sessionToken });
-  return sandbox;
+async function createHandleFromProvider(
+  provider: SandboxProvider,
+  capabilities: SandboxCapabilities,
+): Promise<Sandbox> {
+  const sessionToken = randomUUID();
+  const session = await provider.createSession({ sessionId: sessionToken });
+  try {
+    // Match the working directory the harness composes for this session, so
+    // the handle and later agent runs operate on exactly the same files.
+    const workDir = path.posix.join(
+      session.defaultWorkingDirectory,
+      `${HARNESS_ID}-${sessionToken}`,
+    );
+    const setup = await session.run({
+      command: `mkdir -p ${shellQuote(workDir)}`,
+    });
+    if (setup.exitCode !== 0) {
+      const stderr = setup.stderr.trim();
+      throw new Error(
+        `Failed to create sandbox workspace (exit code ${setup.exitCode})${stderr ? `: ${stderr}` : '.'}`,
+      );
+    }
+
+    const sandbox = new SessionSandbox(session, capabilities, workDir);
+    internalsRegistry.set(sandbox, {
+      session,
+      reusedSession: guardSession(session),
+      sessionToken,
+    });
+    return sandbox;
+  } catch (error) {
+    await Promise.resolve(
+      session.destroy ? session.destroy() : session.stop(),
+    ).catch(() => undefined);
+    throw error;
+  }
+}
+
+function capabilitiesFor(config: SandboxConfig): SandboxCapabilities {
+  switch (config.type) {
+    case 'virtual':
+      return { ports: false, nativeSnapshot: false, resume: false };
+    case 'host':
+      return { ports: false, nativeSnapshot: false, resume: true };
+    case 'vercel':
+      return { ports: true, nativeSnapshot: false, resume: true };
+    case 'custom':
+      return {
+        // The network-session interface always declares getPortUrl, so its
+        // mere presence is not a reliable feature signal for custom backends.
+        ports: false,
+        nativeSnapshot: false,
+        resume: config.provider.resumeSession !== undefined,
+      };
+  }
 }
 
 /**
@@ -229,12 +302,11 @@ function validateSnapshot(
 export function createReusedSandboxProvider(
   internals: SandboxInternals,
 ): HarnessV1SandboxProvider {
-  const guarded = guardSession(internals.session);
   return {
     specificationVersion: 'harness-sandbox-v1',
     providerId: 'runcell-reused-sandbox',
-    createSession: () => Promise.resolve(guarded),
-    resumeSession: () => Promise.resolve(guarded),
+    createSession: () => Promise.resolve(internals.reusedSession),
+    resumeSession: () => Promise.resolve(internals.reusedSession),
   };
 }
 

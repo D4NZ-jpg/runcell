@@ -1,13 +1,30 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HARNESS_ID } from '@local/harness-pi-raw';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { InvalidOptionError } from './errors.js';
 import {
   createReusedSandboxProvider,
+  createSandbox,
   createVirtualSandbox,
   getSandboxInternals,
   restoreSandbox,
   type Sandbox,
 } from './sandbox-handle.js';
+import { createSandboxProvider, type SandboxProvider } from './sandbox.js';
+
+const vercelMock = vi.hoisted(() => ({
+  createProvider: vi.fn(),
+}));
+
+vi.mock('@ai-sdk/sandbox-vercel', () => ({
+  createVercelSandbox: vercelMock.createProvider,
+}));
+
+afterEach(() => {
+  vercelMock.createProvider.mockReset();
+});
 
 async function withSandbox(fn: (sandbox: Sandbox) => Promise<void> | void) {
   const sandbox = await createVirtualSandbox();
@@ -17,6 +34,264 @@ async function withSandbox(fn: (sandbox: Sandbox) => Promise<void> | void) {
     await sandbox.destroy();
   }
 }
+
+describe('createSandbox', () => {
+  it('defaults to a caller-owned virtual sandbox', async () => {
+    const sandbox = await createSandbox();
+    try {
+      expect(sandbox.capabilities).toEqual({
+        ports: false,
+        nativeSnapshot: false,
+        resume: false,
+      });
+      await sandbox.writeFile('input.txt', 'hello');
+      expect(await sandbox.readTextFile('input.txt')).toBe('hello');
+      expect((await sandbox.exec('cat input.txt')).stdout).toBe('hello');
+      expect(await sandbox.snapshot()).toEqual({
+        version: 1,
+        files: [{ path: 'input.txt', data: 'aGVsbG8=' }],
+      });
+    } finally {
+      await sandbox.destroy();
+    }
+    await expect(sandbox.exec('true')).rejects.toThrow(/destroyed/);
+  });
+
+  it('creates a caller-owned host sandbox', async () => {
+    const rootDir = await mkdtemp(path.join(tmpdir(), 'runcell-handle-host-'));
+    try {
+      const sandbox = await createSandbox({
+        type: 'host',
+        rootDir,
+        isolation: 'external',
+      });
+      try {
+        expect(sandbox.capabilities).toEqual({
+          ports: false,
+          nativeSnapshot: false,
+          resume: true,
+        });
+        await sandbox.writeFile('marker.txt', 'host workspace');
+        expect(await sandbox.readTextFile('marker.txt')).toBe('host workspace');
+        // The handle and agent workspace both map directly to rootDir. A
+        // mismatched provider session id would leave this under rootDir/pi-*.
+        await expect(
+          readFile(path.join(rootDir, 'marker.txt'), 'utf8'),
+        ).resolves.toBe('host workspace');
+      } finally {
+        await sandbox.destroy();
+      }
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('creates one custom-provider session and reports conservative capabilities', async () => {
+    const base = createSandboxProvider({ type: 'virtual' });
+    const createSession = vi.fn(
+      (options?: Parameters<SandboxProvider['createSession']>[0]) =>
+        base.createSession(options),
+    );
+    const provider: SandboxProvider = {
+      ...base,
+      providerId: 'test-custom',
+      createSession,
+      resumeSession: options => base.createSession(options),
+    };
+
+    const sandbox = await createSandbox({ type: 'custom', provider });
+    try {
+      expect(createSession).toHaveBeenCalledTimes(1);
+      expect(sandbox.capabilities).toEqual({
+        ports: false,
+        nativeSnapshot: false,
+        resume: true,
+      });
+      await sandbox.writeFile('shared.txt', 'same vm');
+      expect(await sandbox.readTextFile('shared.txt')).toBe('same vm');
+    } finally {
+      await sandbox.destroy();
+    }
+  });
+
+  it('uses the harness workdir composition for root-based custom providers', async () => {
+    const base = createSandboxProvider({ type: 'virtual' });
+    const created = await base.createSession();
+    const writeTextFile = vi.fn(created.writeTextFile.bind(created));
+    const createSession = vi.fn(() =>
+      Promise.resolve(
+        new Proxy(created, {
+          get(target, property, receiver) {
+            if (property === 'defaultWorkingDirectory') return '/';
+            if (property === 'writeTextFile') return writeTextFile;
+            const value = Reflect.get(target, property, receiver) as unknown;
+            return typeof value === 'function'
+              ? (value as (...args: unknown[]) => unknown).bind(target)
+              : value;
+          },
+        }),
+      ),
+    );
+    const provider: SandboxProvider = {
+      specificationVersion: 'harness-sandbox-v1',
+      providerId: 'root-custom',
+      createSession,
+    };
+
+    const sandbox = await createSandbox({ type: 'custom', provider });
+    try {
+      const token = getSandboxInternals(sandbox)?.sessionToken;
+      expect(token).toBeDefined();
+      expect(createSession).toHaveBeenCalledWith({ sessionId: token });
+      await sandbox.writeFile('marker.txt', 'root workspace');
+      expect(writeTextFile).toHaveBeenCalledWith({
+        path: path.posix.join('/', `${HARNESS_ID}-${token}`, 'marker.txt'),
+        content: 'root workspace',
+      });
+      expect(
+        (writeTextFile.mock.calls[0]?.[0] as { path: string }).path,
+      ).not.toContain('//');
+    } finally {
+      await sandbox.destroy();
+    }
+  });
+
+  it('loads the Vercel provider lazily and exposes configured ports', async () => {
+    const base = createSandboxProvider({ type: 'virtual' });
+    vercelMock.createProvider.mockImplementation(
+      () =>
+        ({
+          specificationVersion: 'harness-sandbox-v1',
+          providerId: 'mock-vercel',
+          createSession: async options => {
+            const session = await base.createSession(options);
+            return new Proxy(session, {
+              get(target, property, receiver) {
+                if (property === 'getPortUrl') {
+                  return ({ port }: { port: number }) =>
+                    Promise.resolve(`https://sandbox.test:${port}`);
+                }
+                const value = Reflect.get(
+                  target,
+                  property,
+                  receiver,
+                ) as unknown;
+                return typeof value === 'function'
+                  ? (value as (...args: unknown[]) => unknown).bind(target)
+                  : value;
+              },
+            });
+          },
+          resumeSession: options => base.createSession(options),
+        }) satisfies SandboxProvider,
+    );
+
+    const sandbox = await createSandbox({
+      type: 'vercel',
+      runtime: 'node24',
+      ports: [3000],
+    });
+    try {
+      expect(vercelMock.createProvider).toHaveBeenCalledWith({
+        runtime: 'node24',
+        ports: [3000],
+      });
+      expect(sandbox.capabilities).toEqual({
+        ports: true,
+        nativeSnapshot: false,
+        resume: true,
+      });
+      await expect(sandbox.exposeUrl?.(3000)).resolves.toBe(
+        'https://sandbox.test:3000',
+      );
+    } finally {
+      await sandbox.destroy();
+    }
+  });
+
+  it('propagates Vercel session creation failures', async () => {
+    vercelMock.createProvider.mockReturnValue({
+      specificationVersion: 'harness-sandbox-v1',
+      providerId: 'mock-vercel',
+      createSession: () => Promise.reject(new Error('create failed')),
+    });
+
+    await expect(createSandbox({ type: 'vercel' })).rejects.toThrow(
+      'create failed',
+    );
+  });
+
+  it('destroys an acquired session when workspace setup fails', async () => {
+    const base = createSandboxProvider({ type: 'virtual' });
+    const session = await base.createSession();
+    const destroy = vi.fn(() => session.destroy?.());
+    const provider: SandboxProvider = {
+      specificationVersion: 'harness-sandbox-v1',
+      providerId: 'failing-custom',
+      createSession: () =>
+        Promise.resolve(
+          new Proxy(session, {
+            get(target, property, receiver) {
+              if (property === 'run') {
+                return () => Promise.reject(new Error('mkdir failed'));
+              }
+              if (property === 'destroy') return destroy;
+              const value = Reflect.get(target, property, receiver) as unknown;
+              return typeof value === 'function'
+                ? (value as (...args: unknown[]) => unknown).bind(target)
+                : value;
+            },
+          }),
+        ),
+    };
+
+    await expect(createSandbox({ type: 'custom', provider })).rejects.toThrow(
+      'mkdir failed',
+    );
+    expect(destroy).toHaveBeenCalledOnce();
+  });
+
+  it('destroys an acquired session when workspace setup exits nonzero', async () => {
+    const base = createSandboxProvider({ type: 'virtual' });
+    const session = await base.createSession();
+    const destroy = vi.fn(() => session.destroy?.());
+    const provider: SandboxProvider = {
+      specificationVersion: 'harness-sandbox-v1',
+      providerId: 'nonzero-custom',
+      createSession: () =>
+        Promise.resolve(
+          new Proxy(session, {
+            get(target, property, receiver) {
+              if (property === 'run') {
+                return () =>
+                  Promise.resolve({
+                    exitCode: 13,
+                    stdout: '',
+                    stderr: 'permission denied',
+                  });
+              }
+              if (property === 'destroy') return destroy;
+              const value = Reflect.get(target, property, receiver) as unknown;
+              return typeof value === 'function'
+                ? (value as (...args: unknown[]) => unknown).bind(target)
+                : value;
+            },
+          }),
+        ),
+    };
+
+    await expect(createSandbox({ type: 'custom', provider })).rejects.toThrow(
+      /exit code 13.*permission denied/,
+    );
+    expect(destroy).toHaveBeenCalledOnce();
+  });
+
+  it('uses existing sandbox option validation', async () => {
+    await expect(
+      createSandbox({ type: 'host', isolation: 'external' } as never),
+    ).rejects.toThrow(InvalidOptionError);
+  });
+});
 
 describe('createVirtualSandbox', () => {
   it('reports virtual capabilities and a stable id', async () => {

@@ -39,7 +39,11 @@ export { normalizeCredentials } from './credentials.js';
 
 export { createSandboxProvider, resolveSandboxConfig } from './sandbox.js';
 
-export { createVirtualSandbox, restoreSandbox } from './sandbox-handle.js';
+export {
+  createSandbox,
+  createVirtualSandbox,
+  restoreSandbox,
+} from './sandbox-handle.js';
 export type {
   Sandbox,
   SandboxCapabilities,

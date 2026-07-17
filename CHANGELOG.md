@@ -4,6 +4,15 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Added `createSandbox(option)` for creating caller-owned sandbox handles on
+  virtual, host, Vercel, and custom backends. A single handle can be shared
+  across multiple agent runs so they use one live provider session and
+  workspace, with explicit caller-managed cleanup.
+
 ## 1.2.1 - 2026-07-16
 
 ### Fixed
