@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { HarnessV1StreamPart } from '@ai-sdk/harness';
 import { extractAssistantText, type PiSessionEvent } from './pi-events';
 import { serializeToolOutput } from './pi-utils';
+import { isToolContent } from './tool-content';
 
 /**
  * Translator state shared across all events of a single turn. Reset at the
@@ -280,12 +281,22 @@ export function translatePiEvent(
        * reports as text, are not in the map and fall back to unwrapping the
        * event's text payload.
        */
-      const result = state.hostToolResults.has(event.toolCallId)
-        ? ((state.hostToolResults.get(event.toolCallId) ?? null) as Extract<
-            HarnessV1StreamPart,
-            { type: 'tool-result' }
-          >['result'])
-        : unwrapPiToolResult(event);
+      const stored = state.hostToolResults.has(event.toolCallId)
+        ? (state.hostToolResults.get(event.toolCallId) ?? null)
+        : undefined;
+      /*
+       * `toolContent(...)` envelopes are projected as their bare content
+       * array — already JSON-safe (base64 image data) — so consumers see
+       * `[{type:'text',…},{type:'image',data,mediaType}]` without the
+       * envelope discriminator. Other host outputs pass through unchanged.
+       */
+      const result = (
+        stored === undefined
+          ? unwrapPiToolResult(event)
+          : isToolContent(stored)
+            ? stored.content
+            : stored
+      ) as Extract<HarnessV1StreamPart, { type: 'tool-result' }>['result'];
       state.hostToolResults.delete(event.toolCallId);
       return [
         {

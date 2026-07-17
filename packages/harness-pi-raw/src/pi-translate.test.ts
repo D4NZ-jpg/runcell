@@ -5,6 +5,7 @@ import {
   translatePiEvent,
   type PiTranslatorState,
 } from './pi-translate';
+import { toolContent } from './tool-content';
 
 function emit(events: PiSessionEvent[], state: PiTranslatorState) {
   return events.flatMap(e => translatePiEvent(e, state));
@@ -272,6 +273,125 @@ describe('translatePiEvent', () => {
     });
     // The stored value is consumed so it cannot leak into a later result.
     expect(state.hostToolResults.has('c6')).toBe(false);
+  });
+
+  it('projects submitted null and undefined host outputs as null', () => {
+    const state = createPiTranslatorState();
+    emit(
+      [
+        { type: 'turn_start' } as PiSessionEvent,
+        {
+          type: 'tool_execution_start',
+          toolCallId: 'c8',
+          toolName: 'weather',
+          args: {},
+        } as PiSessionEvent,
+        {
+          type: 'tool_execution_start',
+          toolCallId: 'c9',
+          toolName: 'weather',
+          args: {},
+        } as PiSessionEvent,
+      ],
+      state,
+    );
+    state.hostToolResults.set('c8', null);
+    state.hostToolResults.set('c9', undefined);
+
+    const resultFor = (toolCallId: string) =>
+      translatePiEvent(
+        {
+          type: 'tool_execution_end',
+          toolCallId,
+          result: { content: [{ type: 'text', text: 'null' }] },
+        } as PiSessionEvent,
+        state,
+      )[0];
+
+    expect(resultFor('c8')).toMatchObject({ type: 'tool-result', result: null });
+    // `undefined` follows the `get(...) ?? null` path and also projects null.
+    expect(resultFor('c9')).toMatchObject({ type: 'tool-result', result: null });
+  });
+
+  it('projects a bare content-like array unchanged, without envelope handling', () => {
+    const state = createPiTranslatorState();
+    emit(
+      [
+        { type: 'turn_start' } as PiSessionEvent,
+        {
+          type: 'tool_execution_start',
+          toolCallId: 'c10',
+          toolName: 'catalog',
+          args: {},
+        } as PiSessionEvent,
+      ],
+      state,
+    );
+    const lookAlike = [{ type: 'image', data: 'AAAA', mediaType: 'image/png' }];
+    state.hostToolResults.set('c10', lookAlike);
+
+    const out = translatePiEvent(
+      {
+        type: 'tool_execution_end',
+        toolCallId: 'c10',
+        result: { content: [{ type: 'text', text: '[]' }] },
+      } as PiSessionEvent,
+      state,
+    );
+
+    expect(out[0]).toMatchObject({
+      type: 'tool-result',
+      toolCallId: 'c10',
+      result: lookAlike,
+    });
+  });
+
+  it('projects a toolContent envelope as its bare content array', () => {
+    const state = createPiTranslatorState();
+    emit(
+      [
+        { type: 'turn_start' } as PiSessionEvent,
+        {
+          type: 'tool_execution_start',
+          toolCallId: 'c7',
+          toolName: 'renderPdfPage',
+          args: { page: 1 },
+        } as PiSessionEvent,
+      ],
+      state,
+    );
+
+    const envelope = toolContent([
+      { type: 'text', text: 'Page 1:' },
+      { type: 'image', data: new Uint8Array([1, 2, 3]), mediaType: 'image/png' },
+    ]);
+    state.hostToolResults.set('c7', envelope);
+
+    const out = translatePiEvent(
+      {
+        type: 'tool_execution_end',
+        toolCallId: 'c7',
+        result: { content: [{ type: 'text', text: 'Page 1:' }] },
+      } as PiSessionEvent,
+      state,
+    );
+
+    // The envelope discriminator is stripped; consumers get the plain
+    // JSON-safe parts with base64 image data.
+    expect(out[0]).toMatchObject({
+      type: 'tool-result',
+      toolCallId: 'c7',
+      toolName: 'renderPdfPage',
+      result: [
+        { type: 'text', text: 'Page 1:' },
+        {
+          type: 'image',
+          data: Buffer.from([1, 2, 3]).toString('base64'),
+          mediaType: 'image/png',
+        },
+      ],
+    });
+    expect(state.hostToolResults.has('c7')).toBe(false);
   });
 
   it('marks tool-result as error when isError is true', () => {

@@ -11,6 +11,16 @@ export type { PiHarnessSettings } from './pi-harness';
 export type { PiAuthOptions } from './pi-auth';
 export { PiExtensionError } from './pi-session';
 export type { PiResourceLoaderOptions, PiSessionSettings } from './pi-session';
+export { isToolContent, toolContent, TOOL_CONTENT_TYPE } from './tool-content';
+export type {
+  ToolContent,
+  ToolContentImageInput,
+  ToolContentImageMediaType,
+  ToolContentImagePart,
+  ToolContentPart,
+  ToolContentPartInput,
+  ToolContentTextPart,
+} from './tool-content';
 export type {
   ExtensionAPI,
   ExtensionFactory,

@@ -13,6 +13,7 @@ import type {
   HarnessV1ToolSpec,
 } from '@ai-sdk/harness';
 import { createPiSession, PiExtensionError } from './pi-session';
+import { toolContent } from './tool-content';
 
 type FakePiTool = Pick<ToolDefinition, 'name' | 'execute'>;
 
@@ -160,6 +161,107 @@ describe('createPiSession', () => {
       }
     `,
     );
+  });
+
+  it('routes a toolContent envelope to a multi-part Pi result', async () => {
+    const toolStarted = createDeferred<void>();
+    let resolvedToolResult: unknown;
+    const prompt = vi.fn(async () => {
+      const tool = piMock.customTools.find(tool => tool.name === 'render');
+      if (!tool) throw new Error('Expected render tool.');
+      const toolResultPromise = tool.execute(
+        'tool-2',
+        {},
+        undefined,
+        undefined,
+        undefined as never,
+      );
+      toolStarted.resolve();
+      resolvedToolResult = await toolResultPromise;
+    });
+    piMock.session = createPiAgentSession({ prompt });
+
+    const session = await createPiSession({
+      sessionId: 'session-tool-content',
+      sandboxSession: createSandboxSession(),
+      sessionWorkDir: '/sandbox/work-tool-content',
+      skills: [],
+      settings: {},
+      isResume: false,
+    });
+    const control = await session.doPromptTurn({
+      prompt: 'go',
+      tools: [{ name: 'render' }] as HarnessV1ToolSpec[],
+      emit: vi.fn(),
+    });
+
+    await toolStarted.promise;
+    const png = new Uint8Array([1, 2, 3]);
+    await control.submitToolResult({
+      toolCallId: 'tool-2',
+      output: toolContent([
+        { type: 'text', text: 'Rendered page 1:' },
+        { type: 'image', data: png, mediaType: 'image/png' },
+      ]),
+    });
+    await control.done;
+
+    expect(resolvedToolResult).toEqual({
+      content: [
+        { type: 'text', text: 'Rendered page 1:' },
+        {
+          type: 'image',
+          data: Buffer.from(png).toString('base64'),
+          mimeType: 'image/png',
+        },
+      ],
+      details: undefined,
+    });
+  });
+
+  it('keeps a bare content-look-alike array on the serialized text path', async () => {
+    const toolStarted = createDeferred<void>();
+    let resolvedToolResult: unknown;
+    const prompt = vi.fn(async () => {
+      const tool = piMock.customTools.find(tool => tool.name === 'catalog');
+      if (!tool) throw new Error('Expected catalog tool.');
+      const toolResultPromise = tool.execute(
+        'tool-3',
+        {},
+        undefined,
+        undefined,
+        undefined as never,
+      );
+      toolStarted.resolve();
+      resolvedToolResult = await toolResultPromise;
+    });
+    piMock.session = createPiAgentSession({ prompt });
+
+    const session = await createPiSession({
+      sessionId: 'session-look-alike',
+      sandboxSession: createSandboxSession(),
+      sessionWorkDir: '/sandbox/work-look-alike',
+      skills: [],
+      settings: {},
+      isResume: false,
+    });
+    const control = await session.doPromptTurn({
+      prompt: 'go',
+      tools: [{ name: 'catalog' }] as HarnessV1ToolSpec[],
+      emit: vi.fn(),
+    });
+
+    await toolStarted.promise;
+    // AI SDK-shaped parts returned as plain data (no envelope) must stay on
+    // the legacy stringify path, not be reinterpreted as image content.
+    const lookAlike = [{ type: 'image', data: 'AAAA', mediaType: 'image/png' }];
+    await control.submitToolResult({ toolCallId: 'tool-3', output: lookAlike });
+    await control.done;
+
+    expect(resolvedToolResult).toEqual({
+      content: [{ type: 'text', text: JSON.stringify(lookAlike) }],
+      details: undefined,
+    });
   });
 
   it('unwinds the VFS mount and host tmpdir when initialization fails', async () => {

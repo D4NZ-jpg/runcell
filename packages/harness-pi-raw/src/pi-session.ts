@@ -48,6 +48,7 @@ import {
   type PiTranslatorState,
 } from './pi-translate';
 import { toolSpecToTypeBoxParameters } from './pi-typebox-adapter';
+import { isToolContent, toPiToolResultContent } from './tool-content';
 import {
   extractUserText,
   frameInstructions,
@@ -1478,7 +1479,18 @@ function buildUserToolDefinition(
     async execute(toolCallId) {
       return new Promise<unknown>(resolve => {
         pending.set(toolCallId, { resolve });
-      }).then(output => asPiToolResult(serializeToolOutput(output)));
+      }).then(output =>
+        /*
+         * `toolContent(...)` envelopes are the explicit opt-in for
+         * multi-part (image-capable) results: map them to Pi's native
+         * content shape so the model receives real image blocks. Every
+         * other output keeps the legacy path — stringified into a single
+         * text part.
+         */
+        isToolContent(output)
+          ? toPiToolResultContent(output)
+          : asPiToolResult(serializeToolOutput(output)),
+      );
     },
   });
 }
