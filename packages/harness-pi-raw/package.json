@@ -46,7 +46,7 @@
     "@types/node": "^24.0.0",
     "del-cli": "^6.0.0",
     "tsup": "^8.5.1",
-    "typescript": "^5.8.3",
+    "typescript": "^7.0.2",
     "vitest": "^3.2.4"
   },
   "engines": {
