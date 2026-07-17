@@ -14,7 +14,13 @@
  */
 import { execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdtempSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
+import {
+  mkdtempSync,
+  writeFileSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -73,6 +79,20 @@ void revived;
 
 // The Vercel sandbox option must typecheck even without the optional peer.
 await agent.run({ prompt: 'go', sandbox: { type: 'vercel', runtime: 'node24' } });
+
+// Multi-part tool results: real types must flow through the packed .d.ts.
+import { toolContent, isToolContent, type ToolContent } from 'runcell';
+
+const content: ToolContent = toolContent([
+  { type: 'text', text: 'Rendered page 1:' },
+  { type: 'image', data: new Uint8Array([1, 2, 3]), mediaType: 'image/png' },
+]);
+isToolContent(content) satisfies boolean;
+content.content[0].type satisfies 'text' | 'image';
+
+// @ts-expect-error - 'audio' is not a valid part type; if the API ever
+// degrades to \`any\` this suppression becomes unused and tsc reports TS2578.
+toolContent([{ type: 'audio' }]);
 `;
 
 const TSCONFIG = JSON.stringify(
@@ -85,6 +105,7 @@ const TSCONFIG = JSON.stringify(
       skipLibCheck: true,
       noEmit: true,
     },
+    files: ['consumer.ts'],
   },
   null,
   2,
@@ -157,6 +178,20 @@ function main() {
       );
     }
     process.stdout.write('  optional vercel peer absent ✓\n');
+
+    // The packed declarations must never reference private workspace
+    // specifiers: with skipLibCheck the imports would silently degrade to
+    // `any`, so check the installed .d.ts directly.
+    const distDir = path.join(app, 'node_modules', 'runcell', 'dist');
+    for (const file of readdirSync(distDir).filter(f => f.endsWith('.d.ts'))) {
+      const dts = readFileSync(path.join(distDir, file), 'utf8');
+      if (dts.includes("'@local/") || dts.includes('"@local/')) {
+        throw new Error(
+          `packed ${file} references a private @local/ workspace package`,
+        );
+      }
+    }
+    process.stdout.write('  packed .d.ts free of @local/ specifiers ✓\n');
 
     writeFileSync(path.join(app, 'tsconfig.json'), TSCONFIG);
     writeFileSync(path.join(app, 'consumer.ts'), CONSUMER_TS);

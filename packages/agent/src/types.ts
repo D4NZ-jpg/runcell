@@ -16,7 +16,13 @@ export type InferSchemaOutput<TSchema extends AgentSchema> =
 export interface ToolDefinition<TSchema extends AgentSchema = AgentSchema> {
   description: string;
   schema: TSchema;
-  /** May return synchronously or as a promise. */
+  /**
+   * May return synchronously or as a promise. Return `toolContent([...])` to
+   * send multi-part text and images to the model; other values are serialized
+   * as JSON as usual. Images are limited to approximately 5 MB each. If the
+   * model does not support vision, the provider error is reported via
+   * `onError`.
+   */
   execute(input: InferSchemaOutput<TSchema>): unknown;
 }
 
@@ -39,6 +45,10 @@ export interface ToolCallEvent {
 export interface ToolResultEvent {
   id: string;
   name: string;
+  /**
+   * The tool's original output, or for `toolContent` results, the normalized
+   * JSON-safe content array with base64 image data.
+   */
   output: unknown;
 }
 

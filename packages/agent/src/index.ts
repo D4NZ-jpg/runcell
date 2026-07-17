@@ -1,6 +1,21 @@
 export { createAgent } from './create-agent.js';
 
 export {
+  isToolContent,
+  toolContent,
+  TOOL_CONTENT_TYPE,
+} from '@local/harness-pi-raw';
+export type {
+  ToolContent,
+  ToolContentImageInput,
+  ToolContentImageMediaType,
+  ToolContentImagePart,
+  ToolContentPart,
+  ToolContentPartInput,
+  ToolContentTextPart,
+} from '@local/harness-pi-raw';
+
+export {
   RuncellError,
   InvalidOptionError,
   IncompleteResultError,
