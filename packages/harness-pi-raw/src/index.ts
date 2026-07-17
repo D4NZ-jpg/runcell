@@ -9,7 +9,10 @@ export const pi = createPi();
 export { createPi, HARNESS_ID } from './pi-harness';
 export type { PiHarnessSettings } from './pi-harness';
 export type { PiAuthOptions } from './pi-auth';
-export { PiExtensionError } from './pi-session';
+export {
+  PI_SILENT_TURN_ABORT_REASON,
+  PiExtensionError,
+} from './pi-session';
 export type {
   PiCredentialStore,
   PiResourceLoaderOptions,

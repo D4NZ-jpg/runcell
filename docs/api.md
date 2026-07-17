@@ -83,6 +83,11 @@ The per-run `pi` object accepts only `thinkingLevel`; extensions remain
 agent-level. Invalid values throw `InvalidOptionError` eagerly when `run()` is
 called.
 
+With a schema, the first schema-valid `submitResult` call is terminal: runcell
+cancels the active model turn and returns that submission. A trailing stream
+timeout or transport error does not discard an already accepted result. Text
+and file changes observed before the submission are preserved.
+
 ### `RunResult<TData>`
 
 | Field          | Type            | Description                                                           |

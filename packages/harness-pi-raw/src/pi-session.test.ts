@@ -12,7 +12,11 @@ import type {
   HarnessV1Session,
   HarnessV1ToolSpec,
 } from '@ai-sdk/harness';
-import { createPiSession, PiExtensionError } from './pi-session';
+import {
+  createPiSession,
+  PI_SILENT_TURN_ABORT_REASON,
+  PiExtensionError,
+} from './pi-session';
 import { toolContent } from './tool-content';
 
 type FakePiTool = Pick<ToolDefinition, 'name' | 'execute'>;
@@ -95,6 +99,86 @@ describe('createPiSession', () => {
     expect(piMock.modelRuntimeCreate).toHaveBeenCalledWith(
       expect.objectContaining({ allowModelNetwork: false }),
     );
+    await session.doDestroy();
+  });
+
+  it('silently aborts a terminal turn only after Pi prompt settles', async () => {
+    const prompt = createDeferred<void>();
+    const abort = vi.fn(async () => {});
+    piMock.session = createPiAgentSession({
+      abort,
+      prompt: vi.fn(() => prompt.promise),
+    });
+    const session = await createPiSession({
+      sessionId: 'session-1',
+      sandboxSession: createSandboxSession(),
+      sessionWorkDir: '/sandbox/work',
+      skills: [],
+      settings: {},
+      isResume: false,
+    });
+    const controller = new AbortController();
+    const emit = vi.fn();
+    const control = await session.doPromptTurn({
+      prompt: 'go',
+      tools: [],
+      emit,
+      abortSignal: controller.signal,
+    });
+    let settled = false;
+    void control.done.then(() => {
+      settled = true;
+    });
+
+    controller.abort(PI_SILENT_TURN_ABORT_REASON);
+    await vi.waitFor(() => expect(abort).toHaveBeenCalledTimes(1));
+    expect(settled).toBe(false);
+
+    prompt.reject(new DOMException('This operation was aborted', 'AbortError'));
+    await control.done;
+    expect(settled).toBe(true);
+    expect(
+      emit.mock.calls.some(([part]) => part.type === 'error'),
+    ).toBe(false);
+    await session.doDestroy();
+  });
+
+  it('surfaces an ordinary caller abort after Pi prompt settles', async () => {
+    const prompt = createDeferred<void>();
+    const abort = vi.fn(async () => {});
+    piMock.session = createPiAgentSession({
+      abort,
+      prompt: vi.fn(() => prompt.promise),
+    });
+    const session = await createPiSession({
+      sessionId: 'session-1',
+      sandboxSession: createSandboxSession(),
+      sessionWorkDir: '/sandbox/work',
+      skills: [],
+      settings: {},
+      isResume: false,
+    });
+    const controller = new AbortController();
+    const emit = vi.fn();
+    const control = await session.doPromptTurn({
+      prompt: 'go',
+      tools: [],
+      emit,
+      abortSignal: controller.signal,
+    });
+
+    controller.abort(new Error('caller cancelled'));
+    await vi.waitFor(() => expect(abort).toHaveBeenCalledTimes(1));
+    prompt.reject(new DOMException('This operation was aborted', 'AbortError'));
+    await control.done;
+
+    expect(
+      emit.mock.calls.some(
+        ([part]) =>
+          part.type === 'error' &&
+          (part.error as Error | undefined)?.name === 'AbortError',
+      ),
+    ).toBe(true);
     await session.doDestroy();
   });
 

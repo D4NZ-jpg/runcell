@@ -1,4 +1,10 @@
+import { runInNewContext } from 'node:vm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type {
+  StandardJSONSchemaV1,
+  StandardSchemaV1,
+} from '@standard-schema/spec';
+import { asSchema, type FlexibleSchema } from '@ai-sdk/provider-utils';
 import { z } from 'zod';
 import type { ResolvedAgentConfig } from './create-agent.js';
 import type { AuthBlob, CredentialStore } from './credentials.js';
@@ -86,6 +92,412 @@ describe('defaultRuntime', () => {
       { path: '/work/assets/blob.bin', content: bytes },
     ]);
     expect(state.instances[0]?.session?.destroyCount).toBe(1);
+  });
+
+  it('terminates the active turn immediately after a valid submission', async () => {
+    let turnSignal: AbortSignal | undefined;
+    let consumedAfterSubmission = false;
+    const finishes: FinishEvent[] = [];
+    const state = installRuntimeMocks([
+      (agent, input) => ({
+        async *[Symbol.asyncIterator]() {
+          turnSignal = input.abortSignal;
+          yield { type: 'text-delta', text: 'before' };
+          agent.submit({ ok: true });
+          if (!input.abortSignal?.aborted) {
+            await new Promise<void>(resolve => {
+              input.abortSignal?.addEventListener(
+                'abort',
+                () => {
+                  resolve();
+                },
+                { once: true },
+              );
+            });
+          }
+          if (input.abortSignal?.aborted) {
+            return;
+          }
+          consumedAfterSubmission = true;
+          yield { type: 'text-delta', text: 'after' };
+        },
+      }),
+    ]);
+    const runtime = await loadRuntime();
+
+    const result = await Promise.race([
+      runtime.run(
+        createRuntimeInput(z.object({ ok: z.boolean() }), {
+          agentOptions: {
+            events: { onFinish: event => finishes.push(event) },
+          },
+        }),
+      ),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('run did not terminate'));
+        }, 250);
+      }),
+    ]);
+
+    expect(result.data).toEqual({ ok: true });
+    expect(result.text).toBe('before');
+    expect(turnSignal?.aborted).toBe(true);
+    expect(turnSignal?.reason).toBe(Symbol.for('runcell.pi.silent-turn-abort'));
+    expect(consumedAfterSubmission).toBe(false);
+    expect(finishes).toEqual([
+      { sessionId: 'test-session', finishReason: 'stop' },
+    ]);
+    expect(state.instances[0]?.session?.destroyCount).toBe(1);
+  });
+
+  it('does not duplicate onFinish when a finish part follows submission', async () => {
+    const finishes: FinishEvent[] = [];
+    const errors: unknown[] = [];
+    installRuntimeMocks([
+      agent => ({
+        async *[Symbol.asyncIterator]() {
+          await agent.submitAsync({ ok: true });
+          yield { type: 'finish', finishReason: 'tool-calls' };
+        },
+      }),
+    ]);
+    const runtime = await loadRuntime();
+
+    const result = await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() }), {
+        agentOptions: {
+          events: {
+            onFinish: event => finishes.push(event),
+            onError: error => errors.push(error),
+          },
+        },
+      }),
+    );
+
+    expect(result.data).toEqual({ ok: true });
+    expect(result.finishReason).toBe('tool-calls');
+    expect(finishes).toEqual([
+      { sessionId: 'test-session', finishReason: 'tool-calls' },
+    ]);
+    expect(errors).toEqual([]);
+  });
+
+  it('keeps an invalid Zod submission in the same turn, then accepts a valid one', async () => {
+    let signal: AbortSignal | undefined;
+    const state = installRuntimeMocks([
+      (agent, input) => ({
+        async *[Symbol.asyncIterator]() {
+          signal = input.abortSignal;
+          await agent.submitAsync({ ok: 'invalid' });
+          expect(signal?.aborted).toBe(false);
+          yield { type: 'text-delta', text: 'correcting' };
+          await agent.submitAsync({ ok: true });
+          expect(signal?.aborted).toBe(true);
+        },
+      }),
+    ]);
+    const runtime = await loadRuntime();
+
+    const result = await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() }), {
+        config: { maxRepairs: 0 },
+      }),
+    );
+
+    expect(result.data).toEqual({ ok: true });
+    expect(result.text).toBe('correcting');
+    expect(state.instances[0]?.streamCalls).toHaveLength(1);
+  });
+
+  it('validates an async Standard JSON Schema submission inside execute', async () => {
+    const schema = createStandardSchema({ withJsonSchema: true, async: true });
+    let signal: AbortSignal | undefined;
+    const state = installRuntimeMocks([
+      (agent, input) => ({
+        async *[Symbol.asyncIterator]() {
+          signal = input.abortSignal;
+          yield { type: 'text-delta', text: '' };
+          await agent.submitAsync({ count: 'invalid' });
+          expect(signal?.aborted).toBe(false);
+          await agent.submitAsync({ count: 3 });
+          expect(signal?.aborted).toBe(true);
+        },
+      }),
+    ]);
+    const runtime = await loadRuntime();
+
+    const result = await runtime.run(
+      createRuntimeInput(schema, { config: { maxRepairs: 0 } }),
+    );
+
+    expect(result.data).toEqual({ doubled: 6 });
+    expect(state.instances[0]?.streamCalls).toHaveLength(1);
+  });
+
+  it('accepts a cross-realm Promise returned by Standard Schema validation', async () => {
+    interface Output {
+      source: string;
+    }
+    let crossRealmPromise: Promise<StandardSchemaV1.Result<Output>> | undefined;
+    const schema: AgentSchema<Output> = {
+      '~standard': {
+        version: 1,
+        vendor: 'cross-realm-test',
+        validate() {
+          crossRealmPromise = runInNewContext(
+            `Promise.resolve({ value: { source: 'cross-realm' } })`,
+          ) as Promise<StandardSchemaV1.Result<Output>>;
+          return crossRealmPromise;
+        },
+      },
+    };
+    installRuntimeMocks([
+      agent => ({
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'text-delta', text: '' };
+          await agent.submitAsync({ source: 'input' });
+        },
+      }),
+    ]);
+    const runtime = await loadRuntime();
+
+    const result = await runtime.run(
+      createRuntimeInput(schema, { config: { maxRepairs: 0 } }),
+    );
+
+    expect(crossRealmPromise).toBeDefined();
+    expect(crossRealmPromise).not.toBeInstanceOf(Promise);
+    expect(result.data).toEqual({ source: 'cross-realm' });
+  });
+
+  it('keeps model schema projection unvalidated and invokes the user validator once', async () => {
+    interface Output {
+      transformed: number;
+    }
+    let validationCount = 0;
+    const schema: AgentSchema<Output> & StandardJSONSchemaV1 = {
+      '~standard': {
+        version: 1,
+        vendor: 'single-validation-test',
+        jsonSchema: {
+          input: () => ({
+            type: 'object',
+            properties: { count: { type: 'number' } },
+            required: ['count'],
+          }),
+          output: () => ({ type: 'object' }),
+        },
+        validate(value) {
+          validationCount += 1;
+          return {
+            value: {
+              transformed: (value as { count: number }).count * 3,
+            },
+          };
+        },
+      },
+    };
+    installRuntimeMocks([
+      agent => ({
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'text-delta', text: '' };
+          const submitResult = agent.settings.tools['submitResult'];
+          expect(submitResult).toBeDefined();
+          const parseSchema = asSchema(submitResult?.inputSchema);
+          expect(parseSchema.validate).toBeUndefined();
+          await expect(
+            Promise.resolve(parseSchema.jsonSchema),
+          ).resolves.toMatchObject({
+            type: 'object',
+            properties: { count: { type: 'number' } },
+            required: ['count'],
+          });
+          expect(validationCount).toBe(0);
+
+          await agent.submitAsync({ count: 7 });
+        },
+      }),
+    ]);
+    const runtime = await loadRuntime();
+
+    const result = await runtime.run(
+      createRuntimeInput(schema, { config: { maxRepairs: 0 } }),
+    );
+
+    expect(validationCount).toBe(1);
+    expect(result.data).toEqual({ transformed: 21 });
+  });
+
+  it('validates and transforms a stateful async submission exactly once', async () => {
+    interface Output {
+      transformed: number;
+    }
+    let validationCount = 0;
+    const schema: AgentSchema<Output> = {
+      '~standard': {
+        version: 1,
+        vendor: 'stateful-test',
+        async validate(value) {
+          validationCount += 1;
+          await Promise.resolve();
+          return {
+            value: {
+              transformed: (value as { count: number }).count * 3,
+            },
+          };
+        },
+      },
+    };
+    installRuntimeMocks([
+      agent => ({
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'text-delta', text: '' };
+          await agent.submitAsync({ count: 7 });
+        },
+      }),
+    ]);
+    const runtime = await loadRuntime();
+
+    const result = await runtime.run(
+      createRuntimeInput(schema, { config: { maxRepairs: 0 } }),
+    );
+
+    expect(validationCount).toBe(1);
+    expect(result.data).toEqual({ transformed: 21 });
+  });
+
+  it('validates a wrapped Standard Schema submission inside execute', async () => {
+    const schema = createStandardSchema({
+      withJsonSchema: false,
+      async: false,
+    });
+    let signal: AbortSignal | undefined;
+    const state = installRuntimeMocks([
+      (agent, input) => ({
+        async *[Symbol.asyncIterator]() {
+          signal = input.abortSignal;
+          yield { type: 'text-delta', text: '' };
+          await agent.submitAsync({ count: null });
+          expect(signal?.aborted).toBe(false);
+          await agent.submitAsync({ count: 4 });
+          expect(signal?.aborted).toBe(true);
+        },
+      }),
+    ]);
+    const runtime = await loadRuntime();
+
+    const result = await runtime.run(
+      createRuntimeInput(schema, { config: { maxRepairs: 0 } }),
+    );
+
+    expect(result.data).toEqual({ doubled: 8 });
+    expect(state.instances[0]?.streamCalls).toHaveLength(1);
+  });
+
+  it('lets caller cancellation win when validation finishes after abort', async () => {
+    const callerAbort = new AbortController();
+    const callerError = new Error('caller cancelled');
+    const schema = createStandardSchema({ withJsonSchema: true, async: true });
+    let turnSignal: AbortSignal | undefined;
+    installRuntimeMocks([
+      (agent, input) => ({
+        async *[Symbol.asyncIterator]() {
+          turnSignal = input.abortSignal;
+          yield { type: 'text-delta', text: '' };
+          const submission = agent.submitAsync({ count: 2 });
+          callerAbort.abort(callerError);
+          await submission;
+          expect(input.abortSignal?.reason).toBe(callerError);
+          throw callerError;
+        },
+      }),
+    ]);
+    const runtime = await loadRuntime();
+
+    await expect(
+      runtime.run(
+        createRuntimeInput(schema, {
+          config: { maxRepairs: 0 },
+          runOptions: { signal: callerAbort.signal },
+        }),
+      ),
+    ).rejects.toBe(callerError);
+    expect(turnSignal?.reason).toBe(callerError);
+  });
+
+  it('returns the submission when caller cancellation happens afterward', async () => {
+    const callerAbort = new AbortController();
+    const callerError = new Error('late caller cancellation');
+    let turnSignal: AbortSignal | undefined;
+    installRuntimeMocks([
+      (agent, input) => ({
+        async *[Symbol.asyncIterator]() {
+          turnSignal = input.abortSignal;
+          yield { type: 'text-delta', text: '' };
+          await agent.submitAsync({ ok: true });
+          callerAbort.abort(callerError);
+        },
+      }),
+    ]);
+    const runtime = await loadRuntime();
+
+    const result = await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() }), {
+        config: { maxRepairs: 0 },
+        runOptions: { signal: callerAbort.signal },
+      }),
+    );
+
+    expect(result.data).toEqual({ ok: true });
+    expect(turnSignal?.reason).toBe(Symbol.for('runcell.pi.silent-turn-abort'));
+  });
+
+  it('returns the first valid submission despite a trailing stream error', async () => {
+    const errors: unknown[] = [];
+    installRuntimeMocks([
+      agent => {
+        agent.submit({ ok: true });
+        agent.submit({ ok: false });
+        return [{ type: 'error', error: new Error('model stream timeout') }];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    const result = await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() }), {
+        agentOptions: { events: { onError: error => errors.push(error) } },
+      }),
+    );
+
+    expect(result.data).toEqual({ ok: true });
+    expect(errors).toEqual([]);
+  });
+
+  it('returns a valid submission despite a trailing iterator failure', async () => {
+    const errors: unknown[] = [];
+    installRuntimeMocks([
+      agent => ({
+        [Symbol.asyncIterator]() {
+          return {
+            next(): Promise<IteratorResult<StreamPart>> {
+              agent.submit({ ok: true });
+              return Promise.reject(new Error('model stream timeout'));
+            },
+          };
+        },
+      }),
+    ]);
+    const runtime = await loadRuntime();
+
+    const result = await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() }), {
+        agentOptions: { events: { onError: error => errors.push(error) } },
+      }),
+    );
+
+    expect(result.data).toEqual({ ok: true });
+    expect(errors).toEqual([]);
   });
 
   it('wires pi extensions into the harness settings', async () => {
@@ -886,6 +1298,36 @@ describe('defaultRuntime', () => {
     ]);
   });
 
+  it('resets finish reason before a terminal repair submission', async () => {
+    const finishes: FinishEvent[] = [];
+    installRuntimeMocks([
+      () => [{ type: 'finish', finishReason: 'length' }],
+      agent => ({
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'text-delta', text: '' };
+          await agent.submitAsync({ ok: true });
+        },
+      }),
+    ]);
+    const runtime = await loadRuntime();
+
+    const result = await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() }), {
+        agentOptions: {
+          events: { onFinish: event => finishes.push(event) },
+        },
+        config: { maxRepairs: 1 },
+      }),
+    );
+
+    expect(result.data).toEqual({ ok: true });
+    expect(result.finishReason).toBe('stop');
+    expect(finishes).toEqual([
+      { sessionId: 'test-session', finishReason: 'length' },
+      { sessionId: 'test-session', finishReason: 'stop' },
+    ]);
+  });
+
   it('throws when no valid result is submitted after repairs', async () => {
     const errors: unknown[] = [];
     const state = installRuntimeMocks([() => []]);
@@ -909,6 +1351,58 @@ describe('defaultRuntime', () => {
 async function loadRuntime(): Promise<RuncellRuntime> {
   const { defaultRuntime } = await import('./runtime.js');
   return defaultRuntime;
+}
+
+type CountSchema = StandardSchemaV1<{ count: number }, { doubled: number }>;
+
+function createStandardSchema(options: {
+  withJsonSchema: true;
+  async: boolean;
+}): CountSchema & StandardJSONSchemaV1;
+function createStandardSchema(options: {
+  withJsonSchema: false;
+  async: boolean;
+}): CountSchema;
+function createStandardSchema(options: {
+  withJsonSchema: boolean;
+  async: boolean;
+}): CountSchema {
+  const validate = (
+    value: unknown,
+  ): StandardSchemaV1.Result<{
+    doubled: number;
+  }> => {
+    if (
+      typeof value !== 'object' ||
+      value === null ||
+      typeof (value as { count?: unknown }).count !== 'number'
+    ) {
+      return { issues: [{ message: 'count must be a number' }] };
+    }
+    return { value: { doubled: (value as { count: number }).count * 2 } };
+  };
+  const standard = {
+    version: 1 as const,
+    vendor: 'runtime-test',
+    validate: options.async
+      ? async (value: unknown) => {
+          await Promise.resolve();
+          return validate(value);
+        }
+      : validate,
+  };
+  if (!options.withJsonSchema) {
+    return { '~standard': standard };
+  }
+  return {
+    '~standard': {
+      ...standard,
+      jsonSchema: {
+        input: () => ({ type: 'object' }),
+        output: () => ({ type: 'object' }),
+      },
+    },
+  } as CountSchema & StandardJSONSchemaV1;
 }
 
 function createRuntimeInput<TSchema extends AgentSchema>(
@@ -990,14 +1484,26 @@ function installRuntimeMocks(scripts: StreamScript[] = []): TestState {
       ): Promise<{ stream: AsyncIterable<StreamPart> }> {
         this.streamCalls.push(input);
         const script = state.scripts.shift();
-        const parts = script?.(this) ?? [];
-        return Promise.resolve({ stream: toAsyncIterable(parts) });
+        const output = script?.(this, input) ?? [];
+        const stream = isAsyncIterable(output)
+          ? output
+          : toAsyncIterable(output);
+        return Promise.resolve({ stream });
       }
 
       submit(input: unknown): void {
+        void this.submitAsync(input);
+      }
+
+      async submitAsync(input: unknown): Promise<void> {
         const submitResult = this.settings.tools['submitResult'];
         expect(submitResult).toBeDefined();
-        void submitResult?.execute(input);
+        try {
+          await submitResult?.execute(input);
+        } catch {
+          // Harness turns tool execution failures into tool-error results so
+          // the model can correct the call in the same turn.
+        }
       }
     },
   }));
@@ -1010,6 +1516,7 @@ function installRuntimeMocks(scripts: StreamScript[] = []): TestState {
   }));
 
   vi.doMock('@local/harness-pi-raw', () => ({
+    PI_SILENT_TURN_ABORT_REASON: Symbol.for('runcell.pi.silent-turn-abort'),
     createPi(settings: unknown) {
       state.piSettings.push(settings);
       return { settings };
@@ -1046,7 +1553,16 @@ function toAsyncIterable(
   };
 }
 
-type StreamScript = (agent: TestHarnessAgent) => StreamPart[];
+type StreamScript = (
+  agent: TestHarnessAgent,
+  input: StreamInput,
+) => StreamPart[] | AsyncIterable<StreamPart>;
+
+function isAsyncIterable(
+  value: StreamPart[] | AsyncIterable<StreamPart>,
+): value is AsyncIterable<StreamPart> {
+  return Symbol.asyncIterator in value;
+}
 
 interface StreamPart {
   type: string;
@@ -1067,6 +1583,7 @@ interface TestHarnessAgent {
   streamCalls: StreamInput[];
   session: TestHarnessSession | undefined;
   submit(input: unknown): void;
+  submitAsync(input: unknown): Promise<void>;
 }
 
 interface HarnessSettings {
@@ -1078,6 +1595,7 @@ interface HarnessSettings {
 }
 
 interface ToolLike {
+  inputSchema: FlexibleSchema;
   execute(input: unknown): unknown;
 }
 

@@ -4,6 +4,14 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- A schema-valid `submitResult` now terminates the active model turn immediately.
+  Runcell preserves the first valid submission and returns it even if the
+  trailing model stream reports a timeout or transport failure.
+
 ## 1.2.0 - 2026-07-16
 
 ### Changed

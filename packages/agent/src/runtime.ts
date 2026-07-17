@@ -6,6 +6,7 @@ import type { HarnessV1NetworkSandboxSession } from '@ai-sdk/harness';
 import { shellQuote } from './shell.js';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import {
+  asSchema,
   jsonSchema,
   tool,
   type Experimental_SandboxSession,
@@ -19,6 +20,7 @@ import type {
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import {
   createPi,
+  PI_SILENT_TURN_ABORT_REASON,
   type PiCredentialStore,
   type PiHarnessSettings,
   type PiThinkingLevel,
@@ -115,7 +117,11 @@ async function runWithHarness({
   let text = '';
   let finishReason = 'stop';
   let sandboxContext: SandboxContext | undefined;
-  let submitted: unknown;
+  const submission: { hasValue: boolean; data: unknown } = {
+    hasValue: false,
+    data: undefined,
+  };
+  let activeTurnAbortController: AbortController | undefined;
 
   const schema = runOptions.schema;
   const events = mergeEvents(agentOptions.events, runOptions.events);
@@ -125,8 +131,16 @@ async function runWithHarness({
   const tools = createTools({
     tools: agentOptions.tools,
     schema,
-    onSubmit: value => {
-      submitted = value;
+    onSubmit: data => {
+      // A caller cancellation that wins the race stays authoritative. If the
+      // validated submission arrived first, preserve it and stop only the
+      // active Pi turn with the adapter's silent terminal reason.
+      if (runOptions.signal?.aborted || submission.hasValue) {
+        return;
+      }
+      submission.data = data;
+      submission.hasValue = true;
+      activeTurnAbortController?.abort(PI_SILENT_TURN_ABORT_REASON);
     },
   });
 
@@ -198,6 +212,9 @@ async function runWithHarness({
   try {
     const maxAttempts = schema ? config.maxRepairs : 0;
     for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
+      finishReason = 'stop';
+      const turnFinishState = { emitted: false };
+
       if (attempt > 0) {
         safeEmit(events?.onRepair, {
           attempt,
@@ -205,35 +222,84 @@ async function runWithHarness({
         });
       }
 
-      const result = await harnessAgent.stream({
-        session,
-        prompt:
-          attempt === 0
-            ? joinSections(threadContext, runOptions.prompt)
-            : 'Call submitResult now with a valid structured result for the previous task.',
-        ...(runOptions.signal ? { abortSignal: runOptions.signal } : {}),
-      });
+      const turnAbortController = new AbortController();
+      const turnAbortSignal = runOptions.signal
+        ? AbortSignal.any([runOptions.signal, turnAbortController.signal])
+        : turnAbortController.signal;
+      activeTurnAbortController = turnAbortController;
 
       let streamError: { cause: unknown } | undefined;
-      for await (const part of result.stream) {
-        await handleStreamPart({
-          part,
-          events,
-          sandboxContext,
-          changedFiles,
-          abortSignal: runOptions.signal,
-          sessionId: session.sessionId,
-          appendText(delta) {
-            text += delta;
-            onTextDelta?.(delta);
-          },
-          setFinishReason(reason) {
-            finishReason = reason;
-          },
-          setStreamError(cause) {
-            streamError ??= { cause };
-          },
+      let streamThrown: unknown;
+      let didStreamThrow = false;
+      try {
+        const result = await harnessAgent.stream({
+          session,
+          prompt:
+            attempt === 0
+              ? joinSections(threadContext, runOptions.prompt)
+              : 'Call submitResult now with a valid structured result for the previous task.',
+          abortSignal: turnAbortSignal,
         });
+
+        for await (const part of result.stream) {
+          await handleStreamPart({
+            part,
+            events,
+            sandboxContext,
+            changedFiles,
+            abortSignal: runOptions.signal,
+            sessionId: session.sessionId,
+            appendText(delta) {
+              text += delta;
+              onTextDelta?.(delta);
+            },
+            setFinishReason(reason) {
+              finishReason = reason;
+              turnFinishState.emitted = true;
+            },
+            setStreamError(cause) {
+              streamError ??= { cause };
+            },
+          });
+        }
+      } catch (error) {
+        streamThrown = error;
+        didStreamThrow = true;
+      } finally {
+        // Do not let a callback from this completed attempt cancel a repair.
+        if (activeTurnAbortController === turnAbortController) {
+          activeTurnAbortController = undefined;
+        }
+      }
+
+      // A submission takes precedence over trailing abort, timeout, or
+      // transport failures. submitResult.execute already validated and
+      // transformed this exact accepted output.
+      if (schema !== undefined && submission.hasValue) {
+        if (!turnFinishState.emitted) {
+          safeEmit(events?.onFinish, {
+            sessionId: session.sessionId,
+            finishReason,
+          });
+        }
+        recordThreadTurn(
+          threadInternals,
+          runOptions.prompt,
+          text,
+          submission.data,
+        );
+        succeeded = true;
+        return {
+          data: submission.data,
+          text,
+          files: [...changedFiles.values()],
+          finishReason,
+          sessionId: session.sessionId,
+        };
+      }
+
+      if (didStreamThrow) {
+        throw streamThrown;
       }
 
       // Terminal for the turn: fail the run with the real error instead of
@@ -258,27 +324,6 @@ async function runWithHarness({
           finishReason,
           sessionId: session.sessionId,
         };
-      }
-
-      if (submitted !== undefined) {
-        const parsed = await validateAgentSchema(schema, submitted);
-        if (parsed.success) {
-          recordThreadTurn(
-            threadInternals,
-            runOptions.prompt,
-            text,
-            parsed.data,
-          );
-          succeeded = true;
-          return {
-            data: parsed.data,
-            text,
-            files: [...changedFiles.values()],
-            finishReason,
-            sessionId: session.sessionId,
-          };
-        }
-        submitted = undefined;
       }
     }
 
@@ -565,15 +610,49 @@ function createTools({
   if (schema) {
     out['submitResult'] = tool({
       description: 'Submit the final structured result for this run.',
-      inputSchema: toToolInputSchema(schema),
+      inputSchema: toUnvalidatedToolInputSchema(schema),
       execute(input) {
-        onSubmit(input);
-        return { ok: true };
+        // Harness may execute a parsed tool call even when it marked the call
+        // invalid, so inputSchema is not an enforcement boundary. Validate
+        // here before accepting the terminal submission. Keep synchronous
+        // schemas synchronous; async Standard Schema validators are awaited by
+        // Harness before their tool result is submitted to Pi.
+        const validation = schema['~standard'].validate(input);
+        const accept = (result: StandardSchemaV1.Result<unknown>) => {
+          if (!('value' in result)) {
+            throw new Error(formatStandardSchemaIssues(result.issues));
+          }
+          onSubmit(result.value);
+          return { ok: true };
+        };
+        return isPromiseLike(validation)
+          ? Promise.resolve(validation).then(accept)
+          : accept(validation);
       },
     });
   }
 
   return out;
+}
+
+function toUnvalidatedToolInputSchema<TSchema extends AgentSchema>(
+  schema: TSchema,
+): FlexibleSchema<InferSchemaOutput<TSchema>> {
+  // Preserve the model-facing JSON Schema while leaving execute as the sole
+  // user-schema validation boundary. Harness executes invalid parsed calls so
+  // submitResult can report a tool error and let the model correct itself.
+  const projected = asSchema(toToolInputSchema(schema));
+  return jsonSchema<InferSchemaOutput<TSchema>>(() => projected.jsonSchema);
+}
+
+function isPromiseLike<T>(value: T | PromiseLike<T>): value is PromiseLike<T> {
+  if (
+    (typeof value !== 'object' || value === null) &&
+    typeof value !== 'function'
+  ) {
+    return false;
+  }
+  return typeof (value as { then?: unknown }).then === 'function';
 }
 
 function createHostTool(definition: ToolDefinition): ToolSet[string] {

@@ -105,6 +105,10 @@ function parkPiSession(key: string, session: HarnessV1Session): void {
  * partially loaded extension set (e.g. an auth or provider extension) must
  * fail the session before any model request is attempted.
  */
+export const PI_SILENT_TURN_ABORT_REASON = Symbol.for(
+  'runcell.pi.silent-turn-abort',
+);
+
 export class PiExtensionError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
@@ -1035,7 +1039,13 @@ export async function createPiSession(
            * Any other terminal error mid-suspend is unanticipated and must
            * surface.
            */
-          if (suspending && isAbortError(terminalError)) return;
+          if (
+            (suspending ||
+              turnOpts.abortSignal?.reason === PI_SILENT_TURN_ABORT_REASON) &&
+            isAbortError(terminalError)
+          ) {
+            return;
+          }
           currentEmit?.({ type: 'error', error: new Error(terminalError) });
           return;
         }
@@ -1073,7 +1083,13 @@ export async function createPiSession(
         // next slice rerun-continues from the persisted journal.
         // Same rule as the resolved-with-terminalError path: only swallow the
         // abort our own suspend caused; surface anything unanticipated.
-        if (suspending && isAbortError(err)) return;
+        if (
+          (suspending ||
+            turnOpts.abortSignal?.reason === PI_SILENT_TURN_ABORT_REASON) &&
+          isAbortError(err)
+        ) {
+          return;
+        }
         currentEmit?.({ type: 'error', error: err });
       } finally {
         unsubErr();
