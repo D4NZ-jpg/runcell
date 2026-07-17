@@ -4,6 +4,35 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- Upgraded `@earendil-works/pi-coding-agent` from `^0.79.0` to `^0.80.10`,
+  adding Pi 0.80-era catalog models such as
+  `openai-codex/gpt-5.6-luna`. Internally, runcell now uses Pi's
+  `ModelRuntime`; the public agent and credential APIs are unchanged.
+- Disabled model-catalog network refresh for adapter-created Pi runtimes. Agent
+  startup no longer makes unrequested `pi.dev` requests, stalls while waiting
+  for a refresh, or writes refreshed model data into the agent directory.
+- **Shared credential store implementations must now queue concurrent
+  `withLock` acquisitions instead of failing when the lock is held.** Pi 0.80
+  may read multiple providers in parallel, so existing stores with try-lock
+  semantics must be updated before upgrading.
+- Widened `StoredCredential` for Pi 0.80 providers: API-key credentials may omit
+  `key` for keyless or environment-backed providers such as Bedrock, and OAuth
+  credentials may include provider-specific fields such as `accountId`.
+
+### Fixed
+
+- Configured model ids that are absent from Pi's catalog now fail at session
+  startup with up to five suggestions. Previously, an unknown id could silently
+  fall back to the agent directory's `defaultModel` and route traffic to a
+  different provider.
+- Migrated the internal sandbox session hook to `sandboxConfig.onSession`,
+  removing Pi's `onSandboxSession` deprecation warning without changing sandbox
+  behavior.
+
 ## 1.1.1 - 2026-07-16
 
 ### Fixed

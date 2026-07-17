@@ -81,19 +81,47 @@ const agent = createAgent({
 ```
 
 A `CredentialStore` implementation receives the current credential blob and
-returns the updated blob when tokens rotate.
+returns the updated blob when tokens rotate. Pi may read credentials for
+multiple providers in parallel, so concurrent `withLock` calls for the same key
+**must wait in a queue**. Do not reject a call merely because another caller
+holds the lock.
+
+```ts
+type StoredCredential =
+  | {
+      type: 'api_key';
+      key?: string;
+      env?: Record<string, string>;
+    }
+  | {
+      type: 'oauth';
+      access: string;
+      refresh: string;
+      expires: number;
+      [key: string]: unknown;
+    };
+
+type AuthBlob = Record<string, StoredCredential>;
+```
+
+The optional API-key `key` supports keyless or environment-backed providers
+such as Bedrock. OAuth entries may include provider-specific fields such as
+`accountId`.
 
 ```ts
 const store: CredentialStore = {
   async withLock(key, fn) {
-    const current = await loadCredentialBlob(key);
-    const { result, next } = await fn(current);
-    if (next) {
-      await saveCredentialBlob(key, next);
-    }
-    return result;
+    // Acquire a queueing lock for this key before reading or updating it.
+    return queueFor(key, async () => {
+      const current = await loadCredentialBlob(key);
+      const { result, next } = await fn(current);
+      if (next !== undefined) {
+        await saveCredentialBlob(key, next);
+      }
+      return result;
+    });
   },
 };
 ```
 
-See `examples/07-shared-credential-store.ts` for a minimal in-memory shape.
+See `examples/07-shared-credential-store.ts` for a minimal in-memory queue.

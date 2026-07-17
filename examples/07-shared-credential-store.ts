@@ -5,15 +5,19 @@ export function createInMemoryCredentialStore(
   initial?: AuthBlob,
 ): CredentialStore {
   let current = initial;
-  let locked = false;
+  let tail = Promise.resolve();
 
   return {
-    async withLock(key, fn) {
-      if (locked) {
-        throw new Error(`Credential store is already locked for ${key}.`);
-      }
+    async withLock(_key, fn) {
+      // Pi may acquire the store concurrently for multiple providers, so lock
+      // implementations must queue waiters rather than reject them.
+      const previous = tail;
+      let release!: () => void;
+      tail = new Promise<void>(resolve => {
+        release = resolve;
+      });
+      await previous;
 
-      locked = true;
       try {
         const { result, next } = await fn(current);
         if (next !== undefined) {
@@ -21,7 +25,7 @@ export function createInMemoryCredentialStore(
         }
         return result;
       } finally {
-        locked = false;
+        release();
       }
     },
   };

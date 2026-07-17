@@ -29,6 +29,10 @@ const agent = createAgent({
 | `maxRepairs`   | `number`                         | Repair-turn budget for structured runs. Defaults to `1`.                                    |
 | `pi`           | `PiOptions`                      | Pi engine options. See [Pi options](./pi-extensions.md).                                    |
 
+A configured `model` that is not present in Pi's catalog fails at session
+startup with `Unknown model "…"` and up to five likely catalog matches. Runcell
+does not fall back to the agent directory's configured default model.
+
 ### `PiOptions`
 
 ```ts
