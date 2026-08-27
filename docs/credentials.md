@@ -1,9 +1,50 @@
 # Credentials
 
-`runcell` separates local development credentials from production credential
-configuration.
+Runcell agents authenticate two ways: with an AI subscription you already pay
+for, or with provider API keys. Subscriptions are the fastest way to run your
+first agent; API keys are the path for production.
 
-## Default behavior
+## Use your subscription
+
+`credentials: 'local'` runs agents on the provider logins stored on your
+machine — no API key required. Supported subscription logins:
+
+- Anthropic Claude Pro/Max
+- OpenAI ChatGPT Plus/Pro (Codex)
+- GitHub Copilot
+
+Runcell bundles the Pi engine, so its CLI is already in your project. Log in
+once:
+
+```bash
+npx pi     # then type /login and pick your provider
+```
+
+The browser opens, you sign in, and the OAuth tokens land in
+`~/.pi/agent/auth.json`. From then on:
+
+```ts
+const agent = createAgent({
+  model: 'anthropic/claude-sonnet-4-5',
+  credentials: 'local',
+});
+```
+
+Runcell refreshes the tokens automatically. `result.usage.costUsd` still
+reports what each run would have cost through the provider's API, so costs
+stay observable on a flat-rate subscription (see
+[`RunUsage`](./api.md#runusage)).
+
+Provider terms govern subscription use: it suits local and personal projects,
+while commercial and deployed applications should use API credentials. For
+that reason `'local'` is refused when `NODE_ENV` is `production` unless you
+opt in explicitly:
+
+```ts
+credentials: { type: 'local', allowInProduction: true }
+```
+
+## Default behavior: environment variables
 
 When `credentials` is omitted, `runcell` uses environment variables:
 
@@ -21,20 +62,6 @@ const agent = createAgent({
   credentials: { type: 'env' },
 });
 ```
-
-## Local development
-
-Examples default to local credentials:
-
-```ts
-const agent = createAgent({
-  model: 'anthropic/claude-sonnet-4-5',
-  credentials: 'local',
-});
-```
-
-This is convenient for a configured development machine. In production,
-`local` credentials are refused unless explicitly allowed.
 
 ## Explicit API keys
 

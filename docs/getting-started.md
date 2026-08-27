@@ -20,14 +20,13 @@ sandbox package. Providers such as Vercel Sandbox are separate installs; see
 
 ## Credentials
 
-When `credentials` is omitted, provider keys are read from environment
-variables such as `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`:
+The fastest path is a subscription you already have — Claude Pro/Max, ChatGPT
+Plus/Pro, or GitHub Copilot. Log in once through the bundled Pi CLI, then use
+`credentials: 'local'`:
 
-```ts
-const agent = createAgent({ model: 'anthropic/claude-sonnet-4-5' });
+```bash
+npx pi     # then type /login and pick your provider
 ```
-
-On a configured development machine, opt into local credentials:
 
 ```ts
 const agent = createAgent({
@@ -36,8 +35,15 @@ const agent = createAgent({
 });
 ```
 
-All modes (API keys, shared stores, custom directories) are covered in
-[Credentials](./credentials.md).
+For production, omit `credentials` and provider keys are read from environment
+variables such as `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`:
+
+```ts
+const agent = createAgent({ model: 'anthropic/claude-sonnet-4-5' });
+```
+
+All modes (subscriptions, API keys, shared stores, custom directories) are
+covered in [Credentials](./credentials.md).
 
 ## Models
 

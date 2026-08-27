@@ -23,8 +23,8 @@ features:
     details: Threads and portable filesystem snapshots serialize to JSON. Store them anywhere and resume on another machine.
   - title: Events and hooks
     details: Lifecycle callbacks report run activity to logs and UIs. Extension hooks can block tool calls before they run.
-  - title: Local credentials
-    details: credentials 'local' can use supported provider logins from the development machine. Production use requires explicit opt-in.
+  - title: Use your subscription
+    details: credentials 'local' runs agents on your Claude Pro/Max, ChatGPT Plus/Pro, or GitHub Copilot login. No API key needed for local projects; production requires explicit opt-in.
   - title: Streaming
     details: agent.stream() returns an async iterable of text and a promise for the final result.
   - title: Usage and cost

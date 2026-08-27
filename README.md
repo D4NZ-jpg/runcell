@@ -82,10 +82,11 @@ US dollars at API list price, sourced from the
 credentials report the same as-if-API price, so agent costs stay observable
 regardless of how you authenticate.
 
-For local personal projects, `credentials: 'local'` can reuse supported
-provider logins from the development machine. Provider terms govern this use;
-commercial and deployed applications should use API credentials. Runcell
-refuses local credentials in production unless explicitly enabled.
+For local and personal projects, `credentials: 'local'` runs agents on the AI
+subscriptions you already pay for — Claude Pro/Max, ChatGPT Plus/Pro, or
+GitHub Copilot — via a one-time `npx pi` `/login`. Provider terms govern this
+use; commercial and deployed applications should use API credentials, and
+Runcell refuses local credentials in production unless explicitly enabled.
 
 Runcell does not include a database or workflow engine. The application owns
 persistence, concurrency, and orchestration.
@@ -114,19 +115,21 @@ replies.
 
 ```bash
 npm install runcell        # zod is optional and used for structured output
+npx pi                     # optional: /login with your Claude/ChatGPT/Copilot
+                           # subscription instead of setting an API key
 ```
 
 ```ts
 import { createAgent } from 'runcell';
 
-// Production: credentials come from environment variables (default).
-const agent = createAgent({ model: 'anthropic/claude-sonnet-4-5' });
-
-// Local development: opt into local credentials.
+// Local development: run on your subscription login (see npx pi above).
 const dev = createAgent({
   model: 'anthropic/claude-sonnet-4-5',
   credentials: 'local',
 });
+
+// Production: credentials come from environment variables (default).
+const agent = createAgent({ model: 'anthropic/claude-sonnet-4-5' });
 
 const reply = await agent.run({ prompt: 'Say hello.' });
 console.log(reply.text);
