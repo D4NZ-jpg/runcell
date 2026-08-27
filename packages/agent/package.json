@@ -43,7 +43,7 @@
     "@ai-sdk/sandbox-just-bash": "1.0.33",
     "@earendil-works/pi-coding-agent": "^0.80.10",
     "@standard-schema/spec": "^1.1.0",
-    "zod": "^3.25.76 || ^4.1.8"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@ai-sdk/sandbox-vercel": "1.0.33",

@@ -40,7 +40,7 @@
     "@ai-sdk/provider-utils": "5.0.10",
     "@earendil-works/pi-coding-agent": "^0.80.10",
     "typebox": "^1.1.38",
-    "zod": "3.25.76"
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
