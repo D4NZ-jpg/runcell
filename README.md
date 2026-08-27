@@ -85,8 +85,9 @@ regardless of how you authenticate.
 For local and personal projects, `credentials: 'local'` runs agents on the AI
 subscriptions you already pay for — Claude Pro/Max, ChatGPT Plus/Pro, or
 GitHub Copilot — via a one-time `npx pi` `/login`. Provider terms govern this
-use; commercial and deployed applications should use API credentials, and
-Runcell refuses local credentials in production unless explicitly enabled.
+use and differ per provider; API keys are the provider-supported path for
+commercial and deployed work, and Runcell refuses local credentials in
+production unless explicitly enabled.
 
 Runcell does not include a database or workflow engine. The application owns
 persistence, concurrency, and orchestration.

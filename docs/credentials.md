@@ -35,10 +35,13 @@ reports what each run would have cost through the provider's API, so costs
 stay observable on a flat-rate subscription (see
 [`RunUsage`](./api.md#runusage)).
 
-Provider terms govern subscription use: it suits local and personal projects,
-while commercial and deployed applications should use API credentials. For
-that reason `'local'` is refused when `NODE_ENV` is `production` unless you
-opt in explicitly:
+Provider terms govern subscription use, and they differ per provider and
+change over time — review yours before relying on it. Individual use of your
+own subscription is the commonly accepted pattern (Anthropic has publicly
+said as much); API keys are the provider-supported path for deployed and
+commercial work. For that reason `'local'` is refused when `NODE_ENV` is
+`production` unless you opt in explicitly — for example, a remote test box
+running under your own account:
 
 ```ts
 credentials: { type: 'local', allowInProduction: true }

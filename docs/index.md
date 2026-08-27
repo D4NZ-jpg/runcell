@@ -112,8 +112,10 @@ or Modal for untrusted or production workloads.
 For personal projects on your own machine: yes. `credentials: 'local'`
 picks up the provider logins already configured on your dev machine, so a
 side project may not need a separate API key. Provider terms govern
-subscription access. Use API credentials for commercial or deployed work.
-Runcell refuses local credentials in production unless explicitly enabled.
+subscription access and differ per provider — see
+[Credentials](/credentials) for the current per-provider picture. API keys
+are the provider-supported path for commercial or deployed work. Runcell
+refuses local credentials in production unless explicitly enabled.
 
 ## Start building
 
