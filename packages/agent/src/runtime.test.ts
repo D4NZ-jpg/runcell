@@ -61,6 +61,14 @@ describe('defaultRuntime', () => {
       files: [],
       finishReason: 'stop',
       sessionId: 'test-session',
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        totalTokens: 0,
+        costUsd: 0,
+      },
     });
     expect(state.sandboxSettings).toEqual([undefined]);
     expect(state.piSettings[0]).toMatchObject({
@@ -1296,6 +1304,50 @@ describe('defaultRuntime', () => {
     expect(repairs).toEqual([
       { attempt: 1, reason: 'missing or invalid structured result' },
     ]);
+  });
+
+  it('accumulates per-turn usage and cost across repair turns', async () => {
+    const finishPart = (input: number, output: number, costUsd: number) => ({
+      type: 'finish',
+      finishReason: 'stop',
+      totalUsage: {
+        inputTokens: {
+          total: input + 30 + 10,
+          noCache: input,
+          cacheRead: 30,
+          cacheWrite: 10,
+        },
+        outputTokens: { total: output, text: undefined, reasoning: undefined },
+      },
+      harnessMetadata: { pi: { costUsd } },
+    });
+    installRuntimeMocks([
+      () => [{ type: 'text-delta', text: 'first ' }, finishPart(100, 20, 0.5)],
+      agent => {
+        agent.submit({ ok: true });
+        return [
+          { type: 'text-delta', text: 'second' },
+          finishPart(200, 40, 0.25),
+        ];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    const result = await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() }), {
+        config: { maxRepairs: 1 },
+      }),
+    );
+
+    expect(result.data).toEqual({ ok: true });
+    expect(result.usage).toEqual({
+      inputTokens: 300,
+      outputTokens: 60,
+      cacheReadTokens: 60,
+      cacheWriteTokens: 20,
+      totalTokens: 440,
+      costUsd: 0.75,
+    });
   });
 
   it('resets finish reason before a terminal repair submission', async () => {

@@ -82,6 +82,30 @@ const MAX_PARKED_PI_SESSIONS = 8;
  * name disambiguates; a pre-first-turn park has no journal yet and keys on the
  * id alone, matching the empty resume descriptor it hands back.
  */
+/**
+ * Normalized snapshot of Pi's cumulative session counters. `cost` is the
+ * as-if-API dollar amount Pi derives from its models.dev-based catalog; it is
+ * `0` for models the catalog does not price.
+ */
+interface StatsSnapshot {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cost: number;
+}
+
+function snapshotStats(session: AgentSession): StatsSnapshot {
+  const stats = session.getSessionStats();
+  return {
+    input: stats.tokens.input,
+    output: stats.tokens.output,
+    cacheRead: stats.tokens.cacheRead,
+    cacheWrite: stats.tokens.cacheWrite,
+    cost: stats.cost ?? 0,
+  };
+}
+
 function parkKey(
   sessionId: string,
   sessionFileName: string | undefined,
@@ -1025,6 +1049,11 @@ export async function createPiSession(
         }
       });
 
+      // Snapshot cumulative session stats so the finish parts report this
+      // turn's delta rather than session-lifetime totals (a resumed or
+      // multi-run session accumulates prior turns in `getSessionStats()`).
+      const startStats = snapshotStats(session);
+
       try {
         await session.prompt(turnOpts.text);
 
@@ -1050,32 +1079,45 @@ export async function createPiSession(
           return;
         }
 
-        const stats = session.getSessionStats();
+        const endStats = snapshotStats(session);
         const finishReason = {
           unified: 'stop' as const,
           raw: undefined,
         };
+        // V4 usage semantics: `total` covers every prompt token (cached or
+        // not); `noCache` is the share billed at the full input rate. Pi's
+        // `tokens.input` excludes cache buckets, so it maps to `noCache`.
+        const noCache = endStats.input - startStats.input;
+        const cacheRead = endStats.cacheRead - startStats.cacheRead;
+        const cacheWrite = endStats.cacheWrite - startStats.cacheWrite;
         const usage = {
           inputTokens: {
-            total: stats.tokens.input,
-            noCache: undefined,
-            cacheRead: stats.tokens.cacheRead,
-            cacheWrite: stats.tokens.cacheWrite,
+            total: noCache + cacheRead + cacheWrite,
+            noCache,
+            cacheRead,
+            cacheWrite,
           },
           outputTokens: {
-            total: stats.tokens.output,
+            total: endStats.output - startStats.output,
             text: undefined,
             reasoning: undefined,
           },
         };
+        // Pi computes dollar cost from its models.dev-derived catalog
+        // (including tiered pricing), so the turn's cost is the stats delta.
+        // `LanguageModelV4Usage` has no cost slot; ride `harnessMetadata`.
+        const harnessMetadata = {
+          pi: { costUsd: endStats.cost - startStats.cost },
+        };
         // `finish-step` populates the step's finishReason + usage (the
         // agent's result builder reads this); `finish` marks the turn end
         // with totalUsage.
-        currentEmit?.({ type: 'finish-step', finishReason, usage });
+        currentEmit?.({ type: 'finish-step', finishReason, usage, harnessMetadata });
         currentEmit?.({
           type: 'finish',
           finishReason,
           totalUsage: usage,
+          harnessMetadata,
         });
       } catch (err) {
         // A `doSuspendTurn` aborts the in-flight turn on purpose — settle silently

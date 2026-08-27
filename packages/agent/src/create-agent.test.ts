@@ -286,6 +286,14 @@ function createRuntimeMock(
         files: [],
         finishReason: 'stop',
         sessionId: input.runOptions.sessionId ?? 'test-session',
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 0,
+          costUsd: 0,
+        },
       });
     },
   };

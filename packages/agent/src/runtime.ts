@@ -54,6 +54,7 @@ import type {
   InferSchemaOutput,
   RunOptionsBase,
   RunResult,
+  RunUsage,
   ToolDefinition,
 } from './types.js';
 
@@ -116,6 +117,7 @@ async function runWithHarness({
   const changedFiles = new Map<string, ChangedFile>();
   let text = '';
   let finishReason = 'stop';
+  const usage = createRunUsage();
   let sandboxContext: SandboxContext | undefined;
   const submission: { hasValue: boolean; data: unknown } = {
     hasValue: false,
@@ -257,6 +259,9 @@ async function runWithHarness({
               finishReason = reason;
               turnFinishState.emitted = true;
             },
+            addUsage(turnUsage) {
+              accumulateRunUsage(usage, turnUsage);
+            },
             setStreamError(cause) {
               streamError ??= { cause };
             },
@@ -295,6 +300,7 @@ async function runWithHarness({
           files: [...changedFiles.values()],
           finishReason,
           sessionId: session.sessionId,
+          usage,
         };
       }
 
@@ -323,6 +329,7 @@ async function runWithHarness({
           files: [...changedFiles.values()],
           finishReason,
           sessionId: session.sessionId,
+          usage,
         };
       }
     }
@@ -773,6 +780,70 @@ async function seedFiles({
   }
 }
 
+function createRunUsage(): RunUsage {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 0,
+    costUsd: 0,
+  };
+}
+
+function accumulateRunUsage(target: RunUsage, delta: RunUsage): void {
+  target.inputTokens += delta.inputTokens;
+  target.outputTokens += delta.outputTokens;
+  target.cacheReadTokens += delta.cacheReadTokens;
+  target.cacheWriteTokens += delta.cacheWriteTokens;
+  target.totalTokens += delta.totalTokens;
+  target.costUsd += delta.costUsd;
+}
+
+function asCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * Read one turn's usage delta from a `finish` stream part. The harness emits
+ * V4 usage (`inputTokens.total` covers all prompt tokens; `noCache` is the
+ * non-cached share) plus the turn's catalog-priced dollar cost under
+ * `harnessMetadata.pi.costUsd`.
+ */
+function readTurnUsage(part: Record<string, unknown>): RunUsage {
+  const totalUsage = asRecord(part['totalUsage']);
+  const inputTokens = asRecord(totalUsage?.['inputTokens']);
+  const outputTokens = asRecord(totalUsage?.['outputTokens']);
+
+  const cacheRead = asCount(inputTokens?.['cacheRead']);
+  const cacheWrite = asCount(inputTokens?.['cacheWrite']);
+  const inputTotal = asCount(inputTokens?.['total']);
+  const noCache = inputTokens?.['noCache'];
+  const input =
+    typeof noCache === 'number' && Number.isFinite(noCache)
+      ? noCache
+      : Math.max(0, inputTotal - cacheRead - cacheWrite);
+  const output = asCount(outputTokens?.['total']);
+
+  const metadata = asRecord(part['harnessMetadata']);
+  const costUsd = asCount(asRecord(metadata?.['pi'])?.['costUsd']);
+
+  return {
+    inputTokens: input,
+    outputTokens: output,
+    cacheReadTokens: cacheRead,
+    cacheWriteTokens: cacheWrite,
+    totalTokens: input + cacheRead + cacheWrite + output,
+    costUsd,
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value != null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
 async function handleStreamPart({
   part,
   events,
@@ -782,6 +853,7 @@ async function handleStreamPart({
   sessionId,
   appendText,
   setFinishReason,
+  addUsage,
   setStreamError,
 }: {
   part: { type: string; [key: string]: unknown };
@@ -792,6 +864,7 @@ async function handleStreamPart({
   sessionId: string;
   appendText: (delta: string) => void;
   setFinishReason: (reason: string) => void;
+  addUsage: (usage: RunUsage) => void;
   setStreamError: (cause: unknown) => void;
 }): Promise<void> {
   switch (part.type) {
@@ -842,6 +915,7 @@ async function handleStreamPart({
           ? part['finishReason']
           : 'unknown';
       setFinishReason(reason);
+      addUsage(readTurnUsage(part));
       safeEmit(events?.onFinish, { sessionId, finishReason: reason });
       return;
     }

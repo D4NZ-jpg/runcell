@@ -97,6 +97,36 @@ and file changes observed before the submission are preserved.
 | `files`        | `ChangedFile[]` | Files created/modified during this run (`{ path, change, bytes }`).   |
 | `finishReason` | `string`        | Why the final turn stopped, e.g. `"stop"`.                            |
 | `sessionId`    | `string`        | Identifier of the underlying run session.                             |
+| `usage`        | `RunUsage`      | Token usage and estimated cost for this run.                          |
+
+### `RunUsage`
+
+Token usage and estimated cost for one run, accumulated across every model
+turn in the run (including repair turns).
+
+| Field              | Type     | Description                                          |
+| ------------------ | -------- | ---------------------------------------------------- |
+| `inputTokens`      | `number` | Non-cached input tokens billed at the input rate.    |
+| `outputTokens`     | `number` | Output tokens, including reasoning tokens.           |
+| `cacheReadTokens`  | `number` | Input tokens read from the provider's prompt cache.  |
+| `cacheWriteTokens` | `number` | Input tokens written to the provider's prompt cache. |
+| `totalTokens`      | `number` | Sum of all token buckets.                            |
+| `costUsd`          | `number` | Estimated cost in US dollars at API list price.      |
+
+`costUsd` is computed from the [models.dev](https://models.dev)-derived model
+catalog, including tiered pricing. It is always the as-if-API price: runs on
+subscription (OAuth) credentials report what the same tokens would have cost
+through the provider's API. Models the catalog does not price report `0`.
+
+```ts
+const result = await agent.run({ prompt: 'Summarize feedback.txt.' });
+console.log(result.usage);
+// {
+//   inputTokens: 1204, outputTokens: 380,
+//   cacheReadTokens: 8600, cacheWriteTokens: 950,
+//   totalTokens: 11134, costUsd: 0.0214,
+// }
+```
 
 ## `agent.stream(options): StreamRun`
 

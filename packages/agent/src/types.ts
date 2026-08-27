@@ -175,6 +175,30 @@ export interface RunOptions<
 }
 
 /**
+ * Token usage and estimated cost for a single {@link Agent.run} call,
+ * accumulated across every model turn in the run (including repair turns).
+ */
+export interface RunUsage {
+  /** Non-cached input (prompt) tokens billed at the input rate. */
+  inputTokens: number;
+  /** Output (completion) tokens, including reasoning tokens. */
+  outputTokens: number;
+  /** Input tokens read from the provider's prompt cache. */
+  cacheReadTokens: number;
+  /** Input tokens written to the provider's prompt cache. */
+  cacheWriteTokens: number;
+  /** Sum of all token buckets above. */
+  totalTokens: number;
+  /**
+   * Estimated cost in US dollars at the model's published API list price
+   * (sourced from the models.dev-derived catalog, including tiered pricing).
+   * This is the as-if-API price even when the run used subscription (OAuth)
+   * credentials. `0` when the catalog has no pricing for the model.
+   */
+  costUsd: number;
+}
+
+/**
  * The result of an {@link Agent.run} call.
  */
 export interface RunResult<TData> {
@@ -191,6 +215,8 @@ export interface RunResult<TData> {
   finishReason: string;
   /** The session id (for resuming). */
   sessionId: string;
+  /** Token usage and estimated cost for this run. */
+  usage: RunUsage;
 }
 
 /**

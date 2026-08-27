@@ -89,6 +89,7 @@ export type {
   RunOptions,
   RunOptionsBase,
   RunResult,
+  RunUsage,
   StreamRun,
   ToolDefinition,
   ChangedFile,
