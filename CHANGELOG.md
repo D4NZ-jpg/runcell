@@ -4,6 +4,19 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.4.1 - 2026-08-27
+
+### Fixed
+
+- `result.usage` reported zero token counts and cost: the runtime read the
+  pre-normalization usage shape from finish stream parts, while the harness
+  delivers the normalized AI SDK shape (flat totals, cache buckets under
+  `inputTokenDetails`, cost metadata under `providerMetadata`).
+- Structured runs (with `schema`) dropped the final turn's tokens and cost:
+  the turn that produces the structured result ends through an intentional
+  abort, which closed the stream before the turn's usage was emitted. The
+  usage delta is now flushed before the run settles.
+
 ## 1.4.0 - 2026-08-27
 
 ### Added
