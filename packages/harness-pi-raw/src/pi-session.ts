@@ -1054,31 +1054,10 @@ export async function createPiSession(
       // multi-run session accumulates prior turns in `getSessionStats()`).
       const startStats = snapshotStats(session);
 
-      try {
-        await session.prompt(turnOpts.text);
-
-        if (terminalError) {
-          /*
-           * A `doSuspendTurn` aborts the in-flight turn on purpose. Pi surfaces
-           * that abort as a *resolved* prompt with a recorded terminal error
-           * ("This operation was aborted") rather than a thrown exception, so the
-           * `catch` guard below never sees it. Swallow it here too — but only if
-           * it's actually the abort: the stream then closes cleanly (no spurious
-           * `error` chunk) and the next slice rerun-continues from the journal.
-           * Any other terminal error mid-suspend is unanticipated and must
-           * surface.
-           */
-          if (
-            (suspending ||
-              turnOpts.abortSignal?.reason === PI_SILENT_TURN_ABORT_REASON) &&
-            isAbortError(terminalError)
-          ) {
-            return;
-          }
-          currentEmit?.({ type: 'error', error: new Error(terminalError) });
-          return;
-        }
-
+      // Compute this turn's stats delta and emit the closing `finish-step` +
+      // `finish` parts. Shared by the natural stop path and the intentional
+      // structured-result abort, whose turn tokens must still be reported.
+      const emitTurnFinish = () => {
         const endStats = snapshotStats(session);
         const finishReason = {
           unified: 'stop' as const,
@@ -1119,6 +1098,41 @@ export async function createPiSession(
           totalUsage: usage,
           harnessMetadata,
         });
+      };
+
+      try {
+        await session.prompt(turnOpts.text);
+
+        if (terminalError) {
+          /*
+           * A `doSuspendTurn` aborts the in-flight turn on purpose. Pi surfaces
+           * that abort as a *resolved* prompt with a recorded terminal error
+           * ("This operation was aborted") rather than a thrown exception, so the
+           * `catch` guard below never sees it. Swallow it here too — but only if
+           * it's actually the abort: the stream then closes cleanly (no spurious
+           * `error` chunk) and the next slice rerun-continues from the journal.
+           * Any other terminal error mid-suspend is unanticipated and must
+           * surface.
+           */
+          if (
+            (suspending ||
+              turnOpts.abortSignal?.reason === PI_SILENT_TURN_ABORT_REASON) &&
+            isAbortError(terminalError)
+          ) {
+            // The structured-result abort ends the run here — flush the
+            // turn's usage before settling so it isn't lost. A suspend
+            // rerun-continues the same turn later, so it must not emit
+            // finish parts mid-flight.
+            if (!suspending) {
+              emitTurnFinish();
+            }
+            return;
+          }
+          currentEmit?.({ type: 'error', error: new Error(terminalError) });
+          return;
+        }
+
+        emitTurnFinish();
       } catch (err) {
         // A `doSuspendTurn` aborts the in-flight turn on purpose — settle silently
         // so the stream closes cleanly without a spurious `error` chunk; the
@@ -1130,6 +1144,12 @@ export async function createPiSession(
             turnOpts.abortSignal?.reason === PI_SILENT_TURN_ABORT_REASON) &&
           isAbortError(err)
         ) {
+          // Same as the resolved-with-terminalError path: the
+          // structured-result abort still reports the turn's usage; a
+          // suspend does not.
+          if (!suspending) {
+            emitTurnFinish();
+          }
           return;
         }
         currentEmit?.({ type: 'error', error: err });

@@ -805,27 +805,28 @@ function asCount(value: unknown): number {
 }
 
 /**
- * Read one turn's usage delta from a `finish` stream part. The harness emits
- * V4 usage (`inputTokens.total` covers all prompt tokens; `noCache` is the
- * non-cached share) plus the turn's catalog-priced dollar cost under
- * `harnessMetadata.pi.costUsd`.
+ * Read one turn's usage delta from a `finish` stream part. The harness
+ * normalizes the adapter's V4 usage into AI SDK's flat shape before it
+ * reaches this stream: `inputTokens`/`outputTokens` are totals, the cache
+ * buckets live under `inputTokenDetails`, and the adapter's
+ * `harnessMetadata` (carrying the turn's catalog-priced dollar cost under
+ * `pi.costUsd`) is renamed to `providerMetadata`.
  */
 function readTurnUsage(part: Record<string, unknown>): RunUsage {
   const totalUsage = asRecord(part['totalUsage']);
-  const inputTokens = asRecord(totalUsage?.['inputTokens']);
-  const outputTokens = asRecord(totalUsage?.['outputTokens']);
+  const inputDetails = asRecord(totalUsage?.['inputTokenDetails']);
 
-  const cacheRead = asCount(inputTokens?.['cacheRead']);
-  const cacheWrite = asCount(inputTokens?.['cacheWrite']);
-  const inputTotal = asCount(inputTokens?.['total']);
-  const noCache = inputTokens?.['noCache'];
+  const cacheRead = asCount(inputDetails?.['cacheReadTokens']);
+  const cacheWrite = asCount(inputDetails?.['cacheWriteTokens']);
+  const inputTotal = asCount(totalUsage?.['inputTokens']);
+  const noCache = inputDetails?.['noCacheTokens'];
   const input =
     typeof noCache === 'number' && Number.isFinite(noCache)
       ? noCache
       : Math.max(0, inputTotal - cacheRead - cacheWrite);
-  const output = asCount(outputTokens?.['total']);
+  const output = asCount(totalUsage?.['outputTokens']);
 
-  const metadata = asRecord(part['harnessMetadata']);
+  const metadata = asRecord(part['providerMetadata']);
   const costUsd = asCount(asRecord(metadata?.['pi'])?.['costUsd']);
 
   return {

@@ -182,6 +182,63 @@ describe('createPiSession', () => {
     await session.doDestroy();
   });
 
+  it('flushes the turn usage when a silent abort ends the turn', async () => {
+    // A structured-result submission aborts the turn with the silent reason;
+    // the turn's usage delta must still be reported before the stream closes.
+    const statsQueue = [
+      {
+        tokens: { input: 50, output: 10, cacheRead: 100, cacheWrite: 5 },
+        cost: 0.25,
+      },
+      {
+        tokens: { input: 80, output: 25, cacheRead: 160, cacheWrite: 9 },
+        cost: 0.75,
+      },
+    ];
+    const prompt = createDeferred<void>();
+    const abort = vi.fn(async () => {});
+    piMock.session = createPiAgentSession({
+      abort,
+      prompt: vi.fn(() => prompt.promise),
+      getSessionStats: () =>
+        statsQueue.length > 1 ? statsQueue.shift() : statsQueue[0],
+    });
+    const session = await createPiSession({
+      sessionId: 'session-silent-usage',
+      sandboxSession: createSandboxSession(),
+      sessionWorkDir: '/sandbox/work',
+      skills: [],
+      settings: {},
+      isResume: false,
+    });
+    const controller = new AbortController();
+    const emit = vi.fn();
+    const control = await session.doPromptTurn({
+      prompt: 'go',
+      tools: [],
+      emit,
+      abortSignal: controller.signal,
+    });
+
+    controller.abort(PI_SILENT_TURN_ABORT_REASON);
+    await vi.waitFor(() => expect(abort).toHaveBeenCalledTimes(1));
+    prompt.reject(new DOMException('This operation was aborted', 'AbortError'));
+    await control.done;
+
+    const parts = emit.mock.calls.map(
+      ([part]) => part as { type: string; [key: string]: unknown },
+    );
+    expect(parts.some(part => part.type === 'error')).toBe(false);
+    expect(parts.some(part => part.type === 'finish-step')).toBe(true);
+    const finish = parts.find(part => part.type === 'finish');
+    expect(finish?.['totalUsage']).toEqual({
+      inputTokens: { total: 94, noCache: 30, cacheRead: 60, cacheWrite: 4 },
+      outputTokens: { total: 15, text: undefined, reasoning: undefined },
+    });
+    expect(finish?.['harnessMetadata']).toEqual({ pi: { costUsd: 0.5 } });
+    await session.doDestroy();
+  });
+
   it('surfaces an ordinary caller abort after Pi prompt settles', async () => {
     const prompt = createDeferred<void>();
     const abort = vi.fn(async () => {});

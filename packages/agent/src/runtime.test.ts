@@ -1310,16 +1310,24 @@ describe('defaultRuntime', () => {
     const finishPart = (input: number, output: number, costUsd: number) => ({
       type: 'finish',
       finishReason: 'stop',
+      // Mirrors the harness's normalized (flat) stream shape: `asLanguageModelUsage`
+      // flattens the adapter's V4 usage and `harnessMetadata` arrives renamed
+      // to `providerMetadata`.
       totalUsage: {
-        inputTokens: {
-          total: input + 30 + 10,
-          noCache: input,
-          cacheRead: 30,
-          cacheWrite: 10,
+        inputTokens: input + 30 + 10,
+        inputTokenDetails: {
+          noCacheTokens: input,
+          cacheReadTokens: 30,
+          cacheWriteTokens: 10,
         },
-        outputTokens: { total: output, text: undefined, reasoning: undefined },
+        outputTokens: output,
+        outputTokenDetails: {
+          textTokens: undefined,
+          reasoningTokens: undefined,
+        },
+        totalTokens: input + 30 + 10 + output,
       },
-      harnessMetadata: { pi: { costUsd } },
+      providerMetadata: { pi: { costUsd } },
     });
     installRuntimeMocks([
       () => [{ type: 'text-delta', text: 'first ' }, finishPart(100, 20, 0.5)],
