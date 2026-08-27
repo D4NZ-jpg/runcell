@@ -25,6 +25,7 @@ workspace. A run can return:
 - changed files as bytes;
 - schema-validated data, with invalid results repaired or rejected;
 - streamed text through `agent.stream()`;
+- token usage and estimated cost for the run (`result.usage`);
 - threads and sandbox snapshots that you can store as JSON.
 
 ```ts
@@ -74,6 +75,12 @@ The built-in model catalog includes Anthropic, OpenAI, Google, and other
 providers. Extensions can register additional providers before Runcell resolves
 the configured model. Lifecycle callbacks report run activity, and extension
 hooks can block tool calls.
+
+Every result carries `usage`: per-run token counts and the estimated cost in
+US dollars at API list price, sourced from the
+[models.dev](https://models.dev)-derived catalog. Runs on subscription
+credentials report the same as-if-API price, so agent costs stay observable
+regardless of how you authenticate.
 
 For local personal projects, `credentials: 'local'` can reuse supported
 provider logins from the development machine. Provider terms govern this use;

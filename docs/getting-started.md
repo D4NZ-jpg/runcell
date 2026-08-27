@@ -66,7 +66,12 @@ const reply = await agent.run({ prompt: 'Say hello in one sentence.' });
 console.log(reply.text); // the reply
 console.log(reply.finishReason); // "stop"
 console.log(reply.data); // undefined because no schema was given
+console.log(reply.usage); // token counts + costUsd for this run
 ```
+
+Every result includes [`usage`](./api.md#runusage): per-run token counts and
+the estimated cost in US dollars at API list price. Subscription logins report
+the same as-if-API price, so you can track what a run would have cost.
 
 ## First run: a structured task
 
@@ -99,6 +104,7 @@ console.log(result.data.summary); // typed
 - [Persist a sandbox workspace](./sandboxes.md)
 - [Persist a thread](./threads.md)
 - [Stream text to a UI](./streaming.md)
+- [Track token usage and cost](./api.md#runusage)
 
 ## Validating this repository
 

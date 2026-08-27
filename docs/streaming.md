@@ -16,7 +16,9 @@ const final = await result; // the same RunResult run() would return
 - `textStream` is an `AsyncIterable<string>` of the model's text deltas.
 - `result` is a promise for the final `RunResult`. Always await it, even if you
   only need the stream. Awaiting it finalizes the turn, surfaces errors, and
-  commits conversation state when using a thread.
+  commits conversation state when using a thread. The final result also
+  carries [`usage`](./api.md#runusage) with the run's token counts and
+  estimated cost.
 
 ## With and without a schema
 

@@ -27,6 +27,8 @@ features:
     details: credentials 'local' can use supported provider logins from the development machine. Production use requires explicit opt-in.
   - title: Streaming
     details: agent.stream() returns an async iterable of text and a promise for the final result.
+  - title: Usage and cost
+    details: Every result reports per-run token counts and estimated cost at API list price, even on subscription credentials.
   - title: Application-owned orchestration
     details: Runcell has no workflow engine or data store. The application manages orchestration and persistence.
 ---
