@@ -4,6 +4,23 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.4.0 - 2026-08-27
+
+### Added
+
+- Added `usage` to `RunResult`: per-run token counts (`inputTokens`,
+  `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`, `totalTokens`)
+  accumulated across every model turn, including repair turns.
+- Added `usage.costUsd`: the run's estimated cost in US dollars at API list
+  price, computed from the models.dev-derived model catalog (including tiered
+  pricing). Runs on subscription (OAuth) credentials report the as-if-API
+  price. Models without catalog pricing report `0`.
+
+### Fixed
+
+- Turn usage reported by the Pi harness is now the turn's delta instead of
+  session-lifetime totals, so resumed threads no longer overcount.
+
 ## 1.3.0 - 2026-07-16
 
 ### Added
