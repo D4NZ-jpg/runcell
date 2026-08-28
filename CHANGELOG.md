@@ -4,6 +4,22 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Added `usage.costMeasured`: `false` when the run consumed tokens but no
+  cost could be attributed (a model without catalog pricing), so
+  `costUsd: 0` can be told apart from genuinely free usage.
+
+### Fixed
+
+- Run usage is now reconciled against Pi's own per-session stats instead of
+  relying solely on stream metadata. Abnormal completion paths (transport
+  errors, aborts, synthetic harness finishes) could drop a turn's cost
+  metadata while keeping its token counts, reporting `costUsd: 0` for priced
+  usage; the reconciled totals survive every completion path.
+
 ## 1.4.1 - 2026-08-27
 
 ### Fixed

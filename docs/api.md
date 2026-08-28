@@ -104,19 +104,23 @@ and file changes observed before the submission are preserved.
 Token usage and estimated cost for one run, accumulated across every model
 turn in the run (including repair turns).
 
-| Field              | Type     | Description                                          |
-| ------------------ | -------- | ---------------------------------------------------- |
-| `inputTokens`      | `number` | Non-cached input tokens billed at the input rate.    |
-| `outputTokens`     | `number` | Output tokens, including reasoning tokens.           |
-| `cacheReadTokens`  | `number` | Input tokens read from the provider's prompt cache.  |
-| `cacheWriteTokens` | `number` | Input tokens written to the provider's prompt cache. |
-| `totalTokens`      | `number` | Sum of all token buckets.                            |
-| `costUsd`          | `number` | Estimated cost in US dollars at API list price.      |
+| Field              | Type      | Description                                          |
+| ------------------ | --------- | ---------------------------------------------------- |
+| `inputTokens`      | `number`  | Non-cached input tokens billed at the input rate.    |
+| `outputTokens`     | `number`  | Output tokens, including reasoning tokens.           |
+| `cacheReadTokens`  | `number`  | Input tokens read from the provider's prompt cache.  |
+| `cacheWriteTokens` | `number`  | Input tokens written to the provider's prompt cache. |
+| `totalTokens`      | `number`  | Sum of all token buckets.                            |
+| `costUsd`          | `number`  | Estimated cost in US dollars at API list price.      |
+| `costMeasured`     | `boolean` | Whether `costUsd` is a real measurement.             |
 
 `costUsd` is computed from the [models.dev](https://models.dev)-derived model
 catalog, including tiered pricing. It is always the as-if-API price: runs on
 subscription (OAuth) credentials report what the same tokens would have cost
-through the provider's API. Models the catalog does not price report `0`.
+through the provider's API. Models the catalog does not price report `0`
+with `costMeasured: false`, so a zero can be told apart from genuinely free
+usage: when `costMeasured` is `false`, treat `costUsd` as “unpriced”, not
+“free”.
 
 ```ts
 const result = await agent.run({ prompt: 'Summarize feedback.txt.' });

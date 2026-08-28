@@ -106,6 +106,63 @@ function snapshotStats(session: AgentSession): StatsSnapshot {
   };
 }
 
+/**
+ * Cumulative usage a session's turns have consumed, summed from Pi's own
+ * session stats. Pi pairs token counts and catalog-priced cost atomically on
+ * every recorded assistant message, so these totals survive completion paths
+ * where per-part stream metadata is dropped (errors, aborts, synthetic
+ * harness finishes). Keyed by harness session id; see
+ * {@link getPiSessionUsageTotals}.
+ */
+export interface PiSessionUsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
+}
+
+const sessionUsageTotals = new Map<string, PiSessionUsageTotals>();
+
+/**
+ * Read the cumulative usage totals recorded for a session in this process.
+ * Callers snapshot at a boundary (e.g. run start) and diff against a later
+ * read for an authoritative interval delta. Returns a copy; `undefined`
+ * until the session exists.
+ */
+export function getPiSessionUsageTotals(
+  sessionId: string,
+): PiSessionUsageTotals | undefined {
+  const totals = sessionUsageTotals.get(sessionId);
+  return totals ? { ...totals } : undefined;
+}
+
+function ensureSessionUsageTotals(sessionId: string): void {
+  if (!sessionUsageTotals.has(sessionId)) {
+    sessionUsageTotals.set(sessionId, {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      costUsd: 0,
+    });
+  }
+}
+
+function accumulateSessionUsageTotals(
+  sessionId: string,
+  start: StatsSnapshot,
+  end: StatsSnapshot,
+): void {
+  const totals = sessionUsageTotals.get(sessionId);
+  if (!totals) return;
+  totals.inputTokens += Math.max(0, end.input - start.input);
+  totals.outputTokens += Math.max(0, end.output - start.output);
+  totals.cacheReadTokens += Math.max(0, end.cacheRead - start.cacheRead);
+  totals.cacheWriteTokens += Math.max(0, end.cacheWrite - start.cacheWrite);
+  totals.costUsd += Math.max(0, end.cost - start.cost);
+}
+
 function parkKey(
   sessionId: string,
   sessionFileName: string | undefined,
@@ -468,6 +525,9 @@ function applyPendingProviderRegistrations({
 export async function createPiSession(
   input: CreatePiSessionInput,
 ): Promise<HarnessV1Session> {
+  // Existing totals survive a resume (parked or replayed) so interval
+  // deltas taken by the host stay monotonic within the process.
+  ensureSessionUsageTotals(input.sessionId);
   if (input.isResume) {
     const key = parkKey(input.sessionId, input.resumeSessionFileName);
     const parkedSession = parkedPiSessions.get(key);
@@ -1155,6 +1215,15 @@ export async function createPiSession(
         currentEmit?.({ type: 'error', error: err });
       } finally {
         unsubErr();
+        // Record the turn's stats delta regardless of how the turn ended
+        // (natural stop, error, abort, suspend slice). This feeds the
+        // authoritative per-session totals that survive stream paths where
+        // finish parts — and their cost metadata — are lost.
+        accumulateSessionUsageTotals(
+          input.sessionId,
+          startStats,
+          snapshotStats(session),
+        );
       }
     })();
 
@@ -1283,6 +1352,7 @@ export async function createPiSession(
     doDestroy: async () => {
       if (stopped) return;
       stopped = true;
+      sessionUsageTotals.delete(input.sessionId);
       parkedPiSessions.delete(parkKey(input.sessionId, sessionFileName));
       settlePendingToolResults('Pi session stopped');
       settlePendingToolApprovals('Pi session stopped');

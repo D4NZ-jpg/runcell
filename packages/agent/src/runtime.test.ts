@@ -68,6 +68,7 @@ describe('defaultRuntime', () => {
         cacheWriteTokens: 0,
         totalTokens: 0,
         costUsd: 0,
+        costMeasured: true,
       },
     });
     expect(state.sandboxSettings).toEqual([undefined]);
@@ -1355,6 +1356,112 @@ describe('defaultRuntime', () => {
       cacheWriteTokens: 20,
       totalTokens: 440,
       costUsd: 0.75,
+      costMeasured: true,
+    });
+  });
+
+  it('reconciles usage from adapter session totals when stream metadata is lost', async () => {
+    // Simulates a synthetic harness completion path: the finish part carries
+    // no usage or cost metadata, but the adapter's per-session totals — fed
+    // by Pi's own stats — recorded the turn. The run must report the totals
+    // delta, not zeros.
+    const state = installRuntimeMocks([
+      agent => {
+        state.sessionUsageTotals.set('test-session', {
+          inputTokens: 100,
+          outputTokens: 40,
+          cacheReadTokens: 30,
+          cacheWriteTokens: 10,
+          costUsd: 0.42,
+        });
+        agent.submit({ ok: true });
+        return [
+          { type: 'text-delta', text: 'done' },
+          // Metadata-free synthetic finish.
+          { type: 'finish', finishReason: 'stop' },
+        ];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    const result = await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() })),
+    );
+
+    expect(result.usage).toEqual({
+      inputTokens: 100,
+      outputTokens: 40,
+      cacheReadTokens: 30,
+      cacheWriteTokens: 10,
+      totalTokens: 180,
+      costUsd: 0.42,
+      costMeasured: true,
+    });
+  });
+
+  it('reports costMeasured: false for token usage without attributable cost', async () => {
+    const state = installRuntimeMocks([
+      agent => {
+        state.sessionUsageTotals.set('test-session', {
+          inputTokens: 500,
+          outputTokens: 200,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          costUsd: 0,
+        });
+        agent.submit({ ok: true });
+        return [{ type: 'finish', finishReason: 'stop' }];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    const result = await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() })),
+    );
+
+    expect(result.usage.totalTokens).toBe(700);
+    expect(result.usage.costUsd).toBe(0);
+    expect(result.usage.costMeasured).toBe(false);
+  });
+
+  it('diffs adapter totals against the run-start baseline on resumed sessions', async () => {
+    const state = installRuntimeMocks([
+      agent => {
+        // Totals already carry a prior run's usage at run start; the stream
+        // script bumps them by this run's consumption.
+        const prior = state.sessionUsageTotals.get('test-session');
+        state.sessionUsageTotals.set('test-session', {
+          inputTokens: (prior?.inputTokens ?? 0) + 10,
+          outputTokens: (prior?.outputTokens ?? 0) + 5,
+          cacheReadTokens: prior?.cacheReadTokens ?? 0,
+          cacheWriteTokens: prior?.cacheWriteTokens ?? 0,
+          costUsd: (prior?.costUsd ?? 0) + 0.01,
+        });
+        agent.submit({ ok: true });
+        return [{ type: 'finish', finishReason: 'stop' }];
+      },
+    ]);
+    state.sessionUsageTotals.set('test-session', {
+      inputTokens: 1000,
+      outputTokens: 400,
+      cacheReadTokens: 50,
+      cacheWriteTokens: 20,
+      costUsd: 9.99,
+    });
+    const runtime = await loadRuntime();
+
+    const result = await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() })),
+    );
+
+    expect(result.usage).toEqual({
+      inputTokens: 10,
+      outputTokens: 5,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 15,
+      costUsd: expect.closeTo(0.01, 6) as number,
+      costMeasured: true,
     });
   });
 
@@ -1506,6 +1613,7 @@ function installRuntimeMocks(scripts: StreamScript[] = []): TestState {
     sandboxSettings: [],
     sandboxSession: new TestSandboxSession(),
     scripts: [...scripts],
+    sessionUsageTotals: new Map(),
   };
 
   vi.doMock('@ai-sdk/harness/agent', () => ({
@@ -1581,6 +1689,9 @@ function installRuntimeMocks(scripts: StreamScript[] = []): TestState {
       state.piSettings.push(settings);
       return { settings };
     },
+    getPiSessionUsageTotals(sessionId: string) {
+      return state.sessionUsageTotals.get(sessionId);
+    },
   }));
 
   vi.doMock('@earendil-works/pi-coding-agent', () => ({
@@ -1636,6 +1747,16 @@ interface TestState {
   sandboxSettings: (SandboxSettings | undefined)[];
   sandboxSession: TestSandboxSession;
   scripts: StreamScript[];
+  /** Mocked adapter usage totals, keyed by session id. */
+  sessionUsageTotals: Map<string, SessionUsageTotals>;
+}
+
+interface SessionUsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
 }
 
 interface TestHarnessAgent {

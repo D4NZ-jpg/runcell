@@ -134,6 +134,7 @@ function installMocks(): void {
     HARNESS_ID: 'pi',
     PI_SILENT_TURN_ABORT_REASON: Symbol.for('runcell.pi.silent-turn-abort'),
     createPi: (settings: unknown) => ({ settings }),
+    getPiSessionUsageTotals: () => undefined,
   }));
   vi.doMock('@earendil-works/pi-coding-agent', () => ({
     getAgentDir: () => '/agent-dir',

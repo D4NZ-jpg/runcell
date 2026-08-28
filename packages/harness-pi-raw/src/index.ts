@@ -12,9 +12,11 @@ export type { PiAuthOptions } from './pi-auth';
 export {
   PI_SILENT_TURN_ABORT_REASON,
   PiExtensionError,
+  getPiSessionUsageTotals,
 } from './pi-session';
 export type {
   PiCredentialStore,
+  PiSessionUsageTotals,
   PiResourceLoaderOptions,
   PiSessionSettings,
   PiThinkingLevel,

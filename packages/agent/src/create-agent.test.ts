@@ -293,6 +293,7 @@ function createRuntimeMock(
           cacheWriteTokens: 0,
           totalTokens: 0,
           costUsd: 0,
+          costMeasured: true,
         },
       });
     },

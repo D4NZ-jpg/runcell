@@ -20,9 +20,11 @@ import type {
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import {
   createPi,
+  getPiSessionUsageTotals,
   PI_SILENT_TURN_ABORT_REASON,
   type PiCredentialStore,
   type PiHarnessSettings,
+  type PiSessionUsageTotals,
   type PiThinkingLevel,
 } from '@local/harness-pi-raw';
 import path from 'node:path';
@@ -211,6 +213,14 @@ async function runWithHarness({
     ...(runOptions.signal ? { abortSignal: runOptions.signal } : {}),
   });
 
+  // Authoritative usage accounting: snapshot the adapter's cumulative
+  // per-session totals now and diff at return time. Stream finish parts can
+  // lose their cost metadata on synthetic harness completion paths (errors,
+  // aborts, pauses); Pi's session stats pair tokens and cost atomically, so
+  // the interval delta survives every completion path. The stream-accumulated
+  // usage remains the fallback when no totals are recorded.
+  const usageBaseline = getPiSessionUsageTotals(session.sessionId);
+
   try {
     const maxAttempts = schema ? config.maxRepairs : 0;
     for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
@@ -300,7 +310,11 @@ async function runWithHarness({
           files: [...changedFiles.values()],
           finishReason,
           sessionId: session.sessionId,
-          usage,
+          usage: finalizeRunUsage(
+            usage,
+            usageBaseline,
+            getPiSessionUsageTotals(session.sessionId),
+          ),
         };
       }
 
@@ -329,7 +343,11 @@ async function runWithHarness({
           files: [...changedFiles.values()],
           finishReason,
           sessionId: session.sessionId,
-          usage,
+          usage: finalizeRunUsage(
+            usage,
+            usageBaseline,
+            getPiSessionUsageTotals(session.sessionId),
+          ),
         };
       }
     }
@@ -788,6 +806,58 @@ function createRunUsage(): RunUsage {
     cacheWriteTokens: 0,
     totalTokens: 0,
     costUsd: 0,
+    costMeasured: true,
+  };
+}
+
+/**
+ * Produce the run's final usage. When the adapter recorded per-session
+ * totals, the run's interval delta over them is authoritative: Pi's session
+ * stats pair tokens and cost atomically per assistant message, so the delta
+ * is immune to stream completion paths that drop finish-part metadata. The
+ * stream-accumulated usage is the fallback when no totals exist.
+ * `costMeasured` is `false` only when tokens were consumed but no cost could
+ * be attributed (an unpriced model — cost loss in transit is repaired by the
+ * reconciliation above).
+ */
+function finalizeRunUsage(
+  streamUsage: RunUsage,
+  baseline: PiSessionUsageTotals | undefined,
+  totals: PiSessionUsageTotals | undefined,
+): RunUsage {
+  let usage = streamUsage;
+  if (totals) {
+    const inputTokens = Math.max(
+      0,
+      totals.inputTokens - (baseline?.inputTokens ?? 0),
+    );
+    const outputTokens = Math.max(
+      0,
+      totals.outputTokens - (baseline?.outputTokens ?? 0),
+    );
+    const cacheReadTokens = Math.max(
+      0,
+      totals.cacheReadTokens - (baseline?.cacheReadTokens ?? 0),
+    );
+    const cacheWriteTokens = Math.max(
+      0,
+      totals.cacheWriteTokens - (baseline?.cacheWriteTokens ?? 0),
+    );
+    const costUsd = Math.max(0, totals.costUsd - (baseline?.costUsd ?? 0));
+    usage = {
+      inputTokens,
+      outputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      totalTokens:
+        inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens,
+      costUsd,
+      costMeasured: true,
+    };
+  }
+  return {
+    ...usage,
+    costMeasured: usage.totalTokens === 0 || usage.costUsd > 0,
   };
 }
 
@@ -836,6 +906,9 @@ function readTurnUsage(part: Record<string, unknown>): RunUsage {
     cacheWriteTokens: cacheWrite,
     totalTokens: input + cacheRead + cacheWrite + output,
     costUsd,
+    // Per-turn parts cannot judge measurability; the run-level finalizer
+    // decides once the totals are known.
+    costMeasured: true,
   };
 }
 

@@ -14,6 +14,7 @@ import type {
 } from '@ai-sdk/harness';
 import {
   createPiSession,
+  getPiSessionUsageTotals,
   PI_SILENT_TURN_ABORT_REASON,
   PiExtensionError,
 } from './pi-session';
@@ -138,7 +139,17 @@ describe('createPiSession', () => {
       outputTokens: { total: 15, text: undefined, reasoning: undefined },
     });
     expect(finish?.['harnessMetadata']).toEqual({ pi: { costUsd: 0.5 } });
+    // The same delta lands in the per-session totals registry, which hosts
+    // read to reconcile run usage when stream metadata is lost downstream.
+    expect(getPiSessionUsageTotals('session-usage')).toEqual({
+      inputTokens: 30,
+      outputTokens: 15,
+      cacheReadTokens: 60,
+      cacheWriteTokens: 4,
+      costUsd: 0.5,
+    });
     await session.doDestroy();
+    expect(getPiSessionUsageTotals('session-usage')).toBeUndefined();
   });
 
   it('silently aborts a terminal turn only after Pi prompt settles', async () => {
@@ -236,6 +247,14 @@ describe('createPiSession', () => {
       outputTokens: { total: 15, text: undefined, reasoning: undefined },
     });
     expect(finish?.['harnessMetadata']).toEqual({ pi: { costUsd: 0.5 } });
+    // The aborted turn's delta is also recorded in the per-session totals.
+    expect(getPiSessionUsageTotals('session-silent-usage')).toEqual({
+      inputTokens: 30,
+      outputTokens: 15,
+      cacheReadTokens: 60,
+      cacheWriteTokens: 4,
+      costUsd: 0.5,
+    });
     await session.doDestroy();
   });
 

@@ -193,9 +193,19 @@ export interface RunUsage {
    * Estimated cost in US dollars at the model's published API list price
    * (sourced from the models.dev-derived catalog, including tiered pricing).
    * This is the as-if-API price even when the run used subscription (OAuth)
-   * credentials. `0` when the catalog has no pricing for the model.
+   * credentials. `0` when the catalog has no pricing for the model — check
+   * {@link RunUsage.costMeasured} to distinguish that case from genuinely
+   * free usage.
    */
   costUsd: number;
+  /**
+   * Whether `costUsd` is a real measurement. `false` when the run consumed
+   * tokens but no cost could be attributed — in practice, when the catalog
+   * has no (nonzero) pricing for the model — so a `costUsd` of `0` should
+   * be treated as “unpriced”, not “free”. Always `true` when `costUsd > 0`
+   * or the run consumed no tokens.
+   */
+  costMeasured: boolean;
 }
 
 /**
