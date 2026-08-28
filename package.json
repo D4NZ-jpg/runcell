@@ -11,7 +11,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @local/harness-pi-raw && npm run build -w runcell",
+    "build": "npm run build -w @local/harness-pi-raw && npm run build -w runcell && npm run build -w runcell-postgres-credentials",
     "typecheck": "npm run typecheck --workspaces --if-present && tsc -p examples/tsconfig.json --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

@@ -1,0 +1,52 @@
+{
+  "name": "runcell-postgres-credentials",
+  "version": "0.1.0",
+  "description": "Postgres-backed CredentialStore for runcell: whole-blob persistence with row-lock queueing for shared OAuth credentials in production.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "source": "./src/index.ts",
+  "files": [
+    "dist/**/*",
+    "src",
+    "!src/**/*.test.ts",
+    "CHANGELOG.md",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "npm run clean && tsup --tsconfig tsconfig.build.json",
+    "clean": "del-cli dist *.tsbuildinfo",
+    "type-check": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest --config vitest.node.config.js --run"
+  },
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "peerDependencies": {
+    "runcell": "^1.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.11.0",
+    "del-cli": "^6.0.0",
+    "pg": "^8.13.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  },
+  "keywords": [
+    "runcell",
+    "credentials",
+    "postgres",
+    "oauth",
+    "credential-store"
+  ]
+}
