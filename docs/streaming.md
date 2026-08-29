@@ -84,6 +84,9 @@ See [Files, tools, and events](./files-tools-events.md) for the full list.
 
 ## Errors
 
-If the run fails, the stream simply ends and `result` rejects. Handle errors
-where you `await result`; a `try`/`catch` around only the `for await` loop is
-not enough.
+If the run fails, `textStream` still ends normally and `result` rejects with
+the same failure object delivered to `onError`. Handle errors where you `await
+result`; a `try`/`catch` around only the `for await` loop is not enough.
+Use `getRunUsage(error)` to discover reconciled token and cost usage on
+failures after a session starts. Preflight and session or extension
+initialization failures occur before measurable work and do not carry usage.

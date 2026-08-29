@@ -182,9 +182,17 @@ describe('createAgent', () => {
       { nodeEnv: 'development', runtime },
     );
 
-    await expect(
-      agent.run({ prompt: '   ', schema: z.object({}) }),
-    ).rejects.toBeInstanceOf(InvalidOptionError);
+    const runFailure = await agent
+      .run({ prompt: '   ', schema: z.object({}) })
+      .catch((error: unknown) => error);
+    expect(runFailure).toBeInstanceOf(InvalidOptionError);
+    expect(runFailure).not.toHaveProperty('usage');
+
+    const streamFailure = await agent
+      .stream({ prompt: '   ', schema: z.object({}) })
+      .result.catch((error: unknown) => error);
+    expect(streamFailure).toBeInstanceOf(InvalidOptionError);
+    expect(streamFailure).not.toHaveProperty('usage');
     expect(runtime.calls).toHaveLength(0);
   });
 

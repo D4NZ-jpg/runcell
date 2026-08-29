@@ -76,8 +76,9 @@ providers. Extensions can register additional providers before Runcell resolves
 the configured model. Lifecycle callbacks report run activity, and extension
 hooks can block tool calls.
 
-Every result carries `usage`: per-run token counts and the estimated cost in
-US dollars at API list price, sourced from the
+Successful runs expose `result.usage`; `getRunUsage(error)` safely discovers
+usage on measurable failures after a session starts. Both report per-run token
+counts and the estimated cost in US dollars at API list price, sourced from the
 [models.dev](https://models.dev)-derived catalog. Runs on subscription
 credentials report the same as-if-API price, so agent costs stay observable
 regardless of how you authenticate.

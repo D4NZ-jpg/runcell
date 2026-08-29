@@ -102,7 +102,9 @@ and file changes observed before the submission are preserved.
 ### `RunUsage`
 
 Token usage and estimated cost for one run, accumulated across every model
-turn in the run (including repair turns).
+turn in the run (including repair turns). Successful runs expose it as
+`result.usage`; use `getRunUsage(error)` to discover it safely on failures after
+a session starts.
 
 | Field              | Type      | Description                                          |
 | ------------------ | --------- | ---------------------------------------------------- |
@@ -366,14 +368,44 @@ Paths must be relative workspace paths (no absolute paths, no `..`).
 
 All runcell errors extend `RuncellError`:
 
-| Error                   | Thrown when                                                                                                                            |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `InvalidOptionError`    | Options are malformed (bad sandbox option, reserved tool name, foreign thread…).                                                       |
-| `IncompleteResultError` | A structured run exhausted its repair budget without a valid payload.                                                                  |
-| `TurnError`             | The engine reported a terminal turn error, such as a provider failure or abort. The original error is available as `cause`.            |
-| `CredentialError`       | Credential configuration is unsafe or malformed (e.g. `local` in production).                                                          |
-| `ExtensionError`        | A supplied Pi extension failed to load or registered a colliding tool. Raised before any model request; the original error is `cause`. |
-| `NotImplementedError`   | A declared-but-unavailable capability was invoked.                                                                                     |
+| Error                   | Thrown when                                                                                                                                                           |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `InvalidOptionError`    | Options are malformed (bad sandbox option, reserved tool name, foreign thread…).                                                                                      |
+| `IncompleteResultError` | A structured run exhausted its repair budget without a valid payload. Its `usage` includes every unsuccessful repair turn.                                            |
+| `TurnError`             | The engine reported a terminal turn error, such as a provider failure or abort. The original error is available as `cause`; reconciled usage is available as `usage`. |
+| `CredentialError`       | Credential configuration is unsafe or malformed (e.g. `local` in production).                                                                                         |
+| `ExtensionError`        | A supplied Pi extension failed to load or registered a colliding tool. Raised before any model request; the original error is `cause`.                                |
+| `NotImplementedError`   | A declared-but-unavailable capability was invoked.                                                                                                                    |
+
+```ts
+import { getRunUsage } from 'runcell';
+
+try {
+  await agent.run({ prompt, schema });
+} catch (error) {
+  const usage = getRunUsage(error);
+  if (usage) console.log(usage.totalTokens, usage.costUsd);
+}
+```
+
+`getRunUsage(value)` validates every token bucket, the total, cost, and
+measurement flag before returning `RunUsage`; malformed or absent usage returns
+`undefined`.
+
+Caller abort reasons and unexpected object errors after session startup are
+enriched in place, so an externally supplied abort reason can retain its
+original error type while carrying a structural `usage` property. Primitive,
+frozen, or otherwise non-enrichable rejection values are normalized to a
+`TurnError`, with the original value as `cause`. An existing own or inherited
+`usage` property is never replaced or shadowed; Runcell wraps that failure and
+places reconciled usage on the wrapper. The same final object is delivered to
+`onError` and used to reject the run.
+
+`TurnError` and `IncompleteResultError` have optional `usage`: runtime-created
+failures after session startup carry it, while manually constructed instances
+do not receive misleading zero defaults. Option, credential, extension
+initialization, and session initialization failures happen outside the
+measurable run lifecycle and do not carry usage.
 
 ## Schema typing helpers
 

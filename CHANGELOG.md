@@ -4,6 +4,25 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Runtime-created `TurnError` and `IncompleteResultError` failures now expose
+  reconciled `usage`; manual construction leaves it absent. `getRunUsage()`
+  safely discovers validated usage on any failure shape. Caller abort reasons
+  and unexpected errors after session startup are enriched without changing
+  normal error identity.
+
+### Fixed
+
+- Token usage and estimated cost are no longer lost when `agent.run()` or
+  `StreamRun.result` rejects. Failed runs use the same session-total
+  reconciliation and stream fallback as successful results. Per-instance Pi
+  counters prevent concurrent runs with the same session id from sharing
+  deltas. Existing third-party `usage` properties are preserved. Preflight and
+  session-initialization errors remain without usage.
+
 ## 1.5.0 - 2026-08-27
 
 ### Added

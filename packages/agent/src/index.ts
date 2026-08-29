@@ -17,6 +17,7 @@ export type {
 } from '@local/harness-pi-raw';
 
 export {
+  getRunUsage,
   RuncellError,
   InvalidOptionError,
   IncompleteResultError,

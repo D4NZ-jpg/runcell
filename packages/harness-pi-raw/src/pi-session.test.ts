@@ -139,17 +139,113 @@ describe('createPiSession', () => {
       outputTokens: { total: 15, text: undefined, reasoning: undefined },
     });
     expect(finish?.['harnessMetadata']).toEqual({ pi: { costUsd: 0.5 } });
-    // The same delta lands in the per-session totals registry, which hosts
-    // read to reconcile run usage when stream metadata is lost downstream.
-    expect(getPiSessionUsageTotals('session-usage')).toEqual({
+    // The same delta lands on this exact session instance, which hosts read
+    // to reconcile run usage when stream metadata is lost downstream.
+    expect(getPiSessionUsageTotals(session)).toEqual({
       inputTokens: 30,
       outputTokens: 15,
       cacheReadTokens: 60,
       cacheWriteTokens: 4,
       costUsd: 0.5,
     });
+    expect(getPiSessionUsageTotals({})).toBeUndefined();
     await session.doDestroy();
-    expect(getPiSessionUsageTotals('session-usage')).toBeUndefined();
+    // The opaque source remains a stable snapshot even after teardown.
+    expect(getPiSessionUsageTotals(session)).toEqual({
+      inputTokens: 30,
+      outputTokens: 15,
+      cacheReadTokens: 60,
+      cacheWriteTokens: 4,
+      costUsd: 0.5,
+    });
+  });
+
+  it('keeps concurrent same-id session totals and deltas independent', async () => {
+    const promptA = createDeferred<void>();
+    const promptB = createDeferred<void>();
+    let statsA = {
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+    };
+    let statsB = {
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+    };
+
+    const piSessionA = createPiAgentSession({
+      prompt: vi.fn(() => promptA.promise),
+      getSessionStats: () => statsA,
+    });
+    const piSessionB = createPiAgentSession({
+      prompt: vi.fn(() => promptB.promise),
+      getSessionStats: () => statsB,
+    });
+    piMock.createAgentSession
+      .mockResolvedValueOnce({ session: piSessionA })
+      .mockResolvedValueOnce({ session: piSessionB });
+
+    const sessionA = await createPiSession({
+      sessionId: 'shared-session-id',
+      sandboxSession: createSandboxSession(),
+      sessionWorkDir: '/sandbox/work-a',
+      skills: [],
+      settings: {},
+      isResume: false,
+    });
+    const sessionB = await createPiSession({
+      sessionId: 'shared-session-id',
+      sandboxSession: createSandboxSession(),
+      sessionWorkDir: '/sandbox/work-b',
+      skills: [],
+      settings: {},
+      isResume: false,
+    });
+
+    const emitA = vi.fn();
+    const emitB = vi.fn();
+    const controlA = await sessionA.doPromptTurn({
+      prompt: 'a',
+      tools: [],
+      emit: emitA,
+    });
+    const controlB = await sessionB.doPromptTurn({
+      prompt: 'b',
+      tools: [],
+      emit: emitB,
+    });
+
+    statsA = {
+      tokens: { input: 11, output: 3, cacheRead: 2, cacheWrite: 1 },
+      cost: 0.04,
+    };
+    statsB = {
+      tokens: { input: 101, output: 30, cacheRead: 20, cacheWrite: 10 },
+      cost: 0.4,
+    };
+    // Settle in reverse order so the assertion is independent of completion
+    // order as well as the shared public session id.
+    promptB.resolve();
+    await controlB.done;
+    promptA.resolve();
+    await controlA.done;
+
+    expect(getPiSessionUsageTotals(sessionA)).toEqual({
+      inputTokens: 11,
+      outputTokens: 3,
+      cacheReadTokens: 2,
+      cacheWriteTokens: 1,
+      costUsd: 0.04,
+    });
+    expect(getPiSessionUsageTotals(sessionB)).toEqual({
+      inputTokens: 101,
+      outputTokens: 30,
+      cacheReadTokens: 20,
+      cacheWriteTokens: 10,
+      costUsd: 0.4,
+    });
+
+    await sessionA.doDestroy();
+    await sessionB.doDestroy();
   });
 
   it('silently aborts a terminal turn only after Pi prompt settles', async () => {
@@ -247,8 +343,8 @@ describe('createPiSession', () => {
       outputTokens: { total: 15, text: undefined, reasoning: undefined },
     });
     expect(finish?.['harnessMetadata']).toEqual({ pi: { costUsd: 0.5 } });
-    // The aborted turn's delta is also recorded in the per-session totals.
-    expect(getPiSessionUsageTotals('session-silent-usage')).toEqual({
+    // The aborted turn's delta is also recorded on this session instance.
+    expect(getPiSessionUsageTotals(session)).toEqual({
       inputTokens: 30,
       outputTokens: 15,
       cacheReadTokens: 60,

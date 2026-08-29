@@ -177,6 +177,8 @@ export interface RunOptions<
 /**
  * Token usage and estimated cost for a single {@link Agent.run} call,
  * accumulated across every model turn in the run (including repair turns).
+ * Available on successful results and measurable failures after a session
+ * starts.
  */
 export interface RunUsage {
   /** Non-cached input (prompt) tokens billed at the input rate. */

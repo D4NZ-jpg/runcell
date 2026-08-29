@@ -84,8 +84,12 @@ export const defaultRuntime: RuncellRuntime = {
     try {
       return await runWithHarness(input);
     } catch (error) {
+      const isExtensionError = safeInstanceOf(error, ExtensionError);
+      if (!isExtensionError.ok || isExtensionError.value) {
+        throw error;
+      }
       const extensionError = findPiExtensionError(error);
-      if (extensionError) {
+      if (extensionError.status === 'found') {
         throw new ExtensionError(extensionError.message, { cause: error });
       }
       throw error;
@@ -93,20 +97,89 @@ export const defaultRuntime: RuncellRuntime = {
   },
 };
 
+interface SafeInspection<T> {
+  ok: boolean;
+  value?: T;
+}
+
+function safeInstanceOf(
+  value: unknown,
+  constructor: abstract new (...args: never[]) => object,
+): SafeInspection<boolean> {
+  try {
+    return { ok: true, value: value instanceof constructor };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function safeReadProperty(
+  value: object,
+  property: PropertyKey,
+): SafeInspection<unknown> {
+  try {
+    return { ok: true, value: Reflect.get(value, property) };
+  } catch {
+    return { ok: false };
+  }
+}
+
 /**
  * Find a harness `PiExtensionError` anywhere in an error's cause chain. The
  * harness may surface it directly (session init) or wrapped in a turn error
- * (tool-collision check on the first turn).
+ * (tool-collision check on the first turn). Hostile inspection is reported
+ * separately so post-session failures can be normalized without affecting
+ * pre-session rejection identity.
  */
-function findPiExtensionError(error: unknown): Error | undefined {
+type PiExtensionErrorInspection =
+  | { status: 'found'; message: string }
+  | { status: 'not-found' }
+  | { status: 'uninspectable' };
+
+function findPiExtensionError(error: unknown): PiExtensionErrorInspection {
   let current: unknown = error;
-  while (current instanceof Error) {
-    if (current.name === 'PiExtensionError') {
-      return current;
+  const seen = new Set<object>();
+  while (
+    (typeof current === 'object' && current !== null) ||
+    typeof current === 'function'
+  ) {
+    const object = current;
+    if (seen.has(object)) {
+      return { status: 'not-found' };
     }
-    current = current.cause;
+    seen.add(object);
+
+    const isError = safeInstanceOf(current, Error);
+    if (!isError.ok) {
+      return { status: 'uninspectable' };
+    }
+    if (!isError.value) {
+      return { status: 'not-found' };
+    }
+    const name = safeReadProperty(object, 'name');
+    if (!name.ok) {
+      return { status: 'uninspectable' };
+    }
+    if (name.value === 'PiExtensionError') {
+      const message = safeReadProperty(object, 'message');
+      if (!message.ok) {
+        return { status: 'uninspectable' };
+      }
+      return {
+        status: 'found',
+        message:
+          typeof message.value === 'string'
+            ? message.value
+            : 'Pi extension failed.',
+      };
+    }
+    const cause = safeReadProperty(object, 'cause');
+    if (!cause.ok) {
+      return { status: 'uninspectable' };
+    }
+    current = cause.value;
   }
-  return undefined;
+  return { status: 'not-found' };
 }
 
 async function runWithHarness({
@@ -219,7 +292,7 @@ async function runWithHarness({
   // aborts, pauses); Pi's session stats pair tokens and cost atomically, so
   // the interval delta survives every completion path. The stream-accumulated
   // usage remains the fallback when no totals are recorded.
-  const usageBaseline = getPiSessionUsageTotals(session.sessionId);
+  const usageBaseline = getPiSessionUsageTotals(session);
 
   try {
     const maxAttempts = schema ? config.maxRepairs : 0;
@@ -313,7 +386,7 @@ async function runWithHarness({
           usage: finalizeRunUsage(
             usage,
             usageBaseline,
-            getPiSessionUsageTotals(session.sessionId),
+            getPiSessionUsageTotals(session),
           ),
         };
       }
@@ -327,10 +400,7 @@ async function runWithHarness({
       // the iterator closes cleanly.
       if (streamError) {
         const { cause } = streamError;
-        throw new TurnError(
-          cause instanceof Error ? cause.message : String(cause),
-          { cause },
-        );
+        throw new TurnError(failureMessage(cause), { cause });
       }
 
       // No schema: the turn's text is the output; return after one turn.
@@ -346,7 +416,7 @@ async function runWithHarness({
           usage: finalizeRunUsage(
             usage,
             usageBaseline,
-            getPiSessionUsageTotals(session.sessionId),
+            getPiSessionUsageTotals(session),
           ),
         };
       }
@@ -356,8 +426,31 @@ async function runWithHarness({
       'Agent finished without submitting a valid structured result.',
     );
   } catch (error) {
-    safeEmit(events?.onError, error);
-    throw error;
+    // Once caller cancellation is observable it is authoritative, even when
+    // the harness or stream lost the race by throwing a different error.
+    const callerAborted = runOptions.signal?.aborted === true;
+    const runError: unknown = callerAborted
+      ? (runOptions.signal?.reason as unknown)
+      : error;
+    const extensionError = callerAborted
+      ? ({ status: 'not-found' } as const)
+      : findPiExtensionError(runError);
+    const reconciledUsage = finalizeRunUsage(
+      usage,
+      usageBaseline,
+      getPiSessionUsageTotals(session),
+    );
+    const failure =
+      extensionError.status === 'found'
+        ? new ExtensionError(extensionError.message, { cause: runError })
+        : extensionError.status === 'uninspectable'
+          ? new TurnError('Agent turn failed.', {
+              cause: runError,
+              usage: reconciledUsage,
+            })
+          : attachRunUsage(runError, reconciledUsage);
+    safeEmit(events?.onError, failure);
+    throw failure;
   } finally {
     const ownedSandbox = ownsSandbox ? sandboxSession : undefined;
     if (succeeded && threadInternals) {
@@ -379,6 +472,73 @@ async function runWithHarness({
     } else {
       await bestEffort(() => session.destroy());
     }
+  }
+}
+
+function attachRunUsage(error: unknown, usage: RunUsage): unknown {
+  const isIncompleteResult = safeInstanceOf(error, IncompleteResultError);
+  if (!isIncompleteResult.ok) {
+    return new TurnError('Agent turn failed.', { cause: error, usage });
+  }
+
+  if (
+    (typeof error === 'object' && error !== null) ||
+    typeof error === 'function'
+  ) {
+    try {
+      // Never replace or shadow a third-party usage contract. Wrapping keeps
+      // both values discoverable without mutating the original object.
+      if (Reflect.has(error, 'usage')) {
+        return new TurnError('Agent turn failed.', { cause: error, usage });
+      }
+      if (
+        !Reflect.defineProperty(error, 'usage', {
+          value: usage,
+          configurable: true,
+          enumerable: true,
+        })
+      ) {
+        return new TurnError('Agent turn failed.', { cause: error, usage });
+      }
+
+      // A proxy may claim a successful definition or synthesize the expected
+      // read. Preserve identity only when both its own descriptor and normal
+      // property access expose the exact reconciled object.
+      const descriptor = Reflect.getOwnPropertyDescriptor(error, 'usage');
+      if (
+        descriptor !== undefined &&
+        'value' in descriptor &&
+        descriptor.value === usage &&
+        Reflect.get(error, 'usage') === usage
+      ) {
+        return error;
+      }
+      return new TurnError('Agent turn failed.', { cause: error, usage });
+    } catch {
+      // Frozen/proxied objects may reject inspection or enrichment. Their
+      // identity cannot safely carry the reconciled usage.
+      return new TurnError('Agent turn failed.', { cause: error, usage });
+    }
+  }
+
+  return new TurnError('Agent turn failed.', { cause: error, usage });
+}
+
+function failureMessage(error: unknown): string {
+  const isError = safeInstanceOf(error, Error);
+  if (!isError.ok) {
+    return 'Agent turn failed.';
+  }
+  if (isError.value) {
+    const message = safeReadProperty(error as object, 'message');
+    return message.ok && typeof message.value === 'string'
+      ? message.value
+      : 'Agent turn failed.';
+  }
+  try {
+    return String(error);
+  } catch {
+    return 'Agent turn failed.';
   }
 }
 

@@ -50,7 +50,8 @@ try {
   await agent.run({ prompt, schema });
 } catch (error) {
   if (error instanceof IncompleteResultError) {
-    // agent never produced a valid structured result
+    // Includes every unsuccessful initial and repair turn.
+    console.log(error.usage);
   }
 }
 ```

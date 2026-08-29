@@ -10,6 +10,7 @@ export { createPi, HARNESS_ID } from './pi-harness';
 export type { PiHarnessSettings } from './pi-harness';
 export type { PiAuthOptions } from './pi-auth';
 export {
+  PI_SESSION_USAGE_TOTALS,
   PI_SILENT_TURN_ABORT_REASON,
   PiExtensionError,
   getPiSessionUsageTotals,

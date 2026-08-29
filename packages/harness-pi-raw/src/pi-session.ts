@@ -65,7 +65,7 @@ import { syncHostWorkspaceFromSandbox } from './pi-workspace-mirror';
  * same-process resume instead of stopping it and resolving the promise as an
  * error. Cross-process resume still falls back to the persisted session file.
  */
-const parkedPiSessions = new Map<string, HarnessV1Session>();
+const parkedPiSessions = new Map<string, PiHarnessSession>();
 
 /*
  * Parked sessions hold live resources (VFS mount, host tmpdir, live Pi
@@ -107,12 +107,11 @@ function snapshotStats(session: AgentSession): StatsSnapshot {
 }
 
 /**
- * Cumulative usage a session's turns have consumed, summed from Pi's own
- * session stats. Pi pairs token counts and catalog-priced cost atomically on
- * every recorded assistant message, so these totals survive completion paths
- * where per-part stream metadata is dropped (errors, aborts, synthetic
- * harness finishes). Keyed by harness session id; see
- * {@link getPiSessionUsageTotals}.
+ * Cumulative usage a session instance's turns have consumed, summed from Pi's
+ * own session stats. Pi pairs token counts and catalog-priced cost atomically
+ * on every recorded assistant message, so these totals survive completion
+ * paths where per-part stream metadata is dropped (errors, aborts, synthetic
+ * harness finishes).
  */
 export interface PiSessionUsageTotals {
   inputTokens: number;
@@ -122,40 +121,37 @@ export interface PiSessionUsageTotals {
   costUsd: number;
 }
 
-const sessionUsageTotals = new Map<string, PiSessionUsageTotals>();
+/** Opaque per-session usage source attached to Pi harness sessions. */
+export const PI_SESSION_USAGE_TOTALS: unique symbol = Symbol(
+  'runcell.pi.session-usage-totals',
+);
 
-/**
- * Read the cumulative usage totals recorded for a session in this process.
- * Callers snapshot at a boundary (e.g. run start) and diff against a later
- * read for an authoritative interval delta. Returns a copy; `undefined`
- * until the session exists.
- */
-export function getPiSessionUsageTotals(
-  sessionId: string,
-): PiSessionUsageTotals | undefined {
-  const totals = sessionUsageTotals.get(sessionId);
-  return totals ? { ...totals } : undefined;
+interface PiSessionUsageSource {
+  readonly [PI_SESSION_USAGE_TOTALS]: () => PiSessionUsageTotals;
 }
 
-function ensureSessionUsageTotals(sessionId: string): void {
-  if (!sessionUsageTotals.has(sessionId)) {
-    sessionUsageTotals.set(sessionId, {
-      inputTokens: 0,
-      outputTokens: 0,
-      cacheReadTokens: 0,
-      cacheWriteTokens: 0,
-      costUsd: 0,
-    });
-  }
+type PiHarnessSession = HarnessV1Session & PiSessionUsageSource;
+
+/**
+ * Read cumulative usage recorded for this exact Pi session instance. Callers
+ * snapshot at a boundary (e.g. run start) and diff against a later read for an
+ * authoritative interval delta. Returns a copy, or `undefined` for sessions
+ * not created by this adapter.
+ */
+export function getPiSessionUsageTotals(
+  source: object,
+): PiSessionUsageTotals | undefined {
+  const accessor = (source as Partial<PiSessionUsageSource>)[
+    PI_SESSION_USAGE_TOTALS
+  ];
+  return typeof accessor === 'function' ? accessor() : undefined;
 }
 
 function accumulateSessionUsageTotals(
-  sessionId: string,
+  totals: PiSessionUsageTotals,
   start: StatsSnapshot,
   end: StatsSnapshot,
 ): void {
-  const totals = sessionUsageTotals.get(sessionId);
-  if (!totals) return;
   totals.inputTokens += Math.max(0, end.input - start.input);
   totals.outputTokens += Math.max(0, end.output - start.output);
   totals.cacheReadTokens += Math.max(0, end.cacheRead - start.cacheRead);
@@ -170,7 +166,7 @@ function parkKey(
   return `${sessionId}\n${sessionFileName ?? ''}`;
 }
 
-function parkPiSession(key: string, session: HarnessV1Session): void {
+function parkPiSession(key: string, session: PiHarnessSession): void {
   parkedPiSessions.delete(key);
   parkedPiSessions.set(key, session);
   while (parkedPiSessions.size > MAX_PARKED_PI_SESSIONS) {
@@ -525,20 +521,30 @@ function applyPendingProviderRegistrations({
 export async function createPiSession(
   input: CreatePiSessionInput,
 ): Promise<HarnessV1Session> {
-  // Existing totals survive a resume (parked or replayed) so interval
-  // deltas taken by the host stay monotonic within the process.
-  ensureSessionUsageTotals(input.sessionId);
   if (input.isResume) {
     const key = parkKey(input.sessionId, input.resumeSessionFileName);
     const parkedSession = parkedPiSessions.get(key);
     if (parkedSession) {
       parkedPiSessions.delete(key);
-      return {
-        ...parkedSession,
-        isResume: true,
-      };
+      Object.defineProperty(parkedSession, 'isResume', {
+        value: true,
+        configurable: true,
+        enumerable: true,
+      });
+      return parkedSession;
     }
   }
+
+  // Totals belong to this concrete adapter session. A cold replay gets a new
+  // zero baseline even when another live session has the same public id;
+  // parked same-process resumes return the original object and closure above.
+  const sessionUsageTotals: PiSessionUsageTotals = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costUsd: 0,
+  };
 
   // Host-side mirror layout under tmpdir. Replace path-separator characters
   // that would otherwise turn a session id like `2026-05-29T17:54:27` into a
@@ -1220,7 +1226,7 @@ export async function createPiSession(
         // authoritative per-session totals that survive stream paths where
         // finish parts — and their cost metadata — are lost.
         accumulateSessionUsageTotals(
-          input.sessionId,
+          sessionUsageTotals,
           startStats,
           snapshotStats(session),
         );
@@ -1281,8 +1287,9 @@ export async function createPiSession(
     };
   };
 
-  const sessionImpl: HarnessV1Session = {
+  const sessionImpl: PiHarnessSession = {
     sessionId: input.sessionId,
+    [PI_SESSION_USAGE_TOTALS]: () => ({ ...sessionUsageTotals }),
     isResume: input.isResume,
     // The model Pi actually resolves to (the configured id, or its default when
     // unset) — `gen_ai.request.model`.
@@ -1352,7 +1359,6 @@ export async function createPiSession(
     doDestroy: async () => {
       if (stopped) return;
       stopped = true;
-      sessionUsageTotals.delete(input.sessionId);
       parkedPiSessions.delete(parkKey(input.sessionId, sessionFileName));
       settlePendingToolResults('Pi session stopped');
       settlePendingToolApprovals('Pi session stopped');

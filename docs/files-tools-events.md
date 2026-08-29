@@ -140,15 +140,18 @@ const agent = createAgent({
 });
 ```
 
-| Event          | Fires when                                                                   |
-| -------------- | ---------------------------------------------------------------------------- |
-| `onText`       | a text delta streams from the model                                          |
-| `onToolCall`   | the agent invokes one of your tools                                          |
-| `onToolResult` | one of your tools returns                                                    |
-| `onFileChange` | the agent creates/modifies a workspace file                                  |
-| `onRepair`     | a repair turn starts (structured runs only)                                  |
-| `onFinish`     | a turn completes, with its finish reason                                     |
-| `onError`      | the run fails after the session has started (the run still rejects normally) |
+| Event          | Fires when                                                                                                        |
+| -------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `onText`       | a text delta streams from the model                                                                               |
+| `onToolCall`   | the agent invokes one of your tools                                                                               |
+| `onToolResult` | one of your tools returns                                                                                         |
+| `onFileChange` | the agent creates/modifies a workspace file                                                                       |
+| `onRepair`     | a repair turn starts (structured runs only)                                                                       |
+| `onFinish`     | a turn completes, with its finish reason                                                                          |
+| `onError`      | the run fails after the session starts; usage is attached before the callback and the same object rejects the run |
+
+Callback exceptions are swallowed. In particular, an exception from `onError`
+does not replace the enriched failure object used to reject the run.
 
 Events fire for `run()` and `stream()` alike. For streaming text to a client,
 prefer `agent.stream()`'s `textStream` over `onText`; see

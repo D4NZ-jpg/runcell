@@ -404,21 +404,29 @@ describe('defaultRuntime', () => {
     expect(state.instances[0]?.streamCalls).toHaveLength(1);
   });
 
-  it('lets caller cancellation win when validation finishes after abort', async () => {
+  it('lets an object caller reason win over a trailing harness error', async () => {
     const callerAbort = new AbortController();
-    const callerError = new Error('caller cancelled');
+    const callerError = { code: 'caller-cancelled' };
     const schema = createStandardSchema({ withJsonSchema: true, async: true });
+    const errors: unknown[] = [];
     let turnSignal: AbortSignal | undefined;
-    installRuntimeMocks([
+    const state = installRuntimeMocks([
       (agent, input) => ({
         async *[Symbol.asyncIterator]() {
           turnSignal = input.abortSignal;
           yield { type: 'text-delta', text: '' };
           const submission = agent.submitAsync({ count: 2 });
+          state.sessionUsageTotals.set(getTestSession(agent), {
+            inputTokens: 12,
+            outputTokens: 3,
+            cacheReadTokens: 4,
+            cacheWriteTokens: 1,
+            costUsd: 0.02,
+          });
           callerAbort.abort(callerError);
           await submission;
           expect(input.abortSignal?.reason).toBe(callerError);
-          throw callerError;
+          throw new Error('harness abort failed');
         },
       }),
     ]);
@@ -427,12 +435,73 @@ describe('defaultRuntime', () => {
     await expect(
       runtime.run(
         createRuntimeInput(schema, {
+          agentOptions: { events: { onError: error => errors.push(error) } },
           config: { maxRepairs: 0 },
           runOptions: { signal: callerAbort.signal },
         }),
       ),
     ).rejects.toBe(callerError);
     expect(turnSignal?.reason).toBe(callerError);
+    expect(
+      (callerError as typeof callerError & { usage: unknown }).usage,
+    ).toEqual({
+      inputTokens: 12,
+      outputTokens: 3,
+      cacheReadTokens: 4,
+      cacheWriteTokens: 1,
+      totalTokens: 20,
+      costUsd: 0.02,
+      costMeasured: true,
+    });
+    expect(errors).toEqual([callerError]);
+  });
+
+  it('wraps a primitive caller reason with reconciled usage and exact cause', async () => {
+    const callerAbort = new AbortController();
+    const errors: unknown[] = [];
+    const state = installRuntimeMocks([
+      (agent, input) => ({
+        async *[Symbol.asyncIterator]() {
+          await Promise.resolve();
+          yield { type: 'text-delta', text: 'partial' };
+          state.sessionUsageTotals.set(getTestSession(agent), {
+            inputTokens: 7,
+            outputTokens: 2,
+            cacheReadTokens: 1,
+            cacheWriteTokens: 0,
+            costUsd: 0.01,
+          });
+          callerAbort.abort('caller stopped');
+          expect(input.abortSignal?.reason).toBe('caller stopped');
+          throw new Error('harness abort failed');
+        },
+      }),
+    ]);
+    const runtime = await loadRuntime();
+    const { TurnError } = await import('./errors.js');
+
+    const failure = await runtime
+      .run(
+        createRuntimeInput(z.object({ ok: z.boolean() }), {
+          agentOptions: { events: { onError: error => errors.push(error) } },
+          config: { maxRepairs: 0 },
+          runOptions: { signal: callerAbort.signal },
+        }),
+      )
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(TurnError);
+    expect((failure as Error).cause).toBe('caller stopped');
+    expect((failure as InstanceType<typeof TurnError>).usage).toEqual({
+      inputTokens: 7,
+      outputTokens: 2,
+      cacheReadTokens: 1,
+      cacheWriteTokens: 0,
+      totalTokens: 10,
+      costUsd: 0.01,
+      costMeasured: true,
+    });
+    expect(errors).toEqual([failure]);
   });
 
   it('returns the submission when caller cancellation happens afterward', async () => {
@@ -621,6 +690,7 @@ describe('defaultRuntime', () => {
   });
 
   it('maps harness extension failures to ExtensionError', async () => {
+    const errors: unknown[] = [];
     installRuntimeMocks([
       () => {
         throw Object.assign(new Error('keychain unavailable'), {
@@ -631,9 +701,62 @@ describe('defaultRuntime', () => {
     const runtime = await loadRuntime();
     const { ExtensionError } = await import('./errors.js');
 
-    await expect(
-      runtime.run(createRuntimeInput(z.object({ ok: z.boolean() }))),
-    ).rejects.toThrow(ExtensionError);
+    const failure = await runtime
+      .run(
+        createRuntimeInput(z.object({ ok: z.boolean() }), {
+          agentOptions: { events: { onError: error => errors.push(error) } },
+        }),
+      )
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(ExtensionError);
+    expect(failure).not.toHaveProperty('usage');
+    expect(errors).toEqual([failure]);
+  });
+
+  it('does not add usage to session-initialization failures', async () => {
+    const errors: unknown[] = [];
+    const initializationError = new Error('sandbox initialization failed');
+    const state = installRuntimeMocks();
+    state.createSessionError = initializationError;
+    const runtime = await loadRuntime();
+
+    const failure = await runtime
+      .run(
+        createRuntimeInput(z.object({ ok: z.boolean() }), {
+          agentOptions: { events: { onError: error => errors.push(error) } },
+        }),
+      )
+      .catch((error: unknown) => error);
+
+    expect(failure).toBe(initializationError);
+    expect(failure).not.toHaveProperty('usage');
+    expect(errors).toEqual([]);
+  });
+
+  it('preserves an uninspectable Proxy rejected during session initialization', async () => {
+    const target = new Error('sandbox initialization failed');
+    const initializationError = new Proxy(target, {
+      getPrototypeOf() {
+        throw new Error('getPrototypeOf trap');
+      },
+    });
+    const errors: unknown[] = [];
+    const state = installRuntimeMocks();
+    state.createSessionError = initializationError;
+    const runtime = await loadRuntime();
+
+    const failure = await runtime
+      .run(
+        createRuntimeInput(z.object({ ok: z.boolean() }), {
+          agentOptions: { events: { onError: error => errors.push(error) } },
+        }),
+      )
+      .catch((error: unknown) => error);
+
+    expect(failure).toBe(initializationError);
+    expect(Object.hasOwn(target, 'usage')).toBe(false);
+    expect(errors).toEqual([]);
   });
 
   it('accepts Standard Schema validators that are not Zod schemas', async () => {
@@ -1016,29 +1139,60 @@ describe('defaultRuntime', () => {
     expect(result.finishReason).toBe('stop');
   });
 
-  it('fails the run with the real error when the stream reports a terminal error', async () => {
-    const errors: unknown[] = [];
-    installRuntimeMocks([
-      () => [
-        { type: 'text-delta', text: 'partial' },
-        { type: 'error', error: new Error('400 provider says no') },
-      ],
+  it('adds reconciled session usage to TurnError and emits that same error', async () => {
+    const agentErrors: unknown[] = [];
+    const runErrors: unknown[] = [];
+    const state = installRuntimeMocks([
+      agent => {
+        state.sessionUsageTotals.set(getTestSession(agent), {
+          inputTokens: 100,
+          outputTokens: 40,
+          cacheReadTokens: 30,
+          cacheWriteTokens: 10,
+          costUsd: 0.42,
+        });
+        return [
+          { type: 'text-delta', text: 'partial' },
+          {
+            type: 'finish',
+            finishReason: 'error',
+            totalUsage: { inputTokens: 1, outputTokens: 1 },
+            providerMetadata: { pi: { costUsd: 9 } },
+          },
+          { type: 'error', error: new Error('400 provider says no') },
+        ];
+      },
     ]);
     const runtime = await loadRuntime();
     const { TurnError } = await import('./errors.js');
 
-    await expect(
-      runtime.run(
+    const failure = await runtime
+      .run(
         createRuntimeInput(z.object({ ok: z.boolean() }), {
-          agentOptions: { events: { onError: error => errors.push(error) } },
+          agentOptions: {
+            events: { onError: error => agentErrors.push(error) },
+          },
+          runOptions: {
+            events: { onError: error => runErrors.push(error) },
+          },
         }),
-      ),
-    ).rejects.toThrow('400 provider says no');
+      )
+      .catch((error: unknown) => error);
 
-    // Emitted exactly once, from the run-level catch, as the thrown TurnError.
-    expect(errors).toHaveLength(1);
-    expect(errors[0]).toBeInstanceOf(TurnError);
-    expect((errors[0] as Error).cause).toBeInstanceOf(Error);
+    expect(failure).toBeInstanceOf(TurnError);
+    expect((failure as Error).message).toBe('400 provider says no');
+    expect((failure as Error).cause).toBeInstanceOf(Error);
+    expect((failure as InstanceType<typeof TurnError>).usage).toEqual({
+      inputTokens: 100,
+      outputTokens: 40,
+      cacheReadTokens: 30,
+      cacheWriteTokens: 10,
+      totalTokens: 180,
+      costUsd: 0.42,
+      costMeasured: true,
+    });
+    expect(agentErrors).toEqual([failure]);
+    expect(runErrors).toEqual([failure]);
   });
 
   it('fails a plain turn on a terminal stream error instead of returning empty text', async () => {
@@ -1062,6 +1216,375 @@ describe('defaultRuntime', () => {
         runOptions: { prompt: 'say hi' },
       }),
     ).rejects.toBeInstanceOf(TurnError);
+  });
+
+  it('enriches an unexpected post-session iterator error in place', async () => {
+    const original = new Error('iterator failed');
+    const errors: unknown[] = [];
+    const state = installRuntimeMocks([
+      agent => ({
+        [Symbol.asyncIterator]() {
+          return {
+            next(): Promise<IteratorResult<StreamPart>> {
+              state.sessionUsageTotals.set(getTestSession(agent), {
+                inputTokens: 8,
+                outputTokens: 2,
+                cacheReadTokens: 1,
+                cacheWriteTokens: 0,
+                costUsd: 0.03,
+              });
+              return Promise.reject(original);
+            },
+          };
+        },
+      }),
+    ]);
+    const runtime = await loadRuntime();
+
+    const failure = await runtime
+      .run(
+        createRuntimeInput(z.object({ ok: z.boolean() }), {
+          agentOptions: { events: { onError: error => errors.push(error) } },
+        }),
+      )
+      .catch((error: unknown) => error);
+
+    expect(failure).toBe(original);
+    expect((original as Error & { usage: unknown }).usage).toEqual({
+      inputTokens: 8,
+      outputTokens: 2,
+      cacheReadTokens: 1,
+      cacheWriteTokens: 0,
+      totalTokens: 11,
+      costUsd: 0.03,
+      costMeasured: true,
+    });
+    expect(errors).toEqual([original]);
+  });
+
+  it('wraps without overwriting an existing third-party usage property', async () => {
+    const thirdPartyUsage = { requests: 1 };
+    const original = Object.assign(new Error('iterator failed'), {
+      usage: thirdPartyUsage,
+    });
+    const errors: unknown[] = [];
+    const state = installRuntimeMocks([
+      agent => ({
+        [Symbol.asyncIterator]() {
+          return {
+            next(): Promise<IteratorResult<StreamPart>> {
+              state.sessionUsageTotals.set(getTestSession(agent), {
+                inputTokens: 9,
+                outputTokens: 3,
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+                costUsd: 0.03,
+              });
+              return Promise.reject(original);
+            },
+          };
+        },
+      }),
+    ]);
+    const runtime = await loadRuntime();
+    const { TurnError } = await import('./errors.js');
+
+    const failure = await runtime
+      .run(
+        createRuntimeInput(z.object({ ok: z.boolean() }), {
+          agentOptions: { events: { onError: error => errors.push(error) } },
+        }),
+      )
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(TurnError);
+    expect((failure as Error).cause).toBe(original);
+    expect(original.usage).toBe(thirdPartyUsage);
+    expect((failure as InstanceType<typeof TurnError>).usage).toEqual({
+      inputTokens: 9,
+      outputTokens: 3,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 12,
+      costUsd: 0.03,
+      costMeasured: true,
+    });
+    expect(errors).toEqual([failure]);
+  });
+
+  it('wraps a non-enrichable post-session rejection in TurnError', async () => {
+    const original = 'iterator failed';
+    const errors: unknown[] = [];
+    const state = installRuntimeMocks([
+      agent => ({
+        [Symbol.asyncIterator]() {
+          return {
+            next(): Promise<IteratorResult<StreamPart>> {
+              state.sessionUsageTotals.set(getTestSession(agent), {
+                inputTokens: 5,
+                outputTokens: 2,
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+                costUsd: 0,
+              });
+              // Deliberately exercise normalization of a primitive rejection.
+              // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+              return Promise.reject(original);
+            },
+          };
+        },
+      }),
+    ]);
+    const runtime = await loadRuntime();
+    const { TurnError } = await import('./errors.js');
+
+    const failure = await runtime
+      .run(
+        createRuntimeInput(z.object({ ok: z.boolean() }), {
+          agentOptions: { events: { onError: error => errors.push(error) } },
+        }),
+      )
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(TurnError);
+    expect((failure as Error).cause).toBe(original);
+    expect((failure as InstanceType<typeof TurnError>).usage).toEqual({
+      inputTokens: 5,
+      outputTokens: 2,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 7,
+      costUsd: 0,
+      costMeasured: false,
+    });
+    expect(errors).toEqual([failure]);
+  });
+
+  it('normalizes hostile Proxy rejections without leaking inspection traps', async () => {
+    const existingUsage = { requests: 1 };
+    const cases: { label: string; original: unknown }[] = [
+      {
+        label: 'instanceof',
+        original: new Proxy(new Error('hidden'), {
+          getPrototypeOf() {
+            throw new Error('getPrototypeOf trap');
+          },
+        }),
+      },
+      {
+        label: 'name',
+        original: new Proxy(new Error('hidden'), {
+          get(target, property, receiver) {
+            if (property === 'name') throw new Error('name trap');
+            return Reflect.get(target, property, receiver) as unknown;
+          },
+        }),
+      },
+      {
+        label: 'cause',
+        original: new Proxy(new Error('hidden'), {
+          get(target, property, receiver) {
+            if (property === 'cause') throw new Error('cause trap');
+            return Reflect.get(target, property, receiver) as unknown;
+          },
+        }),
+      },
+      {
+        label: 'message',
+        original: new Proxy(
+          Object.assign(new Error('hidden'), { usage: existingUsage }),
+          {
+            get(target, property, receiver) {
+              if (property === 'message') throw new Error('message trap');
+              return Reflect.get(target, property, receiver) as unknown;
+            },
+          },
+        ),
+      },
+      {
+        label: 'property check',
+        original: new Proxy(new Error('hidden'), {
+          has() {
+            throw new Error('has trap');
+          },
+        }),
+      },
+      {
+        label: 'definition',
+        original: new Proxy(new Error('hidden'), {
+          defineProperty() {
+            throw new Error('defineProperty trap');
+          },
+        }),
+      },
+      {
+        label: 'descriptor',
+        original: new Proxy(new Error('hidden'), {
+          getOwnPropertyDescriptor() {
+            throw new Error('getOwnPropertyDescriptor trap');
+          },
+        }),
+      },
+      {
+        label: 'usage access',
+        original: new Proxy(new Error('hidden'), {
+          get(target, property, receiver) {
+            if (property === 'usage') throw new Error('usage trap');
+            return Reflect.get(target, property, receiver) as unknown;
+          },
+        }),
+      },
+    ];
+    const errors: unknown[] = [];
+    const state = installRuntimeMocks(
+      cases.map(({ original }) => agent => ({
+        [Symbol.asyncIterator]() {
+          return {
+            next(): Promise<IteratorResult<StreamPart>> {
+              state.sessionUsageTotals.set(getTestSession(agent), {
+                inputTokens: 6,
+                outputTokens: 2,
+                cacheReadTokens: 1,
+                cacheWriteTokens: 0,
+                costUsd: 0.04,
+              });
+              // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+              return Promise.reject(original);
+            },
+          };
+        },
+      })),
+    );
+    const runtime = await loadRuntime();
+    const { TurnError } = await import('./errors.js');
+
+    for (const [index, testCase] of cases.entries()) {
+      const failure = await runtime
+        .run(
+          createRuntimeInput(z.object({ ok: z.boolean() }), {
+            agentOptions: { events: { onError: error => errors.push(error) } },
+          }),
+        )
+        .catch((error: unknown) => error);
+
+      expect(failure, testCase.label).toBeInstanceOf(TurnError);
+      expect((failure as Error).message, testCase.label).toBe(
+        'Agent turn failed.',
+      );
+      expect((failure as Error).cause, testCase.label).toBe(testCase.original);
+      expect(
+        (failure as InstanceType<typeof TurnError>).usage,
+        testCase.label,
+      ).toEqual({
+        inputTokens: 6,
+        outputTokens: 2,
+        cacheReadTokens: 1,
+        cacheWriteTokens: 0,
+        totalTokens: 9,
+        costUsd: 0.04,
+        costMeasured: true,
+      });
+      expect(errors[index], testCase.label).toBe(failure);
+    }
+    expect(errors).toHaveLength(cases.length);
+  });
+
+  it('guards String conversion of a hostile terminal error cause', async () => {
+    const original = new Proxy(
+      {},
+      {
+        get(target, property, receiver) {
+          if (
+            property === Symbol.toPrimitive ||
+            property === 'valueOf' ||
+            property === 'toString'
+          ) {
+            throw new Error('String trap');
+          }
+          return Reflect.get(target, property, receiver) as unknown;
+        },
+      },
+    );
+    const errors: unknown[] = [];
+    const state = installRuntimeMocks([
+      agent => {
+        state.sessionUsageTotals.set(getTestSession(agent), {
+          inputTokens: 4,
+          outputTokens: 1,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          costUsd: 0.01,
+        });
+        return [{ type: 'error', error: original }];
+      },
+    ]);
+    const runtime = await loadRuntime();
+    const { TurnError } = await import('./errors.js');
+
+    const failure = await runtime
+      .run(
+        createRuntimeInput(z.object({ ok: z.boolean() }), {
+          agentOptions: { events: { onError: error => errors.push(error) } },
+        }),
+      )
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(TurnError);
+    expect((failure as Error).message).toBe('Agent turn failed.');
+    expect((failure as Error).cause).toBe(original);
+    expect((failure as InstanceType<typeof TurnError>).usage).toEqual({
+      inputTokens: 4,
+      outputTokens: 1,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 5,
+      costUsd: 0.01,
+      costMeasured: true,
+    });
+    expect(errors).toEqual([failure]);
+  });
+
+  it('falls back to finish-part usage when session totals are unavailable on failure', async () => {
+    const original = new Error('failed after finish');
+    installRuntimeMocks([
+      () => ({
+        async *[Symbol.asyncIterator]() {
+          await Promise.resolve();
+          yield {
+            type: 'finish',
+            finishReason: 'error',
+            totalUsage: {
+              inputTokens: 14,
+              inputTokenDetails: {
+                noCacheTokens: 10,
+                cacheReadTokens: 3,
+                cacheWriteTokens: 1,
+              },
+              outputTokens: 4,
+              totalTokens: 18,
+            },
+            providerMetadata: { pi: { costUsd: 0.05 } },
+          };
+          throw original;
+        },
+      }),
+    ]);
+    const runtime = await loadRuntime();
+
+    const failure = await runtime
+      .run(createRuntimeInput(z.object({ ok: z.boolean() })))
+      .catch((error: unknown) => error);
+
+    expect(failure).toBe(original);
+    expect((original as Error & { usage: unknown }).usage).toEqual({
+      inputTokens: 10,
+      outputTokens: 4,
+      cacheReadTokens: 3,
+      cacheWriteTokens: 1,
+      totalTokens: 18,
+      costUsd: 0.05,
+      costMeasured: true,
+    });
   });
 
   it('invokes both agent-level and per-run event callbacks', async () => {
@@ -1367,7 +1890,7 @@ describe('defaultRuntime', () => {
     // delta, not zeros.
     const state = installRuntimeMocks([
       agent => {
-        state.sessionUsageTotals.set('test-session', {
+        state.sessionUsageTotals.set(getTestSession(agent), {
           inputTokens: 100,
           outputTokens: 40,
           cacheReadTokens: 30,
@@ -1402,7 +1925,7 @@ describe('defaultRuntime', () => {
   it('reports costMeasured: false for token usage without attributable cost', async () => {
     const state = installRuntimeMocks([
       agent => {
-        state.sessionUsageTotals.set('test-session', {
+        state.sessionUsageTotals.set(getTestSession(agent), {
           inputTokens: 500,
           outputTokens: 200,
           cacheReadTokens: 0,
@@ -1429,8 +1952,8 @@ describe('defaultRuntime', () => {
       agent => {
         // Totals already carry a prior run's usage at run start; the stream
         // script bumps them by this run's consumption.
-        const prior = state.sessionUsageTotals.get('test-session');
-        state.sessionUsageTotals.set('test-session', {
+        const prior = state.sessionUsageTotals.get(getTestSession(agent));
+        state.sessionUsageTotals.set(getTestSession(agent), {
           inputTokens: (prior?.inputTokens ?? 0) + 10,
           outputTokens: (prior?.outputTokens ?? 0) + 5,
           cacheReadTokens: prior?.cacheReadTokens ?? 0,
@@ -1495,22 +2018,85 @@ describe('defaultRuntime', () => {
     ]);
   });
 
+  it('adds reconciled usage across repair turns to IncompleteResultError', async () => {
+    const errors: unknown[] = [];
+    const state = installRuntimeMocks([
+      agent => {
+        state.sessionUsageTotals.set(getTestSession(agent), {
+          inputTokens: 10,
+          outputTokens: 5,
+          cacheReadTokens: 2,
+          cacheWriteTokens: 1,
+          costUsd: 0.02,
+        });
+        return [];
+      },
+      agent => {
+        state.sessionUsageTotals.set(getTestSession(agent), {
+          inputTokens: 30,
+          outputTokens: 12,
+          cacheReadTokens: 5,
+          cacheWriteTokens: 3,
+          costUsd: 0.07,
+        });
+        return [];
+      },
+    ]);
+    const runtime = await loadRuntime();
+    const { IncompleteResultError } = await import('./errors.js');
+
+    const failure = await runtime
+      .run(
+        createRuntimeInput(z.object({ ok: z.boolean() }), {
+          agentOptions: { events: { onError: error => errors.push(error) } },
+          config: { maxRepairs: 1 },
+        }),
+      )
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(IncompleteResultError);
+    expect(
+      (failure as InstanceType<typeof IncompleteResultError>).usage,
+    ).toEqual({
+      inputTokens: 30,
+      outputTokens: 12,
+      cacheReadTokens: 5,
+      cacheWriteTokens: 3,
+      totalTokens: 50,
+      costUsd: 0.07,
+      costMeasured: true,
+    });
+    expect(errors).toEqual([failure]);
+  });
+
   it('throws when no valid result is submitted after repairs', async () => {
     const errors: unknown[] = [];
     const state = installRuntimeMocks([() => []]);
     const runtime = await loadRuntime();
     const { IncompleteResultError } = await import('./errors.js');
 
-    await expect(
-      runtime.run(
+    const failure = await runtime
+      .run(
         createRuntimeInput(z.object({ ok: z.boolean() }), {
           agentOptions: { events: { onError: error => errors.push(error) } },
           config: { maxRepairs: 0 },
         }),
-      ),
-    ).rejects.toBeInstanceOf(IncompleteResultError);
+      )
+      .catch((error: unknown) => error);
 
-    expect(errors[0]).toBeInstanceOf(IncompleteResultError);
+    expect(failure).toBeInstanceOf(IncompleteResultError);
+    expect(
+      (failure as InstanceType<typeof IncompleteResultError>).usage,
+    ).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 0,
+      costUsd: 0,
+      costMeasured: true,
+    });
+    expect(errors).toEqual([failure]);
     expect(state.instances[0]?.session?.destroyCount).toBe(1);
   });
 });
@@ -1614,6 +2200,7 @@ function installRuntimeMocks(scripts: StreamScript[] = []): TestState {
     sandboxSession: new TestSandboxSession(),
     scripts: [...scripts],
     sessionUsageTotals: new Map(),
+    createSessionError: undefined,
   };
 
   vi.doMock('@ai-sdk/harness/agent', () => ({
@@ -1630,9 +2217,19 @@ function installRuntimeMocks(scripts: StreamScript[] = []): TestState {
       async createSession(
         options: CreateSessionOptions,
       ): Promise<TestHarnessSession> {
+        if (state.createSessionError !== undefined) {
+          // Deliberately support arbitrary harness initialization rejections.
+          // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+          return Promise.reject(state.createSessionError);
+        }
         const session = new TestHarnessSession(
           options.sessionId ?? 'test-session',
         );
+        const seededTotals = state.sessionUsageTotals.get(session.sessionId);
+        if (seededTotals) {
+          state.sessionUsageTotals.delete(session.sessionId);
+          state.sessionUsageTotals.set(session, seededTotals);
+        }
         this.session = session;
         if (this.settings.sandboxConfig?.onSession) {
           const request: SandboxSessionRequest = {
@@ -1689,8 +2286,8 @@ function installRuntimeMocks(scripts: StreamScript[] = []): TestState {
       state.piSettings.push(settings);
       return { settings };
     },
-    getPiSessionUsageTotals(sessionId: string) {
-      return state.sessionUsageTotals.get(sessionId);
+    getPiSessionUsageTotals(session: TestHarnessSession) {
+      return state.sessionUsageTotals.get(session);
     },
   }));
 
@@ -1724,6 +2321,11 @@ function toAsyncIterable(
   };
 }
 
+function getTestSession(agent: TestHarnessAgent): TestHarnessSession {
+  if (!agent.session) throw new Error('Expected a created harness session.');
+  return agent.session;
+}
+
 type StreamScript = (
   agent: TestHarnessAgent,
   input: StreamInput,
@@ -1747,8 +2349,9 @@ interface TestState {
   sandboxSettings: (SandboxSettings | undefined)[];
   sandboxSession: TestSandboxSession;
   scripts: StreamScript[];
-  /** Mocked adapter usage totals, keyed by session id. */
-  sessionUsageTotals: Map<string, SessionUsageTotals>;
+  /** Mocked adapter usage totals, keyed by exact session object after init. */
+  sessionUsageTotals: Map<TestHarnessSession | string, SessionUsageTotals>;
+  createSessionError: unknown;
 }
 
 interface SessionUsageTotals {
