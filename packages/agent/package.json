@@ -48,7 +48,7 @@
   "devDependencies": {
     "@ai-sdk/sandbox-vercel": "1.0.33",
     "@types/node": "^24.0.0",
-    "del-cli": "^6.0.0",
+    "del-cli": "^7.0.0",
     "tsup": "^8.5.1",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"
