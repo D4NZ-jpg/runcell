@@ -4,16 +4,21 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 1.6.0 - 2026-08-29
 
 ### Added
 
 - Runtime-created `TurnError` and `IncompleteResultError` failures now expose
   reconciled `usage`; manual construction leaves it absent. `getRunUsage()`
-  safely discovers validated usage on any failure shape. Foreign rejection
+  safely discovers validated usage on any failure shape.
+
+### Changed
+
+- Failed runs now always reject with a runcell error class. Foreign rejection
   values — harness errors, tool errors, caller abort reasons — are wrapped in
-  a `TurnError` carrying the usage, with the original value unmodified as
-  `cause`; Runcell never mutates objects it does not own.
+  a `TurnError` carrying the reconciled `usage`, with the original value
+  unmodified as `cause`. Code that matched thrown errors by their own type
+  should check `error.cause`. Runcell never mutates objects it does not own.
 
 ### Fixed
 
