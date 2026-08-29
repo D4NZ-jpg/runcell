@@ -84,12 +84,11 @@ export const defaultRuntime: RuncellRuntime = {
     try {
       return await runWithHarness(input);
     } catch (error) {
-      const isExtensionError = safeInstanceOf(error, ExtensionError);
-      if (!isExtensionError.ok || isExtensionError.value) {
+      if (isInstanceOfSafe(error, ExtensionError)) {
         throw error;
       }
       const extensionError = findPiExtensionError(error);
-      if (extensionError.status === 'found') {
+      if (extensionError) {
         throw new ExtensionError(extensionError.message, { cause: error });
       }
       throw error;
@@ -97,89 +96,46 @@ export const defaultRuntime: RuncellRuntime = {
   },
 };
 
-interface SafeInspection<T> {
-  ok: boolean;
-  value?: T;
-}
-
-function safeInstanceOf(
+/**
+ * `instanceof` that treats a throwing check (an exotic proxy) as `false`.
+ * Callers fall back to wrapping, which never inspects the value again.
+ */
+function isInstanceOfSafe(
   value: unknown,
   constructor: abstract new (...args: never[]) => object,
-): SafeInspection<boolean> {
+): boolean {
   try {
-    return { ok: true, value: value instanceof constructor };
+    return value instanceof constructor;
   } catch {
-    return { ok: false };
-  }
-}
-
-function safeReadProperty(
-  value: object,
-  property: PropertyKey,
-): SafeInspection<unknown> {
-  try {
-    return { ok: true, value: Reflect.get(value, property) };
-  } catch {
-    return { ok: false };
+    return false;
   }
 }
 
 /**
  * Find a harness `PiExtensionError` anywhere in an error's cause chain. The
  * harness may surface it directly (session init) or wrapped in a turn error
- * (tool-collision check on the first turn). Hostile inspection is reported
- * separately so post-session failures can be normalized without affecting
- * pre-session rejection identity.
+ * (tool-collision check on the first turn). Cyclic or uninspectable chains
+ * report “not found”; the caller then wraps the error without inspecting it.
  */
-type PiExtensionErrorInspection =
-  | { status: 'found'; message: string }
-  | { status: 'not-found' }
-  | { status: 'uninspectable' };
-
-function findPiExtensionError(error: unknown): PiExtensionErrorInspection {
-  let current: unknown = error;
+function findPiExtensionError(error: unknown): { message: string } | undefined {
   const seen = new Set<object>();
-  while (
-    (typeof current === 'object' && current !== null) ||
-    typeof current === 'function'
-  ) {
-    const object = current;
-    if (seen.has(object)) {
-      return { status: 'not-found' };
-    }
-    seen.add(object);
-
-    const isError = safeInstanceOf(current, Error);
-    if (!isError.ok) {
-      return { status: 'uninspectable' };
-    }
-    if (!isError.value) {
-      return { status: 'not-found' };
-    }
-    const name = safeReadProperty(object, 'name');
-    if (!name.ok) {
-      return { status: 'uninspectable' };
-    }
-    if (name.value === 'PiExtensionError') {
-      const message = safeReadProperty(object, 'message');
-      if (!message.ok) {
-        return { status: 'uninspectable' };
+  let current: unknown = error;
+  try {
+    while (current instanceof Error && !seen.has(current)) {
+      seen.add(current);
+      if (current.name === 'PiExtensionError') {
+        const { message } = current;
+        return {
+          message:
+            typeof message === 'string' ? message : 'Pi extension failed.',
+        };
       }
-      return {
-        status: 'found',
-        message:
-          typeof message.value === 'string'
-            ? message.value
-            : 'Pi extension failed.',
-      };
+      current = current.cause;
     }
-    const cause = safeReadProperty(object, 'cause');
-    if (!cause.ok) {
-      return { status: 'uninspectable' };
-    }
-    current = cause.value;
+  } catch {
+    return undefined;
   }
-  return { status: 'not-found' };
+  return undefined;
 }
 
 async function runWithHarness({
@@ -427,28 +383,25 @@ async function runWithHarness({
     );
   } catch (error) {
     // Once caller cancellation is observable it is authoritative, even when
-    // the harness or stream lost the race by throwing a different error.
+    // the harness or stream lost the race by throwing a different error. The
+    // abort reason travels as `cause` of the thrown TurnError.
     const callerAborted = runOptions.signal?.aborted === true;
     const runError: unknown = callerAborted
       ? (runOptions.signal?.reason as unknown)
       : error;
     const extensionError = callerAborted
-      ? ({ status: 'not-found' } as const)
+      ? undefined
       : findPiExtensionError(runError);
-    const reconciledUsage = finalizeRunUsage(
-      usage,
-      usageBaseline,
-      getPiSessionUsageTotals(session),
-    );
-    const failure =
-      extensionError.status === 'found'
-        ? new ExtensionError(extensionError.message, { cause: runError })
-        : extensionError.status === 'uninspectable'
-          ? new TurnError('Agent turn failed.', {
-              cause: runError,
-              usage: reconciledUsage,
-            })
-          : attachRunUsage(runError, reconciledUsage);
+    const failure = extensionError
+      ? new ExtensionError(extensionError.message, { cause: runError })
+      : toRunFailure(
+          runError,
+          finalizeRunUsage(
+            usage,
+            usageBaseline,
+            getPiSessionUsageTotals(session),
+          ),
+        );
     safeEmit(events?.onError, failure);
     throw failure;
   } finally {
@@ -475,67 +428,38 @@ async function runWithHarness({
   }
 }
 
-function attachRunUsage(error: unknown, usage: RunUsage): unknown {
-  const isIncompleteResult = safeInstanceOf(error, IncompleteResultError);
-  if (!isIncompleteResult.ok) {
-    return new TurnError('Agent turn failed.', { cause: error, usage });
-  }
-
-  if (
-    (typeof error === 'object' && error !== null) ||
-    typeof error === 'function'
-  ) {
-    try {
-      // Never replace or shadow a third-party usage contract. Wrapping keeps
-      // both values discoverable without mutating the original object.
-      if (Reflect.has(error, 'usage')) {
-        return new TurnError('Agent turn failed.', { cause: error, usage });
-      }
-      if (
-        !Reflect.defineProperty(error, 'usage', {
+/**
+ * Turn a post-session failure into the error the run rejects with. Runcell's
+ * own just-thrown errors (`IncompleteResultError`, `TurnError`) carry the
+ * reconciled usage directly and keep their identity; every foreign value —
+ * harness errors, tool errors, caller abort reasons — is wrapped in a
+ * `TurnError` that carries the usage, with the original as `cause`. Foreign
+ * objects are never mutated.
+ */
+function toRunFailure(error: unknown, usage: RunUsage): Error {
+  try {
+    if (error instanceof IncompleteResultError || error instanceof TurnError) {
+      if (error.usage === undefined) {
+        Object.defineProperty(error, 'usage', {
           value: usage,
           configurable: true,
           enumerable: true,
-        })
-      ) {
-        return new TurnError('Agent turn failed.', { cause: error, usage });
+        });
       }
-
-      // A proxy may claim a successful definition or synthesize the expected
-      // read. Preserve identity only when both its own descriptor and normal
-      // property access expose the exact reconciled object.
-      const descriptor = Reflect.getOwnPropertyDescriptor(error, 'usage');
-      if (
-        descriptor !== undefined &&
-        'value' in descriptor &&
-        descriptor.value === usage &&
-        Reflect.get(error, 'usage') === usage
-      ) {
-        return error;
-      }
-      return new TurnError('Agent turn failed.', { cause: error, usage });
-    } catch {
-      // Frozen/proxied objects may reject inspection or enrichment. Their
-      // identity cannot safely carry the reconciled usage.
-      return new TurnError('Agent turn failed.', { cause: error, usage });
+      return error;
     }
+  } catch {
+    // Exotic values that resist inspection fall through to the wrap below,
+    // which never touches them again.
   }
-
-  return new TurnError('Agent turn failed.', { cause: error, usage });
+  return new TurnError(failureMessage(error), { cause: error, usage });
 }
 
 function failureMessage(error: unknown): string {
-  const isError = safeInstanceOf(error, Error);
-  if (!isError.ok) {
-    return 'Agent turn failed.';
-  }
-  if (isError.value) {
-    const message = safeReadProperty(error as object, 'message');
-    return message.ok && typeof message.value === 'string'
-      ? message.value
-      : 'Agent turn failed.';
-  }
   try {
+    if (error instanceof Error && typeof error.message === 'string') {
+      return error.message;
+    }
     return String(error);
   } catch {
     return 'Agent turn failed.';

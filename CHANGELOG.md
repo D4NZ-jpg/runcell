@@ -10,9 +10,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Runtime-created `TurnError` and `IncompleteResultError` failures now expose
   reconciled `usage`; manual construction leaves it absent. `getRunUsage()`
-  safely discovers validated usage on any failure shape. Caller abort reasons
-  and unexpected errors after session startup are enriched without changing
-  normal error identity.
+  safely discovers validated usage on any failure shape. Foreign rejection
+  values — harness errors, tool errors, caller abort reasons — are wrapped in
+  a `TurnError` carrying the usage, with the original value unmodified as
+  `cause`; Runcell never mutates objects it does not own.
 
 ### Fixed
 
@@ -20,8 +21,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `StreamRun.result` rejects. Failed runs use the same session-total
   reconciliation and stream fallback as successful results. Per-instance Pi
   counters prevent concurrent runs with the same session id from sharing
-  deltas. Existing third-party `usage` properties are preserved. Preflight and
-  session-initialization errors remain without usage.
+  deltas. Preflight and session-initialization errors remain without usage.
 
 ## 1.5.0 - 2026-08-27
 

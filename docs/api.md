@@ -392,13 +392,14 @@ try {
 measurement flag before returning `RunUsage`; malformed or absent usage returns
 `undefined`.
 
-Caller abort reasons and unexpected object errors after session startup are
-enriched in place, so an externally supplied abort reason can retain its
-original error type while carrying a structural `usage` property. Primitive,
-frozen, or otherwise non-enrichable rejection values are normalized to a
-`TurnError`, with the original value as `cause`. An existing own or inherited
-`usage` property is never replaced or shadowed; Runcell wraps that failure and
-places reconciled usage on the wrapper. The same final object is delivered to
+Failures after session startup reject with one of Runcell's own error
+classes. Runtime-created `TurnError` and `IncompleteResultError` carry the
+reconciled usage directly; every other rejection value — harness errors, tool
+errors, caller abort reasons — is wrapped in a `TurnError` that carries the
+usage, with the original value unmodified as `cause`. Runcell never mutates
+objects it does not own, so an externally supplied abort reason or a
+third-party error (including one with its own `usage` property) is always
+recovered exactly via `error.cause`. The same final error is delivered to
 `onError` and used to reject the run.
 
 `TurnError` and `IncompleteResultError` have optional `usage`: runtime-created

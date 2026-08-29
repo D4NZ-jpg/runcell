@@ -404,7 +404,7 @@ describe('defaultRuntime', () => {
     expect(state.instances[0]?.streamCalls).toHaveLength(1);
   });
 
-  it('lets an object caller reason win over a trailing harness error', async () => {
+  it('wraps an object caller reason with reconciled usage and exact cause', async () => {
     const callerAbort = new AbortController();
     const callerError = { code: 'caller-cancelled' };
     const schema = createStandardSchema({ withJsonSchema: true, async: true });
@@ -440,20 +440,25 @@ describe('defaultRuntime', () => {
           runOptions: { signal: callerAbort.signal },
         }),
       ),
-    ).rejects.toBe(callerError);
-    expect(turnSignal?.reason).toBe(callerError);
-    expect(
-      (callerError as typeof callerError & { usage: unknown }).usage,
-    ).toEqual({
-      inputTokens: 12,
-      outputTokens: 3,
-      cacheReadTokens: 4,
-      cacheWriteTokens: 1,
-      totalTokens: 20,
-      costUsd: 0.02,
-      costMeasured: true,
+    ).rejects.toSatisfy((failure: unknown) => {
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).name).toBe('TurnError');
+      expect((failure as Error).cause).toBe(callerError);
+      expect((failure as Error & { usage: unknown }).usage).toEqual({
+        inputTokens: 12,
+        outputTokens: 3,
+        cacheReadTokens: 4,
+        cacheWriteTokens: 1,
+        totalTokens: 20,
+        costUsd: 0.02,
+        costMeasured: true,
+      });
+      expect(errors).toEqual([failure]);
+      return true;
     });
-    expect(errors).toEqual([callerError]);
+    expect(turnSignal?.reason).toBe(callerError);
+    // The caller-owned reason object is never mutated.
+    expect('usage' in callerError).toBe(false);
   });
 
   it('wraps a primitive caller reason with reconciled usage and exact cause', async () => {
@@ -1218,7 +1223,7 @@ describe('defaultRuntime', () => {
     ).rejects.toBeInstanceOf(TurnError);
   });
 
-  it('enriches an unexpected post-session iterator error in place', async () => {
+  it('wraps an unexpected post-session iterator error with reconciled usage', async () => {
     const original = new Error('iterator failed');
     const errors: unknown[] = [];
     const state = installRuntimeMocks([
@@ -1249,8 +1254,11 @@ describe('defaultRuntime', () => {
       )
       .catch((error: unknown) => error);
 
-    expect(failure).toBe(original);
-    expect((original as Error & { usage: unknown }).usage).toEqual({
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).name).toBe('TurnError');
+    expect((failure as Error).message).toBe('iterator failed');
+    expect((failure as Error).cause).toBe(original);
+    expect((failure as Error & { usage: unknown }).usage).toEqual({
       inputTokens: 8,
       outputTokens: 2,
       cacheReadTokens: 1,
@@ -1259,7 +1267,9 @@ describe('defaultRuntime', () => {
       costUsd: 0.03,
       costMeasured: true,
     });
-    expect(errors).toEqual([original]);
+    // The original error object is never mutated.
+    expect('usage' in original).toBe(false);
+    expect(errors).toEqual([failure]);
   });
 
   it('wraps without overwriting an existing third-party usage property', async () => {
@@ -1362,9 +1372,17 @@ describe('defaultRuntime', () => {
 
   it('normalizes hostile Proxy rejections without leaking inspection traps', async () => {
     const existingUsage = { requests: 1 };
-    const cases: { label: string; original: unknown }[] = [
+    // Traps that fire during inspection (instanceof, message) degrade the
+    // wrapper's message to the generic fallback; traps on properties the
+    // wrap policy never touches leave the original message readable.
+    const cases: {
+      label: string;
+      original: unknown;
+      expectedMessage: string;
+    }[] = [
       {
         label: 'instanceof',
+        expectedMessage: 'Agent turn failed.',
         original: new Proxy(new Error('hidden'), {
           getPrototypeOf() {
             throw new Error('getPrototypeOf trap');
@@ -1373,6 +1391,7 @@ describe('defaultRuntime', () => {
       },
       {
         label: 'name',
+        expectedMessage: 'hidden',
         original: new Proxy(new Error('hidden'), {
           get(target, property, receiver) {
             if (property === 'name') throw new Error('name trap');
@@ -1382,6 +1401,7 @@ describe('defaultRuntime', () => {
       },
       {
         label: 'cause',
+        expectedMessage: 'hidden',
         original: new Proxy(new Error('hidden'), {
           get(target, property, receiver) {
             if (property === 'cause') throw new Error('cause trap');
@@ -1391,6 +1411,7 @@ describe('defaultRuntime', () => {
       },
       {
         label: 'message',
+        expectedMessage: 'Agent turn failed.',
         original: new Proxy(
           Object.assign(new Error('hidden'), { usage: existingUsage }),
           {
@@ -1403,6 +1424,7 @@ describe('defaultRuntime', () => {
       },
       {
         label: 'property check',
+        expectedMessage: 'hidden',
         original: new Proxy(new Error('hidden'), {
           has() {
             throw new Error('has trap');
@@ -1411,6 +1433,7 @@ describe('defaultRuntime', () => {
       },
       {
         label: 'definition',
+        expectedMessage: 'hidden',
         original: new Proxy(new Error('hidden'), {
           defineProperty() {
             throw new Error('defineProperty trap');
@@ -1419,6 +1442,7 @@ describe('defaultRuntime', () => {
       },
       {
         label: 'descriptor',
+        expectedMessage: 'hidden',
         original: new Proxy(new Error('hidden'), {
           getOwnPropertyDescriptor() {
             throw new Error('getOwnPropertyDescriptor trap');
@@ -1427,6 +1451,7 @@ describe('defaultRuntime', () => {
       },
       {
         label: 'usage access',
+        expectedMessage: 'hidden',
         original: new Proxy(new Error('hidden'), {
           get(target, property, receiver) {
             if (property === 'usage') throw new Error('usage trap');
@@ -1469,7 +1494,7 @@ describe('defaultRuntime', () => {
 
       expect(failure, testCase.label).toBeInstanceOf(TurnError);
       expect((failure as Error).message, testCase.label).toBe(
-        'Agent turn failed.',
+        testCase.expectedMessage,
       );
       expect((failure as Error).cause, testCase.label).toBe(testCase.original);
       expect(
@@ -1575,8 +1600,10 @@ describe('defaultRuntime', () => {
       .run(createRuntimeInput(z.object({ ok: z.boolean() })))
       .catch((error: unknown) => error);
 
-    expect(failure).toBe(original);
-    expect((original as Error & { usage: unknown }).usage).toEqual({
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).name).toBe('TurnError');
+    expect((failure as Error).cause).toBe(original);
+    expect((failure as Error & { usage: unknown }).usage).toEqual({
       inputTokens: 10,
       outputTokens: 4,
       cacheReadTokens: 3,
@@ -1585,6 +1612,8 @@ describe('defaultRuntime', () => {
       costUsd: 0.05,
       costMeasured: true,
     });
+    // The original error object is never mutated.
+    expect('usage' in original).toBe(false);
   });
 
   it('invokes both agent-level and per-run event callbacks', async () => {
