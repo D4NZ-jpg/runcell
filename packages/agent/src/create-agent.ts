@@ -6,12 +6,20 @@ import { defaultRuntime, type RuncellRuntime } from './runtime.js';
 import { resolveSandboxConfig, type SandboxConfig } from './sandbox.js';
 import { getSandboxInternals } from './sandbox-handle.js';
 import { getThreadInternals } from './thread.js';
+import {
+  createUIMessageChunkConverter,
+  uiChatMessagesToPrompt,
+  uiChatMessageText,
+  uiMessageChunksToResponse,
+} from './ui-message-stream.js';
 import type {
   Agent,
   AgentOptions,
   AgentSchema,
   RunOptionsBase,
   RunResult,
+  UIChatMessage,
+  UIMessageChunk,
 } from './types.js';
 
 type RunInput = RunOptionsBase & { schema?: AgentSchema };
@@ -135,7 +143,25 @@ export function resolveAgentConfig(
 export function validateRunOptions(
   options: RunOptionsBase & { schema?: AgentSchema },
 ): void {
-  if (
+  if (options.messages !== undefined) {
+    if (options.prompt !== undefined) {
+      throw new InvalidOptionError(
+        'run accepts either "prompt" or "messages", not both.',
+      );
+    }
+    const messages: readonly UIChatMessage[] = options.messages;
+    if (!isNonEmptyArray(messages)) {
+      throw new InvalidOptionError(
+        'run "messages" must be a non-empty array of chat messages.',
+      );
+    }
+    const last = messages.at(-1);
+    if (last?.role !== 'user' || uiChatMessageText(last).trim().length === 0) {
+      throw new InvalidOptionError(
+        'run "messages" must end with a user message that has text content.',
+      );
+    }
+  } else if (
     typeof options.prompt !== 'string' ||
     options.prompt.trim().length === 0
   ) {
@@ -167,6 +193,12 @@ export function validateRunOptions(
   validateThinkingLevel(options.pi?.thinkingLevel, 'run "pi.thinkingLevel"');
 }
 
+/** Runtime guard for JS callers; deliberately not a type guard so the
+ * checked value keeps its declared element type. */
+function isNonEmptyArray(value: readonly unknown[]): boolean {
+  return Array.isArray(value) && value.length > 0;
+}
+
 function isAgentSchema(value: unknown): value is AgentSchema {
   if (value == null || typeof value !== 'object') {
     return false;
@@ -196,51 +228,98 @@ export function createAgent(
   const config = resolveAgentConfig(options, { nodeEnv });
   const runtime = context.runtime ?? defaultRuntime;
 
+  // Fold a validated `messages` history into the concrete prompt the runtime
+  // expects; `prompt`-shaped options pass through unchanged.
+  const normalizeRunInput = (opts: RunInput): RunInput & { prompt: string } => {
+    if (opts.messages === undefined) {
+      return opts as RunInput & { prompt: string };
+    }
+    return {
+      ...opts,
+      prompt: uiChatMessagesToPrompt(opts.messages),
+      messages: undefined,
+    };
+  };
+
   const run = (runOptions: RunInput): Promise<RunResult<unknown>> =>
     Promise.resolve(runOptions).then(opts => {
       validateRunOptions(opts);
-      return runtime.run({ agentOptions: options, config, runOptions: opts });
+      return runtime.run({
+        agentOptions: options,
+        config,
+        runOptions: normalizeRunInput(opts),
+      });
     });
 
   const stream = (runOptions: RunInput) => {
-    const text = createTextStream();
+    const text = createAsyncQueue<string>();
+    const chunks = createAsyncQueue<UIMessageChunk>();
+    const converter = createUIMessageChunkConverter();
     const result = Promise.resolve(runOptions)
       .then(opts => {
         validateRunOptions(opts);
         return runtime.run({
           agentOptions: options,
           config,
-          runOptions: opts,
+          runOptions: normalizeRunInput(opts),
           onTextDelta: text.push,
+          onStreamPart: part => {
+            for (const chunk of converter.handlePart(part)) {
+              chunks.push(chunk);
+            }
+          },
         });
       })
+      .then(
+        final => {
+          for (const chunk of converter.finish(final)) {
+            chunks.push(chunk);
+          }
+          return final;
+        },
+        (error: unknown) => {
+          // The UI message stream reports failures in-band and then ends,
+          // matching the protocol; `result` still rejects for the caller.
+          for (const chunk of converter.fail(error)) {
+            chunks.push(chunk);
+          }
+          throw error;
+        },
+      )
       .finally(() => {
         text.close();
+        chunks.close();
       });
     // A consumer may iterate only textStream; pre-observe the rejection so a
     // failed run never surfaces as an unhandled rejection, while `result`
     // still rejects for callers that await it.
     void result.catch(() => undefined);
-    return { textStream: text.iterable, result };
+    return {
+      textStream: text.iterable,
+      result,
+      toUIMessageStream: () => chunks.iterable,
+      toUIMessageStreamResponse: (init?: ResponseInit) =>
+        uiMessageChunksToResponse(chunks.iterable, init),
+    };
   };
 
   return { run, stream } as Agent;
 }
 
 /**
- * A single-producer, single-consumer async string stream. `push` enqueues a
- * delta; `close` ends iteration; `iterable` is consumed with `for await`.
+ * A single-producer, single-consumer async queue. `push` enqueues a value;
+ * `close` ends iteration; `iterable` is consumed with `for await`.
  */
-function createTextStream(): {
-  push: (value: string) => void;
+function createAsyncQueue<T>(): {
+  push: (value: T) => void;
   close: () => void;
-  iterable: AsyncIterable<string>;
+  iterable: AsyncIterable<T>;
 } {
-  const buffer: string[] = [];
-  let pending: ((result: IteratorResult<string>) => void) | undefined;
+  const buffer: T[] = [];
+  let pending: ((result: IteratorResult<T>) => void) | undefined;
   let done = false;
 
-  const push = (value: string): void => {
+  const push = (value: T): void => {
     if (done) {
       return;
     }
@@ -265,9 +344,9 @@ function createTextStream(): {
     }
   };
 
-  const iterable: AsyncIterable<string> = {
+  const iterable: AsyncIterable<T> = {
     [Symbol.asyncIterator]: () => ({
-      next: (): Promise<IteratorResult<string>> => {
+      next: (): Promise<IteratorResult<T>> => {
         const next = buffer.shift();
         if (next !== undefined) {
           return Promise.resolve({ value: next, done: false });
@@ -275,7 +354,7 @@ function createTextStream(): {
         if (done) {
           return Promise.resolve({ value: undefined, done: true });
         }
-        return new Promise<IteratorResult<string>>(resolve => {
+        return new Promise<IteratorResult<T>>(resolve => {
           pending = resolve;
         });
       },

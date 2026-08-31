@@ -92,6 +92,8 @@ export type {
   RunResult,
   RunUsage,
   StreamRun,
+  UIChatMessage,
+  UIMessageChunk,
   ToolDefinition,
   ChangedFile,
   ToolCallEvent,

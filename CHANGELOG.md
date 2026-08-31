@@ -4,6 +4,21 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Zero-glue chat frontends: `agent.stream(...).toUIMessageStreamResponse()`
+  returns the run as an AI SDK UI Message Stream SSE response, the wire
+  format consumed by AI SDK's `useChat` and assistant-ui's `useChatRuntime`.
+  The stream carries text and reasoning deltas, tool calls and results, step
+  boundaries per model turn, and a final `finish` chunk with the run's
+  `usage` in `messageMetadata`; failures are reported in-band as an `error`
+  chunk. `toUIMessageStream()` exposes the chunks as an async iterable.
+- Runs accept `messages` — a UI chat history in the AI SDK `UIMessage`
+  shape — as an alternative to `prompt`. The last user message becomes the
+  prompt and earlier turns are replayed as conversation context.
+
 ## 1.6.0 - 2026-08-29
 
 ### Added

@@ -60,7 +60,12 @@ import type {
   ToolDefinition,
 } from './types.js';
 
-type RuntimeRunOptions = RunOptionsBase & { schema?: AgentSchema };
+// `createAgent` validates and normalizes before calling the runtime, so a
+// `messages` history has already been folded into a concrete prompt here.
+type RuntimeRunOptions = RunOptionsBase & {
+  prompt: string;
+  schema?: AgentSchema;
+};
 
 export interface RuntimeRunInput {
   agentOptions: AgentOptions;
@@ -68,6 +73,11 @@ export interface RuntimeRunInput {
   runOptions: RuntimeRunOptions;
   /** Optional sink for streamed text deltas (used by `agent.stream`). */
   onTextDelta?: (delta: string) => void;
+  /**
+   * Optional sink for every normalized stream part, in order, across all
+   * turns of the run (used by `agent.stream` for UI message streams).
+   */
+  onStreamPart?: (part: { type: string; [key: string]: unknown }) => void;
 }
 
 export interface RuncellRuntime {
@@ -143,6 +153,7 @@ async function runWithHarness({
   config,
   runOptions,
   onTextDelta,
+  onStreamPart,
 }: RuntimeRunInput): Promise<RunResult<unknown>> {
   const files = normalizeFiles(runOptions.files ?? []);
   const changedFiles = new Map<string, ChangedFile>();
@@ -283,6 +294,7 @@ async function runWithHarness({
         });
 
         for await (const part of result.stream) {
+          onStreamPart?.(part);
           await handleStreamPart({
             part,
             events,

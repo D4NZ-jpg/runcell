@@ -276,6 +276,151 @@ describe('createAgent', () => {
   });
 });
 
+describe('messages input', () => {
+  it('rejects prompt and messages together', async () => {
+    const runtime = createRuntimeMock();
+    const agent = createAgent(
+      { model: 'anthropic/claude-sonnet-4-5' },
+      { nodeEnv: 'development', runtime },
+    );
+    await expect(
+      agent.run({
+        prompt: 'x',
+        messages: [{ role: 'user', parts: [{ type: 'text', text: 'y' }] }],
+      }),
+    ).rejects.toThrow('either "prompt" or "messages"');
+    expect(runtime.calls).toHaveLength(0);
+  });
+
+  it('rejects empty or non-user-terminated histories', async () => {
+    const runtime = createRuntimeMock();
+    const agent = createAgent(
+      { model: 'anthropic/claude-sonnet-4-5' },
+      { nodeEnv: 'development', runtime },
+    );
+    await expect(agent.run({ messages: [] })).rejects.toThrow(
+      'non-empty array',
+    );
+    await expect(
+      agent.run({
+        messages: [
+          { role: 'user', parts: [{ type: 'text', text: 'q' }] },
+          { role: 'assistant', parts: [{ type: 'text', text: 'a' }] },
+        ],
+      }),
+    ).rejects.toThrow('end with a user message');
+    expect(runtime.calls).toHaveLength(0);
+  });
+
+  it('folds a history into the runtime prompt', async () => {
+    const runtime = createRuntimeMock();
+    const agent = createAgent(
+      { model: 'anthropic/claude-sonnet-4-5' },
+      { nodeEnv: 'development', runtime },
+    );
+    await agent.run({
+      messages: [
+        { role: 'user', parts: [{ type: 'text', text: 'hi' }] },
+        { role: 'assistant', parts: [{ type: 'text', text: 'hello' }] },
+        { role: 'user', parts: [{ type: 'text', text: 'and now?' }] },
+      ],
+    });
+    expect(runtime.calls).toHaveLength(1);
+    expect(runtime.calls[0]?.runOptions.prompt).toBe(
+      'Conversation so far:\nUser: hi\nAssistant: hello\n\nand now?',
+    );
+    expect(runtime.calls[0]?.runOptions.messages).toBeUndefined();
+  });
+});
+
+describe('UI message stream', () => {
+  it('streams a run as UI message stream SSE via toUIMessageStreamResponse', async () => {
+    const runtime: RuncellRuntime = {
+      run(input: RuntimeRunInput) {
+        input.onStreamPart?.({ type: 'text-start', id: 't1' });
+        input.onStreamPart?.({ type: 'text-delta', id: 't1', text: 'hi' });
+        input.onStreamPart?.({ type: 'text-end', id: 't1' });
+        input.onStreamPart?.({ type: 'finish', finishReason: 'stop' });
+        input.onTextDelta?.('hi');
+        return Promise.resolve({
+          data: undefined,
+          text: 'hi',
+          files: [],
+          finishReason: 'stop',
+          sessionId: 'session-ui',
+          usage: {
+            inputTokens: 3,
+            outputTokens: 2,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            totalTokens: 5,
+            costUsd: 0.001,
+            costMeasured: true,
+          },
+        });
+      },
+    };
+    const agent = createAgent(
+      { model: 'anthropic/claude-sonnet-4-5' },
+      { nodeEnv: 'development', runtime },
+    );
+
+    const stream = agent.stream({ prompt: 'say hi' });
+    const response = stream.toUIMessageStreamResponse();
+    await stream.result;
+
+    const body = await response.text();
+    const events = body
+      .trim()
+      .split('\n\n')
+      .map(line => line.replace(/^data: /, ''));
+    expect(events.at(-1)).toBe('[DONE]');
+    const chunks = events
+      .slice(0, -1)
+      .map(e => JSON.parse(e) as { type: string });
+    expect(chunks.map(chunk => chunk.type)).toEqual([
+      'start',
+      'start-step',
+      'text-start',
+      'text-delta',
+      'text-end',
+      'finish-step',
+      'finish',
+    ]);
+    expect(chunks.at(-1)).toEqual({
+      type: 'finish',
+      messageMetadata: {
+        usage: {
+          inputTokens: 3,
+          outputTokens: 2,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 5,
+          costUsd: 0.001,
+          costMeasured: true,
+        },
+        sessionId: 'session-ui',
+      },
+    });
+  });
+
+  it('reports a failed run in-band and still rejects result', async () => {
+    const agent = createAgent(
+      { model: 'anthropic/claude-sonnet-4-5' },
+      { nodeEnv: 'development', runtime: createFailingRuntimeMock() },
+    );
+
+    const stream = agent.stream({ prompt: 'do a thing' });
+    const response = stream.toUIMessageStreamResponse();
+    await expect(stream.result).rejects.toThrow('run failed');
+
+    const body = await response.text();
+    expect(body).toContain('"type":"error"');
+    expect(body).toContain('run failed');
+    expect(body.trim().endsWith('data: [DONE]')).toBe(true);
+  });
+});
+
 function createFailingRuntimeMock(): RuncellRuntime {
   return { run: () => Promise.reject(new Error('run failed')) };
 }

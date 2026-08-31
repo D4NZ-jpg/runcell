@@ -128,12 +128,33 @@ export interface AgentOptions {
 }
 
 /**
+ * One message of a UI chat history, structurally compatible with the AI SDK
+ * `UIMessage` shape. Text is read from `parts` entries of type `text`, with
+ * a plain `content` string accepted as a fallback.
+ */
+export interface UIChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  parts?: readonly { type: string; text?: string }[];
+  content?: string;
+}
+
+/**
  * Options shared by every {@link Agent.run} call. Without a `schema` (see
  * {@link RunOptions}) the run is a plain turn whose output is the model's text.
  */
 export interface RunOptionsBase {
-  /** The task prompt. */
-  prompt: string;
+  /**
+   * The task prompt. Provide either `prompt` or `messages`, not both.
+   */
+  prompt?: string;
+  /**
+   * A UI chat history in the AI SDK `UIMessage` shape (as POSTed by
+   * `useChat` and assistant-ui's `useChatRuntime`). The last message must be
+   * a user message; it becomes the prompt, and earlier user/assistant turns
+   * are replayed as conversation context. Provide either `messages` or
+   * `prompt`, not both.
+   */
+  messages?: readonly UIChatMessage[];
   /** Files to seed into the workspace before the run starts. */
   files?: FileInput[];
   /**
@@ -242,7 +263,49 @@ export interface StreamRun<TData> {
   textStream: AsyncIterable<string>;
   /** Resolves with the final result once the run completes. Always await this. */
   result: Promise<RunResult<TData>>;
+  /**
+   * The run as AI SDK UI Message Stream chunks: text and reasoning deltas,
+   * tool calls and results, step boundaries per model turn, and a final
+   * `finish` chunk carrying {@link RunUsage} in `messageMetadata`. Failures
+   * end the stream with an `error` chunk instead of throwing here.
+   */
+  toUIMessageStream(): AsyncIterable<UIMessageChunk>;
+  /**
+   * The run as a UI Message Stream SSE `Response` — the wire format consumed
+   * by AI SDK's `useChat` and assistant-ui's `useChatRuntime`. Return it
+   * directly from a route handler.
+   */
+  toUIMessageStreamResponse(init?: ResponseInit): Response;
 }
+
+/**
+ * A chunk of the AI SDK UI Message Stream protocol, the wire format consumed
+ * by AI SDK's `useChat` and assistant-ui's `useChatRuntime`. Runcell emits
+ * the subset below; the type is structural, so no `ai` dependency is needed.
+ */
+export type UIMessageChunk =
+  | { type: 'start'; messageId?: string }
+  | { type: 'start-step' }
+  | { type: 'finish-step' }
+  | { type: 'text-start'; id: string }
+  | { type: 'text-delta'; id: string; delta: string }
+  | { type: 'text-end'; id: string }
+  | { type: 'reasoning-start'; id: string }
+  | { type: 'reasoning-delta'; id: string; delta: string }
+  | { type: 'reasoning-end'; id: string }
+  | {
+      type: 'tool-input-available';
+      toolCallId: string;
+      toolName: string;
+      input: unknown;
+    }
+  | { type: 'tool-output-available'; toolCallId: string; output: unknown }
+  | {
+      type: 'finish';
+      messageMetadata?: { usage: RunUsage; sessionId: string };
+    }
+  | { type: 'message-metadata'; messageMetadata: { usage: RunUsage } }
+  | { type: 'error'; errorText: string };
 
 /**
  * An agent bound to a model, credentials, tools and event callbacks.

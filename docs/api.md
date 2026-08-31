@@ -67,17 +67,18 @@ run(options: RunOptionsBase): Promise<RunResult<undefined>>;
 
 ### Run options
 
-| Option      | Type                                  | Description                                                                                        |
-| ----------- | ------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `prompt`    | `string`                              | The task prompt. Required.                                                                         |
-| `schema`    | `AgentSchema`                         | Structured output contract ([Standard Schema](https://standardschema.dev)). Omit for a plain turn. |
-| `files`     | `FileInput[]`                         | Files seeded into the workspace before the run. Relative paths only.                               |
-| `sandbox`   | `Sandbox \| SandboxOption`            | A caller-owned handle that Runcell does not destroy, or an ephemeral mode option.                  |
-| `thread`    | `Thread`                              | Conversation to continue; mutated in place on success.                                             |
-| `events`    | `AgentEvents`                         | Per-run lifecycle callbacks, invoked in addition to the agent-level ones.                          |
-| `pi`        | `{ thinkingLevel?: PiThinkingLevel }` | Per-run thinking-level override. Only `thinkingLevel` is accepted; it wins for this run only.      |
-| `sessionId` | `string`                              | Resume a previous session by id.                                                                   |
-| `signal`    | `AbortSignal`                         | Cancels the run.                                                                                   |
+| Option      | Type                                  | Description                                                                                                  |
+| ----------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `prompt`    | `string`                              | The task prompt. Provide either `prompt` or `messages`.                                                      |
+| `messages`  | `readonly UIChatMessage[]`            | A UI chat history (AI SDK `UIMessage` shape). Must end with a user message; earlier turns replay as context. |
+| `schema`    | `AgentSchema`                         | Structured output contract ([Standard Schema](https://standardschema.dev)). Omit for a plain turn.           |
+| `files`     | `FileInput[]`                         | Files seeded into the workspace before the run. Relative paths only.                                         |
+| `sandbox`   | `Sandbox \| SandboxOption`            | A caller-owned handle that Runcell does not destroy, or an ephemeral mode option.                            |
+| `thread`    | `Thread`                              | Conversation to continue; mutated in place on success.                                                       |
+| `events`    | `AgentEvents`                         | Per-run lifecycle callbacks, invoked in addition to the agent-level ones.                                    |
+| `pi`        | `{ thinkingLevel?: PiThinkingLevel }` | Per-run thinking-level override. Only `thinkingLevel` is accepted; it wins for this run only.                |
+| `sessionId` | `string`                              | Resume a previous session by id.                                                                             |
+| `signal`    | `AbortSignal`                         | Cancels the run.                                                                                             |
 
 The per-run `pi` object accepts only `thinkingLevel`; extensions remain
 agent-level. Invalid values throw `InvalidOptionError` eagerly when `run()` is
@@ -144,10 +145,20 @@ for await (const delta of textStream) push(delta);
 const final = await result; // always await this
 ```
 
-| Field        | Type                    | Description                                        |
-| ------------ | ----------------------- | -------------------------------------------------- |
-| `textStream` | `AsyncIterable<string>` | The model's text deltas.                           |
-| `result`     | `Promise<RunResult>`    | Final result; rejects on failure. Always await it. |
+| Field                              | Type                            | Description                                                               |
+| ---------------------------------- | ------------------------------- | ------------------------------------------------------------------------- |
+| `textStream`                       | `AsyncIterable<string>`         | The model's text deltas.                                                  |
+| `result`                           | `Promise<RunResult>`            | Final result; rejects on failure. Always await it.                        |
+| `toUIMessageStream()`              | `AsyncIterable<UIMessageChunk>` | The run as AI SDK UI Message Stream chunks.                               |
+| `toUIMessageStreamResponse(init?)` | `Response`                      | The run as a UI Message Stream SSE response for `useChat` / assistant-ui. |
+
+The UI message stream carries text and reasoning deltas, tool calls and
+results (runcell-internal tools are hidden), one step per model turn
+(including repair turns), and a final `finish` chunk whose `messageMetadata`
+carries the run's [`usage`](#runusage) and session id. A failed run ends the
+stream with an in-band `error` chunk — with usage metadata when measurable —
+while `result` still rejects. See [Streaming](./streaming.md#zero-glue-chat-frontends)
+for the route-handler pattern.
 
 ## Sandboxes
 
