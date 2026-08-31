@@ -41,10 +41,13 @@ import {
   createAgent,
   createVirtualSandbox,
   createThread,
+  getRunUsage,
   threadFromJSON,
   type Sandbox,
   type Thread,
   type StreamRun,
+  type UIChatMessage,
+  type UIMessageChunk,
 } from 'runcell';
 import { z } from 'zod';
 
@@ -69,6 +72,26 @@ for await (const delta of stream.textStream) {
   delta satisfies string;
 }
 (await stream.result).finishReason satisfies string;
+
+// UI message stream surface: messages input, chunk iterable, SSE response.
+const history: UIChatMessage[] = [
+  { role: 'user', parts: [{ type: 'text', text: 'hi' }] },
+];
+const uiRun = agent.stream({ messages: history });
+for await (const chunk of uiRun.toUIMessageStream({ sendReasoning: false })) {
+  chunk satisfies UIMessageChunk;
+}
+const uiResponse: Response = agent
+  .stream({ messages: history })
+  .toUIMessageStreamResponse({
+    sendTools: { secret: false, weather: 'names-only' },
+    onError: () => 'masked',
+    status: 200,
+  });
+void uiResponse;
+
+// Failure usage discovery is part of the public surface.
+getRunUsage(new Error('x'))?.costMeasured satisfies boolean | undefined;
 
 // Sandboxes and threads are values you hold and persist.
 const sandbox: Sandbox = await createVirtualSandbox();

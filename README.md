@@ -140,11 +140,22 @@ console.log(reply.text);
 Model ids can be provider-qualified when one id exists under several providers:
 `openai-codex/gpt-5.5`.
 
+For a chat UI, the run streams as the wire format [assistant-ui](https://www.assistant-ui.com)
+and AI SDK's `useChat` consume — the whole backend is one route handler:
+
+```ts
+export async function POST(req: Request) {
+  const { messages } = await req.json();
+  return agent.stream({ messages }).toUIMessageStreamResponse();
+}
+```
+
 ## What can you build with it?
 
 - **Chat agents** with streamed replies, persisted conversation state, and an
-  optional workspace per conversation. See the
-  [chat-agent guide](https://runcell.run/chat-agent).
+  optional workspace per conversation. Plug into assistant-ui or `useChat`
+  with zero glue — see the [integrations](https://runcell.run/integrations/assistant-ui)
+  and the [chat-agent guide](https://runcell.run/chat-agent).
 - **File pipelines**: seed files in, let the agent work, get changed files
   back as bytes.
 - **Typed extraction and triage**: reviews, reports, classifications your

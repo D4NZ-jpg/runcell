@@ -3,6 +3,13 @@
 This guide builds a chat endpoint that streams replies, preserves conversation
 history, and optionally keeps a workspace between turns.
 
+> Using assistant-ui or AI SDK's `useChat` with client-held history? The whole
+> backend is one route handler —
+> `agent.stream({ messages }).toUIMessageStreamResponse()` — see the
+> [integration pages](./integrations/assistant-ui.md). This guide covers the
+> complementary pattern: durable **server-side** state with threads, which
+> also works as the storage layer behind a UI-message frontend.
+
 It uses three Runcell primitives:
 
 - An **agent** is stateless and can be reused across runs.
