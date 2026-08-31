@@ -1,5 +1,10 @@
 import { getRunUsage } from './errors.js';
-import type { RunResult, UIChatMessage, UIMessageChunk } from './types.js';
+import type {
+  RunResult,
+  UIChatMessage,
+  UIMessageChunk,
+  UIMessageStreamOptions,
+} from './types.js';
 
 /**
  * Extract the text of one UI chat message: `parts` entries of type `text`,
@@ -54,11 +59,35 @@ const INTERNAL_TOOL_NAMES = new Set(['submitResult', 'fileChange']);
  * first part, maps repair turns onto step boundaries, and closes any block
  * left open by an interrupted turn before terminal chunks.
  */
-export function createUIMessageChunkConverter(): {
+type ToolPolicy = 'full' | 'names-only' | 'hidden';
+
+function resolveToolPolicy(
+  sendTools: UIMessageStreamOptions['sendTools'],
+  toolName: string,
+): ToolPolicy {
+  const asPolicy = (value: boolean | 'names-only' | undefined): ToolPolicy =>
+    value === false ? 'hidden' : value === 'names-only' ? 'names-only' : 'full';
+  if (sendTools === undefined || typeof sendTools === 'boolean') {
+    return asPolicy(sendTools);
+  }
+  if (sendTools === 'names-only') {
+    return 'names-only';
+  }
+  return asPolicy(sendTools[toolName]);
+}
+
+export function createUIMessageChunkConverter(
+  options: UIMessageStreamOptions = {},
+): {
   handlePart(part: { type: string; [key: string]: unknown }): UIMessageChunk[];
   finish(result: RunResult<unknown>): UIMessageChunk[];
   fail(error: unknown): UIMessageChunk[];
 } {
+  const sendReasoning = options.sendReasoning ?? true;
+  // Mirrors the AI SDK default: never leak server error details unless the
+  // caller explicitly opts in.
+  const onError = options.onError ?? (() => 'An error occurred.');
+
   let messageStarted = false;
   let stepOpen = false;
   let openTextId: string | undefined;
@@ -132,12 +161,18 @@ export function createUIMessageChunkConverter(): {
           return chunks;
         }
         case 'reasoning-start': {
+          if (!sendReasoning) {
+            return chunks;
+          }
           openMessageAndStep(chunks);
           openReasoningId = readId(part);
           chunks.push({ type: 'reasoning-start', id: openReasoningId });
           return chunks;
         }
         case 'reasoning-delta': {
+          if (!sendReasoning) {
+            return chunks;
+          }
           openMessageAndStep(chunks);
           if (openReasoningId === undefined) {
             openReasoningId = readId(part);
@@ -162,13 +197,17 @@ export function createUIMessageChunkConverter(): {
           if (!toolName || INTERNAL_TOOL_NAMES.has(toolName)) {
             return chunks;
           }
+          const policy = resolveToolPolicy(options.sendTools, toolName);
+          if (policy === 'hidden') {
+            return chunks;
+          }
           openMessageAndStep(chunks);
           closeOpenBlocks(chunks);
           chunks.push({
             type: 'tool-input-available',
             toolCallId: readToolCallId(part),
             toolName,
-            input: part['input'],
+            input: policy === 'names-only' ? null : part['input'],
           });
           return chunks;
         }
@@ -177,11 +216,15 @@ export function createUIMessageChunkConverter(): {
           if (!toolName || INTERNAL_TOOL_NAMES.has(toolName)) {
             return chunks;
           }
+          const policy = resolveToolPolicy(options.sendTools, toolName);
+          if (policy === 'hidden') {
+            return chunks;
+          }
           openMessageAndStep(chunks);
           chunks.push({
             type: 'tool-output-available',
             toolCallId: readToolCallId(part),
-            output: part['output'],
+            output: policy === 'names-only' ? null : part['output'],
           });
           return chunks;
         }
@@ -239,20 +282,36 @@ export function createUIMessageChunkConverter(): {
       if (usage) {
         chunks.push({ type: 'message-metadata', messageMetadata: { usage } });
       }
-      chunks.push({ type: 'error', errorText: errorText(error) });
+      let errorText: string;
+      try {
+        errorText = onError(error);
+      } catch {
+        errorText = 'An error occurred.';
+      }
+      chunks.push({ type: 'error', errorText });
       return chunks;
     },
   };
 }
 
-function errorText(error: unknown): string {
+/**
+ * Convert a run's raw part stream plus its result promise into UI message
+ * chunks. Single-consumer; both `toUIMessageStream` and
+ * `toUIMessageStreamResponse` are built on this.
+ */
+export async function* uiMessageStreamFromRun(
+  parts: AsyncIterable<{ type: string; [key: string]: unknown }>,
+  result: Promise<RunResult<unknown>>,
+  options?: UIMessageStreamOptions,
+): AsyncIterable<UIMessageChunk> {
+  const converter = createUIMessageChunkConverter(options);
+  for await (const part of parts) {
+    yield* converter.handlePart(part);
+  }
   try {
-    if (error instanceof Error && typeof error.message === 'string') {
-      return error.message;
-    }
-    return String(error);
-  } catch {
-    return 'Agent run failed.';
+    yield* converter.finish(await result);
+  } catch (error) {
+    yield* converter.fail(error);
   }
 }
 

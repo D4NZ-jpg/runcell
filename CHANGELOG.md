@@ -18,6 +18,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Runs accept `messages` — a UI chat history in the AI SDK `UIMessage`
   shape — as an alternative to `prompt`. The last user message becomes the
   prompt and earlier turns are replayed as conversation context.
+- Wire-level stream controls mirroring the AI SDK: `sendReasoning`,
+  `sendTools` (blanket, `'names-only'`, or per-tool policies), and `onError`.
+  Failed runs report a masked `"An error occurred."` to the client by
+  default; server error details cross the wire only through an explicit
+  `onError`.
 
 ## 1.6.0 - 2026-08-29
 

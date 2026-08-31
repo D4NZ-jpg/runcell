@@ -164,7 +164,9 @@ describe('createUIMessageChunkConverter', () => {
   });
 
   it('closes interrupted blocks and reports usage metadata on failure', () => {
-    const converter = createUIMessageChunkConverter();
+    const converter = createUIMessageChunkConverter({
+      onError: error => (error instanceof Error ? error.message : 'unknown'),
+    });
     void converter.handlePart({ type: 'text-start', id: 't1' });
     void converter.handlePart({ type: 'text-delta', id: 't1', text: 'par' });
 
@@ -179,13 +181,79 @@ describe('createUIMessageChunkConverter', () => {
     ]);
   });
 
-  it('opens the message on a failure before any parts', () => {
+  it('opens the message on a failure before any parts and masks the error', () => {
     const converter = createUIMessageChunkConverter();
-    const chunks = converter.fail(new Error('early'));
+    const chunks = converter.fail(new Error('secret internals'));
     expect(chunks).toEqual([
       { type: 'start' },
-      { type: 'error', errorText: 'early' },
+      { type: 'error', errorText: 'An error occurred.' },
     ]);
+  });
+
+  it('drops reasoning when sendReasoning is false', () => {
+    const converter = createUIMessageChunkConverter({ sendReasoning: false });
+    const chunks = [
+      ...converter.handlePart({ type: 'reasoning-start', id: 'r1' }),
+      ...converter.handlePart({ type: 'reasoning-delta', id: 'r1', text: 's' }),
+      ...converter.handlePart({ type: 'reasoning-end', id: 'r1' }),
+      ...converter.handlePart({ type: 'text-delta', id: 't1', text: 'ok' }),
+    ];
+    expect(chunks.map(chunk => chunk.type)).toEqual([
+      'start',
+      'start-step',
+      'text-start',
+      'text-delta',
+    ]);
+  });
+
+  it('redacts tool payloads with sendTools names-only', () => {
+    const converter = createUIMessageChunkConverter({
+      sendTools: 'names-only',
+    });
+    const chunks = [
+      ...converter.handlePart({
+        type: 'tool-call',
+        toolCallId: 'c1',
+        toolName: 'weather',
+        input: { city: 'lima' },
+      }),
+      ...converter.handlePart({
+        type: 'tool-result',
+        toolCallId: 'c1',
+        toolName: 'weather',
+        output: { tempC: 18 },
+      }),
+    ];
+    expect(chunks).toEqual([
+      { type: 'start' },
+      { type: 'start-step' },
+      {
+        type: 'tool-input-available',
+        toolCallId: 'c1',
+        toolName: 'weather',
+        input: null,
+      },
+      { type: 'tool-output-available', toolCallId: 'c1', output: null },
+    ]);
+  });
+
+  it('hides tool activity entirely with sendTools false', () => {
+    const converter = createUIMessageChunkConverter({ sendTools: false });
+    const chunks = [
+      ...converter.handlePart({
+        type: 'tool-call',
+        toolCallId: 'c1',
+        toolName: 'weather',
+        input: {},
+      }),
+      ...converter.handlePart({
+        type: 'tool-result',
+        toolCallId: 'c1',
+        toolName: 'weather',
+        output: {},
+      }),
+    ];
+    expect(chunks).toEqual([]);
   });
 
   it('ignores parts that have no UI mapping', () => {

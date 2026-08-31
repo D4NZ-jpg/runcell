@@ -145,12 +145,18 @@ for await (const delta of textStream) push(delta);
 const final = await result; // always await this
 ```
 
-| Field                              | Type                            | Description                                                               |
-| ---------------------------------- | ------------------------------- | ------------------------------------------------------------------------- |
-| `textStream`                       | `AsyncIterable<string>`         | The model's text deltas.                                                  |
-| `result`                           | `Promise<RunResult>`            | Final result; rejects on failure. Always await it.                        |
-| `toUIMessageStream()`              | `AsyncIterable<UIMessageChunk>` | The run as AI SDK UI Message Stream chunks.                               |
-| `toUIMessageStreamResponse(init?)` | `Response`                      | The run as a UI Message Stream SSE response for `useChat` / assistant-ui. |
+| Field                                 | Type                            | Description                                                               |
+| ------------------------------------- | ------------------------------- | ------------------------------------------------------------------------- |
+| `textStream`                          | `AsyncIterable<string>`         | The model's text deltas.                                                  |
+| `result`                              | `Promise<RunResult>`            | Final result; rejects on failure. Always await it.                        |
+| `toUIMessageStream(options?)`         | `AsyncIterable<UIMessageChunk>` | The run as AI SDK UI Message Stream chunks.                               |
+| `toUIMessageStreamResponse(options?)` | `Response`                      | The run as a UI Message Stream SSE response for `useChat` / assistant-ui. |
+
+Both accept `UIMessageStreamOptions` — `sendReasoning`, `sendTools`
+(blanket, `'names-only'`, or per-tool), and `onError` (masked by default so
+server error details never reach the client) — mirroring the AI SDK;
+`toUIMessageStreamResponse` additionally accepts `ResponseInit` fields. See
+[wire-level controls](./streaming.md#wire-level-controls).
 
 The UI message stream carries text and reasoning deltas, tool calls and
 results (runcell-internal tools are hidden), one step per model turn

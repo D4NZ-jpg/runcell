@@ -267,15 +267,46 @@ export interface StreamRun<TData> {
    * The run as AI SDK UI Message Stream chunks: text and reasoning deltas,
    * tool calls and results, step boundaries per model turn, and a final
    * `finish` chunk carrying {@link RunUsage} in `messageMetadata`. Failures
-   * end the stream with an `error` chunk instead of throwing here.
+   * end the stream with an `error` chunk instead of throwing here. Consume
+   * the UI message stream at most once per run, through either this method
+   * or {@link StreamRun.toUIMessageStreamResponse}.
    */
-  toUIMessageStream(): AsyncIterable<UIMessageChunk>;
+  toUIMessageStream(
+    options?: UIMessageStreamOptions,
+  ): AsyncIterable<UIMessageChunk>;
   /**
    * The run as a UI Message Stream SSE `Response` — the wire format consumed
    * by AI SDK's `useChat` and assistant-ui's `useChatRuntime`. Return it
    * directly from a route handler.
    */
-  toUIMessageStreamResponse(init?: ResponseInit): Response;
+  toUIMessageStreamResponse(
+    options?: UIMessageStreamOptions & ResponseInit,
+  ): Response;
+}
+
+/**
+ * Wire-level controls for the UI message stream, mirroring the AI SDK's
+ * `toUIMessageStreamResponse` options. These decide what leaves the server;
+ * hiding data in the frontend is not redaction — anything sent is visible in
+ * the browser's network inspector.
+ */
+export interface UIMessageStreamOptions {
+  /** Stream the model's reasoning to the client. Defaults to `true`. */
+  sendReasoning?: boolean;
+  /**
+   * What tool activity crosses the wire. `true` (default) sends names,
+   * inputs, and outputs; `'names-only'` sends the chunks with `null`
+   * payloads, so the UI shows which tool ran but not its data; `false`
+   * hides tool activity entirely. A record applies a policy per tool name
+   * (`true`, `'names-only'`, or `false`); unlisted tools default to `true`.
+   */
+  sendTools?: boolean | 'names-only' | Record<string, boolean | 'names-only'>;
+  /**
+   * Map a failed run to the `error` chunk's text. Defaults to a constant
+   * `"An error occurred."` so server error details never reach the client
+   * unless explicitly opted into — the same default as the AI SDK.
+   */
+  onError?: (error: unknown) => string;
 }
 
 /**

@@ -70,6 +70,33 @@ the last message must be a user message and becomes the prompt; earlier
 user/assistant turns are replayed as conversation context. For durable
 server-side history, prefer [threads](./threads.md) and `prompt`.
 
+### Wire-level controls
+
+`toUIMessageStreamResponse` and `toUIMessageStream` accept options mirroring
+the AI SDK's, deciding what leaves the server. Hiding data in the frontend is
+not redaction — anything sent is visible in the browser's network inspector.
+
+```ts
+return agent.stream({ messages }).toUIMessageStreamResponse({
+  sendReasoning: false, // keep the model's thinking server-side
+  sendTools: {
+    queryBilling: false, // hidden entirely
+    weather: 'names-only', // tool shown, input/output sent as null
+    // unlisted tools stream in full
+  },
+  onError: error => 'Something went wrong.', // optional; masked by default
+});
+```
+
+| Option          | Default                         | Description                                                                                |
+| --------------- | ------------------------------- | ------------------------------------------------------------------------------------------ |
+| `sendReasoning` | `true`                          | Stream reasoning deltas to the client.                                                     |
+| `sendTools`     | `true`                          | `true`, `false`, `'names-only'`, or a per-tool record of those values.                     |
+| `onError`       | masked (`"An error occurred."`) | Maps a failed run to the `error` chunk's text. Server error details never leak by default. |
+
+Standard `ResponseInit` fields (`status`, `statusText`, `headers`) are also
+accepted by `toUIMessageStreamResponse`.
+
 ## Piping to a browser (SSE)
 
 For a custom protocol, `textStream` maps directly onto a web-standard

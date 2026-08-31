@@ -404,7 +404,7 @@ describe('UI message stream', () => {
     });
   });
 
-  it('reports a failed run in-band and still rejects result', async () => {
+  it('reports a failed run in-band with a masked message by default', async () => {
     const agent = createAgent(
       { model: 'anthropic/claude-sonnet-4-5' },
       { nodeEnv: 'development', runtime: createFailingRuntimeMock() },
@@ -416,8 +416,104 @@ describe('UI message stream', () => {
 
     const body = await response.text();
     expect(body).toContain('"type":"error"');
-    expect(body).toContain('run failed');
+    // Server error details never reach the client unless opted into.
+    expect(body).not.toContain('run failed');
+    expect(body).toContain('An error occurred.');
     expect(body.trim().endsWith('data: [DONE]')).toBe(true);
+  });
+
+  it('exposes failure details only through an explicit onError', async () => {
+    const agent = createAgent(
+      { model: 'anthropic/claude-sonnet-4-5' },
+      { nodeEnv: 'development', runtime: createFailingRuntimeMock() },
+    );
+
+    const stream = agent.stream({ prompt: 'do a thing' });
+    const response = stream.toUIMessageStreamResponse({
+      onError: error => (error instanceof Error ? error.message : 'unknown'),
+    });
+    await expect(stream.result).rejects.toThrow('run failed');
+
+    const body = await response.text();
+    expect(body).toContain('run failed');
+  });
+
+  it('applies sendTools and sendReasoning wire controls', async () => {
+    const runtime: RuncellRuntime = {
+      run(input: RuntimeRunInput) {
+        input.onStreamPart?.({ type: 'reasoning-start', id: 'r1' });
+        input.onStreamPart?.({
+          type: 'reasoning-delta',
+          id: 'r1',
+          text: 'secret thoughts',
+        });
+        input.onStreamPart?.({ type: 'reasoning-end', id: 'r1' });
+        input.onStreamPart?.({
+          type: 'tool-call',
+          toolCallId: 'c1',
+          toolName: 'queryBilling',
+          input: { customer: 'acme' },
+        });
+        input.onStreamPart?.({
+          type: 'tool-result',
+          toolCallId: 'c1',
+          toolName: 'queryBilling',
+          output: { balance: 42 },
+        });
+        input.onStreamPart?.({
+          type: 'tool-call',
+          toolCallId: 'c2',
+          toolName: 'weather',
+          input: { city: 'lima' },
+        });
+        input.onStreamPart?.({
+          type: 'tool-result',
+          toolCallId: 'c2',
+          toolName: 'weather',
+          output: { tempC: 18 },
+        });
+        input.onStreamPart?.({ type: 'finish', finishReason: 'stop' });
+        return Promise.resolve({
+          data: undefined,
+          text: '',
+          files: [],
+          finishReason: 'stop',
+          sessionId: 's',
+          usage: {
+            inputTokens: 1,
+            outputTokens: 1,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            totalTokens: 2,
+            costUsd: 0,
+            costMeasured: false,
+          },
+        });
+      },
+    };
+    const agent = createAgent(
+      { model: 'anthropic/claude-sonnet-4-5' },
+      { nodeEnv: 'development', runtime },
+    );
+
+    const stream = agent.stream({ prompt: 'go' });
+    const body = await stream
+      .toUIMessageStreamResponse({
+        sendReasoning: false,
+        sendTools: { queryBilling: false, weather: 'names-only' },
+      })
+      .text();
+    await stream.result;
+
+    expect(body).not.toContain('secret thoughts');
+    expect(body).not.toContain('reasoning');
+    expect(body).not.toContain('queryBilling');
+    expect(body).not.toContain('acme');
+    expect(body).toContain('"toolName":"weather"');
+    expect(body).not.toContain('lima');
+    expect(body).not.toContain('tempC');
+    expect(body).toContain('"input":null');
+    expect(body).toContain('"output":null');
   });
 });
 

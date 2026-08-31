@@ -7,10 +7,10 @@ import { resolveSandboxConfig, type SandboxConfig } from './sandbox.js';
 import { getSandboxInternals } from './sandbox-handle.js';
 import { getThreadInternals } from './thread.js';
 import {
-  createUIMessageChunkConverter,
   uiChatMessagesToPrompt,
   uiChatMessageText,
   uiMessageChunksToResponse,
+  uiMessageStreamFromRun,
 } from './ui-message-stream.js';
 import type {
   Agent,
@@ -19,7 +19,7 @@ import type {
   RunOptionsBase,
   RunResult,
   UIChatMessage,
-  UIMessageChunk,
+  UIMessageStreamOptions,
 } from './types.js';
 
 type RunInput = RunOptionsBase & { schema?: AgentSchema };
@@ -253,8 +253,7 @@ export function createAgent(
 
   const stream = (runOptions: RunInput) => {
     const text = createAsyncQueue<string>();
-    const chunks = createAsyncQueue<UIMessageChunk>();
-    const converter = createUIMessageChunkConverter();
+    const parts = createAsyncQueue<{ type: string; [key: string]: unknown }>();
     const result = Promise.resolve(runOptions)
       .then(opts => {
         validateRunOptions(opts);
@@ -263,43 +262,31 @@ export function createAgent(
           config,
           runOptions: normalizeRunInput(opts),
           onTextDelta: text.push,
-          onStreamPart: part => {
-            for (const chunk of converter.handlePart(part)) {
-              chunks.push(chunk);
-            }
-          },
+          onStreamPart: parts.push,
         });
       })
-      .then(
-        final => {
-          for (const chunk of converter.finish(final)) {
-            chunks.push(chunk);
-          }
-          return final;
-        },
-        (error: unknown) => {
-          // The UI message stream reports failures in-band and then ends,
-          // matching the protocol; `result` still rejects for the caller.
-          for (const chunk of converter.fail(error)) {
-            chunks.push(chunk);
-          }
-          throw error;
-        },
-      )
       .finally(() => {
         text.close();
-        chunks.close();
+        parts.close();
       });
     // A consumer may iterate only textStream; pre-observe the rejection so a
     // failed run never surfaces as an unhandled rejection, while `result`
-    // still rejects for callers that await it.
+    // still rejects for callers that await it. The UI message stream reports
+    // failures in-band and then ends, matching the protocol.
     void result.catch(() => undefined);
+    const toUIMessageStream = (streamOptions?: UIMessageStreamOptions) =>
+      uiMessageStreamFromRun(parts.iterable, result, streamOptions);
     return {
       textStream: text.iterable,
       result,
-      toUIMessageStream: () => chunks.iterable,
-      toUIMessageStreamResponse: (init?: ResponseInit) =>
-        uiMessageChunksToResponse(chunks.iterable, init),
+      toUIMessageStream,
+      toUIMessageStreamResponse: (
+        streamOptions?: UIMessageStreamOptions & ResponseInit,
+      ) =>
+        uiMessageChunksToResponse(
+          toUIMessageStream(streamOptions),
+          streamOptions,
+        ),
     };
   };
 
