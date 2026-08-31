@@ -75,6 +75,13 @@ export default defineConfig({
         ],
       },
       {
+        text: 'Integrations',
+        items: [
+          { text: 'assistant-ui', link: '/integrations/assistant-ui' },
+          { text: 'AI SDK UI (useChat)', link: '/integrations/ai-sdk-ui' },
+        ],
+      },
+      {
         text: 'Reference',
         items: [
           { text: 'API reference', link: '/api' },

@@ -40,7 +40,10 @@ const { data } = await task.result; // validated payload
 Stream](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol) SSE response — the
 wire format consumed by AI SDK's `useChat` and
 [assistant-ui](https://www.assistant-ui.com)'s `useChatRuntime`. Combined
-with `messages` input, a chat route handler is one statement:
+with `messages` input, a chat route handler is one statement (see the
+[assistant-ui](./integrations/assistant-ui.md) and
+[AI SDK UI](./integrations/ai-sdk-ui.md) integration pages for the full
+setup):
 
 ```ts
 export async function POST(req: Request): Promise<Response> {

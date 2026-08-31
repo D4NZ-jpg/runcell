@@ -121,4 +121,5 @@ refuses local credentials in production unless explicitly enabled.
 
 - [Get started in 5 minutes](/getting-started): install, credentials, first run
 - [Build a chat agent](/chat-agent): streaming, memory, and persistence, end to end
+- [Use with assistant-ui or useChat](/integrations/assistant-ui): a chat frontend in one route handler
 - [API reference](/api): every export and type
