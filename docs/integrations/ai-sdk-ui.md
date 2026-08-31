@@ -3,7 +3,7 @@
 Runcell speaks the [AI SDK UI Message
 Stream](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol) protocol, so
 `useChat` consumes a runcell agent exactly as it consumes a `streamText`
-backend — no adapter.
+backend. No adapter is needed.
 
 ## Backend
 
@@ -43,9 +43,9 @@ export function Chat() {
 ```
 
 Messages carry the full part structure: `text`, `reasoning`, and `tool-*`
-parts (with `input`/`output` and state transitions), plus
-`message.metadata` with the run's `usage` — token counts, `costUsd`, and
-`costMeasured` — and `sessionId` from the finish chunk.
+parts with their `input`, `output`, and state. `message.metadata` carries
+the run's `usage` (token counts, `costUsd`, `costMeasured`) and `sessionId`
+from the finish chunk.
 
 ## Controlling what crosses the wire
 

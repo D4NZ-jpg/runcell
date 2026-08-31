@@ -30,7 +30,7 @@ export async function POST(req: Request): Promise<Response> {
 ## Frontend
 
 Follow assistant-ui's [getting started](https://www.assistant-ui.com/docs)
-for components and styling; the runtime side is the default AI SDK setup:
+for components and styling. The runtime side is the default AI SDK setup:
 
 ```tsx
 import { AssistantRuntimeProvider } from '@assistant-ui/react';
@@ -48,17 +48,17 @@ export function Chat() {
 
 ## What renders
 
-- **Text and reasoning** stream live; assistant-ui shows reasoning as a
+- **Text and reasoning** stream live. assistant-ui shows reasoning as a
   collapsible block.
-- **Tool calls** appear as tool parts, transitioning to `output-available`
-  when the tool returns. Register per-tool UI components in assistant-ui to
-  customize rendering; runcell-internal tools (`submitResult`, `fileChange`)
+- **Tool calls** appear as tool parts and change to `output-available` when
+  the tool returns. Register per-tool UI components in assistant-ui to
+  customize rendering. Runcell-internal tools (`submitResult`, `fileChange`)
   never reach the wire.
 - **Repair turns** arrive as additional steps of the same assistant message.
-- **Usage** — token counts, `costUsd`, and `costMeasured` — rides the finish
-  chunk's `messageMetadata`, so per-message cost display is available.
+- **Usage** (token counts, `costUsd`, `costMeasured`) rides the finish
+  chunk's `messageMetadata`, so the UI can show per-message cost.
 - **Failures** end the stream with an in-band `error` chunk. The message is
-  masked by default; see below.
+  masked by default (see below).
 
 ## Controlling what crosses the wire
 
@@ -81,5 +81,5 @@ option reference.
 
 `messages` replays the client-held history on every request, which suits
 assistant-ui's default model. To keep durable server-side state instead, use
-[threads](../threads.md) with `prompt` and persist `thread.toJSON()`; the
+[threads](../threads.md) with `prompt` and persist `thread.toJSON()`. The
 [chat agent guide](../chat-agent.md) shows the full pattern.

@@ -152,17 +152,17 @@ const final = await result; // always await this
 | `toUIMessageStream(options?)`         | `AsyncIterable<UIMessageChunk>` | The run as AI SDK UI Message Stream chunks.                               |
 | `toUIMessageStreamResponse(options?)` | `Response`                      | The run as a UI Message Stream SSE response for `useChat` / assistant-ui. |
 
-Both accept `UIMessageStreamOptions` — `sendReasoning`, `sendTools`
-(blanket, `'names-only'`, or per-tool), and `onError` (masked by default so
-server error details never reach the client) — mirroring the AI SDK;
-`toUIMessageStreamResponse` additionally accepts `ResponseInit` fields. See
+Both accept `UIMessageStreamOptions`, mirroring the AI SDK: `sendReasoning`,
+`sendTools` (blanket, `'names-only'`, or per-tool), and `onError` (masked by
+default so server error details never reach the client).
+`toUIMessageStreamResponse` also accepts `ResponseInit` fields. See
 [wire-level controls](./streaming.md#wire-level-controls).
 
 The UI message stream carries text and reasoning deltas, tool calls and
 results (runcell-internal tools are hidden), one step per model turn
 (including repair turns), and a final `finish` chunk whose `messageMetadata`
 carries the run's [`usage`](#runusage) and session id. A failed run ends the
-stream with an in-band `error` chunk — with usage metadata when measurable —
+stream with an in-band `error` chunk (with usage metadata when measurable)
 while `result` still rejects. See [Streaming](./streaming.md#zero-glue-chat-frontends)
 for the route-handler pattern.
 

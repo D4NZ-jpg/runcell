@@ -37,7 +37,7 @@ const { data } = await task.result; // validated payload
 ## Zero-glue chat frontends
 
 `toUIMessageStreamResponse()` returns the run as an [AI SDK UI Message
-Stream](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol) SSE response — the
+Stream](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol) SSE response, the
 wire format consumed by AI SDK's `useChat` and
 [assistant-ui](https://www.assistant-ui.com)'s `useChatRuntime`. Combined
 with `messages` input, a chat route handler is one statement (see the
@@ -63,8 +63,8 @@ const { messages } = useChat();
 
 The stream carries text and reasoning deltas, tool calls and results, step
 boundaries per model turn, and a final `finish` chunk whose
-`messageMetadata` includes the run's `usage` — so per-message token counts
-and cost are available in the UI. Failures arrive as an in-band `error`
+`messageMetadata` includes the run's `usage`, so the UI can show per-message
+token counts and cost. Failures arrive as an in-band `error`
 chunk. `toUIMessageStream()` exposes the same chunks as an async iterable
 for custom transports.
 
@@ -76,8 +76,9 @@ server-side history, prefer [threads](./threads.md) and `prompt`.
 ### Wire-level controls
 
 `toUIMessageStreamResponse` and `toUIMessageStream` accept options mirroring
-the AI SDK's, deciding what leaves the server. Hiding data in the frontend is
-not redaction — anything sent is visible in the browser's network inspector.
+the AI SDK's. They decide what leaves the server: hiding data in the
+frontend is not redaction, because anything sent is visible in the browser's
+network inspector.
 
 ```ts
 return agent.stream({ messages }).toUIMessageStreamResponse({

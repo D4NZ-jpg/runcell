@@ -3,9 +3,9 @@
 This guide builds a chat endpoint that streams replies, preserves conversation
 history, and optionally keeps a workspace between turns.
 
-> Using assistant-ui or AI SDK's `useChat` with client-held history? The whole
-> backend is one route handler —
-> `agent.stream({ messages }).toUIMessageStreamResponse()` — see the
+> If your frontend is assistant-ui or AI SDK's `useChat` with client-held
+> history, the whole backend is one route handler:
+> `agent.stream({ messages }).toUIMessageStreamResponse()`. See the
 > [integration pages](./integrations/assistant-ui.md). This guide covers the
 > complementary pattern: durable **server-side** state with threads, which
 > also works as the storage layer behind a UI-message frontend.
