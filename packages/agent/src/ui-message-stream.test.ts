@@ -179,10 +179,13 @@ describe('createUIMessageChunkConverter', () => {
     ]);
   });
 
-  it('fails without usage metadata when none is carried', () => {
+  it('opens the message on a failure before any parts', () => {
     const converter = createUIMessageChunkConverter();
     const chunks = converter.fail(new Error('early'));
-    expect(chunks).toEqual([{ type: 'error', errorText: 'early' }]);
+    expect(chunks).toEqual([
+      { type: 'start' },
+      { type: 'error', errorText: 'early' },
+    ]);
   });
 
   it('ignores parts that have no UI mapping', () => {

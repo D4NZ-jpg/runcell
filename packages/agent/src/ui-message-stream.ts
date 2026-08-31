@@ -224,6 +224,12 @@ export function createUIMessageChunkConverter(): {
 
     fail(error) {
       const chunks: UIMessageChunk[] = [];
+      // A failure before any parts still opens the message, so consumers
+      // always receive a well-formed `start` before the in-band error.
+      if (!messageStarted) {
+        messageStarted = true;
+        chunks.push({ type: 'start' });
+      }
       closeOpenBlocks(chunks);
       if (stepOpen) {
         chunks.push({ type: 'finish-step' });
