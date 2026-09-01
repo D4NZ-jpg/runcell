@@ -44,7 +44,8 @@ export function uiChatMessageFileParts(
   return files;
 }
 
-const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+/** Default per-attachment size limit; override with `maxAttachmentBytes`. */
+const DEFAULT_MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 
 const MEDIA_TYPE_EXTENSIONS: Record<string, string> = {
   'image/png': 'png',
@@ -88,7 +89,10 @@ function attachmentPath(
   return candidate;
 }
 
-function decodeDataUrl(url: string): {
+function decodeDataUrl(
+  url: string,
+  maxBytes: number,
+): {
   bytes: Uint8Array;
   mediaType?: string;
 } {
@@ -103,9 +107,10 @@ function decodeDataUrl(url: string): {
   const bytes = base64
     ? Uint8Array.from(Buffer.from(data ?? '', 'base64'))
     : new TextEncoder().encode(decodeURIComponent(data ?? ''));
-  if (bytes.byteLength > MAX_ATTACHMENT_BYTES) {
+  if (bytes.byteLength > maxBytes) {
     throw new Error(
-      `file parts in "messages" are limited to ${MAX_ATTACHMENT_BYTES} bytes each.`,
+      `file parts in "messages" are limited to ${maxBytes} bytes each. ` +
+        'Raise the limit with the "maxAttachmentBytes" run option.',
     );
   }
   return {
@@ -130,7 +135,10 @@ export interface UIChatRunInput {
  */
 export function uiChatMessagesToRunInput(
   messages: readonly UIChatMessage[],
+  options?: { maxAttachmentBytes?: number },
 ): UIChatRunInput {
+  const maxAttachmentBytes =
+    options?.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES;
   const last = messages.at(-1);
   if (last === undefined) {
     return { prompt: '', files: [] };
@@ -148,7 +156,7 @@ export function uiChatMessagesToRunInput(
 
   const usedPaths = new Set<string>();
   const files = uiChatMessageFileParts(last).map((file, index) => {
-    const decoded = decodeDataUrl(file.url);
+    const decoded = decodeDataUrl(file.url, maxAttachmentBytes);
     const mediaType = file.mediaType ?? decoded.mediaType;
     return {
       path: attachmentPath(

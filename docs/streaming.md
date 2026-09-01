@@ -80,7 +80,12 @@ workspace under `attachments/`, and the prompt lists them so the agent
 reads them with its file tools. Vision models can view seeded images.
 Remote `http(s)` URLs are rejected: fetch them in your application and
 inline the bytes. Attachments on earlier messages appear as placeholders
-in the replayed context. Each attachment is limited to 20 MB.
+in the replayed context. Each attachment is limited to 20 MB by default.
+Raise the limit with the `maxAttachmentBytes` run option. Attachments
+decode in server memory, so keep an HTTP body limit in front of the
+endpoint. Whether the model can view an attachment depends on its input
+modalities: images require a vision model, and PDFs are workspace files
+the agent processes with its tools, not native model input.
 
 ### Wire-level controls
 

@@ -173,6 +173,15 @@ export function validateRunOptions(
   ) {
     throw new InvalidOptionError('run requires a non-empty "prompt".');
   }
+  if (
+    options.maxAttachmentBytes !== undefined &&
+    (!Number.isSafeInteger(options.maxAttachmentBytes) ||
+      options.maxAttachmentBytes <= 0)
+  ) {
+    throw new InvalidOptionError(
+      '"maxAttachmentBytes" must be a positive integer.',
+    );
+  }
   if (options.schema !== undefined && !isAgentSchema(options.schema)) {
     throw new InvalidOptionError(
       'run "schema" must be Standard Schema-compatible.',
@@ -242,7 +251,11 @@ export function createAgent(
     }
     let derived: ReturnType<typeof uiChatMessagesToRunInput>;
     try {
-      derived = uiChatMessagesToRunInput(opts.messages);
+      derived = uiChatMessagesToRunInput(opts.messages, {
+        ...(opts.maxAttachmentBytes !== undefined
+          ? { maxAttachmentBytes: opts.maxAttachmentBytes }
+          : {}),
+      });
     } catch (error) {
       throw new InvalidOptionError(
         error instanceof Error ? error.message : String(error),

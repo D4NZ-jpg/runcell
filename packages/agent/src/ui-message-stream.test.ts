@@ -388,6 +388,32 @@ describe('uiChatMessagesToRunInput', () => {
     expect(files[0]?.mediaType).toBe('text/plain');
   });
 
+  it('enforces the default attachment size limit', () => {
+    const big = Buffer.alloc(21 * 1024 * 1024).toString('base64');
+    expect(() =>
+      uiChatMessagesToRunInput([
+        {
+          role: 'user',
+          parts: [{ type: 'file', url: `data:application/pdf;base64,${big}` }],
+        },
+      ]),
+    ).toThrow('maxAttachmentBytes');
+  });
+
+  it('honors a raised maxAttachmentBytes', () => {
+    const big = Buffer.alloc(21 * 1024 * 1024).toString('base64');
+    const { files } = uiChatMessagesToRunInput(
+      [
+        {
+          role: 'user',
+          parts: [{ type: 'file', url: `data:application/pdf;base64,${big}` }],
+        },
+      ],
+      { maxAttachmentBytes: 32 * 1024 * 1024 },
+    );
+    expect(files[0]?.bytes.byteLength).toBe(21 * 1024 * 1024);
+  });
+
   it('rejects remote file URLs', () => {
     expect(() =>
       uiChatMessagesToRunInput([

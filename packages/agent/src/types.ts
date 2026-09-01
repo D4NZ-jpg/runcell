@@ -163,6 +163,12 @@ export interface RunOptionsBase {
    * `prompt`, not both.
    */
   messages?: readonly UIChatMessage[];
+  /**
+   * Per-attachment size limit in bytes for `file` parts in `messages`.
+   * Defaults to 20 MB. Attachments decode in server memory, so raise this
+   * deliberately and keep an HTTP body limit in front of the endpoint.
+   */
+  maxAttachmentBytes?: number;
   /** Files to seed into the workspace before the run starts. */
   files?: FileInput[];
   /**

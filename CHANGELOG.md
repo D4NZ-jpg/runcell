@@ -13,7 +13,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the prompt lists them so the agent reads them with its file tools.
   Attachments on earlier messages appear as placeholders in the replayed
   context. Remote `http(s)` URLs are rejected with a clear error instead of
-  being dropped, and each attachment is limited to 20 MB. A last user
+  being dropped, and each attachment is limited to 20 MB by default
+  (raise it with the `maxAttachmentBytes` run option). A last user
   message with only file parts is now valid.
 
 ## 1.7.0 - 2026-08-31
