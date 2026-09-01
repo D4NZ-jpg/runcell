@@ -32,6 +32,12 @@ import type { ResolvedAgentConfig } from './create-agent.js';
 import type { AuthBlob, CredentialStore } from './credentials.js';
 import { ExtensionError, IncompleteResultError, TurnError } from './errors.js';
 import { normalizeFiles, type NormalizedFile } from './files.js';
+import {
+  createReadPdfPagesTool,
+  isPdfFile,
+  loadPdfPageRenderer,
+  READ_PDF_PAGES_TOOL_NAME,
+} from './pdf-pages.js';
 import { assertSafeWorkspacePath } from './paths.js';
 import {
   createSandboxProvider,
@@ -172,9 +178,31 @@ async function runWithHarness({
   const threadInternals = getThreadInternals(runOptions.thread);
   let succeeded = false;
 
+  // PDFs cannot be viewed through the engine's read tool (it reads text and
+  // images), so seeded PDFs get a built-in page-rendering tool when the
+  // optional renderer (pdfjs-dist + @napi-rs/canvas) is installed.
+  const pdfFiles = new Map(
+    files
+      .filter(
+        (file): file is NormalizedFile & { kind: 'binary' } =>
+          file.kind === 'binary' && isPdfFile(file),
+      )
+      .map(file => [file.path, file.bytes]),
+  );
+  const pdfRenderer =
+    pdfFiles.size > 0 ? await loadPdfPageRenderer() : undefined;
+
   const tools = createTools({
     tools: agentOptions.tools,
     schema,
+    builtinTools: pdfRenderer
+      ? {
+          [READ_PDF_PAGES_TOOL_NAME]: createReadPdfPagesTool(
+            pdfFiles,
+            pdfRenderer,
+          ),
+        }
+      : undefined,
     onSubmit: data => {
       // A caller cancellation that wins the race stays authoritative. If the
       // validated submission arrived first, preserve it and stop only the
@@ -716,15 +744,21 @@ function recordThreadTurn(
 function createTools({
   tools,
   schema,
+  builtinTools,
   onSubmit,
 }: {
   tools: AgentOptions['tools'];
   schema: AgentSchema | undefined;
+  builtinTools?: AgentOptions['tools'];
   onSubmit: (value: unknown) => void;
 }): ToolSet {
   const out: ToolSet = {};
 
   for (const [name, definition] of Object.entries(tools ?? {})) {
+    out[name] = createHostTool(definition);
+  }
+  // Built-in tool names are reserved, so these never collide with user tools.
+  for (const [name, definition] of Object.entries(builtinTools ?? {})) {
     out[name] = createHostTool(definition);
   }
 

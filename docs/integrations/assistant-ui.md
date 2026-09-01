@@ -61,8 +61,10 @@ export function Chat() {
   masked by default (see below).
 - **Attachments** on the sent message (file parts with data URLs) are seeded
   into the run workspace under `attachments/`, and the agent reads them with
-  its file tools. See [messages input](../streaming.md#zero-glue-chat-frontends)
-  for limits.
+  its file tools. With the optional peers `pdfjs-dist` and `@napi-rs/canvas`
+  installed, PDF attachments get a built-in `readPdfPages` tool that renders
+  pages as images the model can view. See
+  [messages input](../streaming.md#zero-glue-chat-frontends) for limits.
 
 ## Controlling what crosses the wire
 

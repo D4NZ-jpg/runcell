@@ -4,6 +4,19 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Built-in PDF page viewing: when a run seeds a PDF (a `messages` attachment
+  or a `files` entry) and the optional peers `pdfjs-dist` and
+  `@napi-rs/canvas` are installed, runcell registers a `readPdfPages` tool
+  that renders requested pages as images the model can view (at most 8 pages
+  per call, first 4 by default). Engines read text and images, not PDFs, so
+  scanned documents previously required a user-built rasterization tool.
+  Without the optional peers, behavior is unchanged. `readPdfPages` is now a
+  reserved tool name.
+
 ## 1.8.0 - 2026-09-01
 
 ### Added

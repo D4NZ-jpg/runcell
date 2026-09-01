@@ -84,8 +84,18 @@ in the replayed context. Each attachment is limited to 20 MB by default.
 Raise the limit with the `maxAttachmentBytes` run option. Attachments
 decode in server memory, so keep an HTTP body limit in front of the
 endpoint. Whether the model can view an attachment depends on its input
-modalities: images require a vision model, and PDFs are workspace files
-the agent processes with its tools, not native model input.
+modalities: images require a vision model.
+
+PDFs get a built-in path: when a PDF is seeded and the optional peers
+`pdfjs-dist` and `@napi-rs/canvas` are installed, runcell registers a
+`readPdfPages` tool that renders requested pages as images the model can
+view (at most 8 pages per call, first 4 by default). Without the peers,
+the PDF is still seeded as a workspace file the agent can process with
+its tools.
+
+```bash
+npm install pdfjs-dist @napi-rs/canvas   # enables readPdfPages
+```
 
 ### Wire-level controls
 

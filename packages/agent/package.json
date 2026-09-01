@@ -35,7 +35,9 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "@ai-sdk/sandbox-vercel": "1.0.33"
+    "@ai-sdk/sandbox-vercel": "1.0.33",
+    "@napi-rs/canvas": ">=1",
+    "pdfjs-dist": ">=5"
   },
   "dependencies": {
     "@ai-sdk/harness": "1.0.33",
@@ -47,12 +49,14 @@
   },
   "devDependencies": {
     "@ai-sdk/sandbox-vercel": "1.0.33",
+    "@napi-rs/canvas": "^1.0.8",
     "@types/node": "^24.0.0",
+    "ai": "7.0.28",
     "del-cli": "^6.0.0",
+    "pdfjs-dist": "^6.3.289",
     "tsup": "^8.5.1",
     "typescript": "^5.8.3",
-    "vitest": "^3.2.4",
-    "ai": "7.0.28"
+    "vitest": "^3.2.4"
   },
   "keywords": [
     "ai",
@@ -70,6 +74,12 @@
   ],
   "peerDependenciesMeta": {
     "@ai-sdk/sandbox-vercel": {
+      "optional": true
+    },
+    "@napi-rs/canvas": {
+      "optional": true
+    },
+    "pdfjs-dist": {
       "optional": true
     }
   },

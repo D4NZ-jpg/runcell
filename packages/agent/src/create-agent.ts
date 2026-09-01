@@ -35,6 +35,7 @@ const RESERVED_TOOL_NAMES = new Set([
   'ls',
   'submitResult',
   'fileChange',
+  'readPdfPages',
 ]);
 
 /**

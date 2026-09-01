@@ -2017,6 +2017,49 @@ describe('defaultRuntime', () => {
     });
   });
 
+  it('registers the built-in readPdfPages tool when a PDF is seeded', async () => {
+    const { tinyPdf } = await import('./pdf-pages.test.js');
+    const state = installRuntimeMocks([
+      agent => {
+        agent.submit({ ok: true });
+        return [{ type: 'finish', finishReason: 'stop' }];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() }), {
+        runOptions: {
+          prompt: 'read the invoice',
+          files: [
+            {
+              path: 'attachments/factura.pdf',
+              bytes: tinyPdf(),
+              mediaType: 'application/pdf',
+            },
+          ],
+        },
+      }),
+    );
+
+    const tool = state.instances[0]?.settings.tools['readPdfPages'];
+    expect(tool).toBeDefined();
+    expect(tool?.description).toContain('attachments/factura.pdf');
+  });
+
+  it('does not register readPdfPages without a seeded PDF', async () => {
+    const state = installRuntimeMocks([
+      agent => {
+        agent.submit({ ok: true });
+        return [{ type: 'finish', finishReason: 'stop' }];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    await runtime.run(createRuntimeInput(z.object({ ok: z.boolean() })));
+    expect(state.instances[0]?.settings.tools['readPdfPages']).toBeUndefined();
+  });
+
   it('resets finish reason before a terminal repair submission', async () => {
     const finishes: FinishEvent[] = [];
     installRuntimeMocks([
@@ -2408,6 +2451,7 @@ interface HarnessSettings {
 }
 
 interface ToolLike {
+  description?: string;
   inputSchema: FlexibleSchema;
   execute(input: unknown): unknown;
 }
