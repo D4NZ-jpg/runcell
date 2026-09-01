@@ -4,7 +4,12 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 1.8.0 - 2026-09-01
+
+### Added
+
+- Added the `maxAttachmentBytes` run option: the per-attachment size limit
+  for `file` parts in `messages`, 20 MB by default.
 
 ### Fixed
 
