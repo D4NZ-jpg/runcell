@@ -446,7 +446,7 @@ describe('uiChatMessagesToRunInput', () => {
     expect(files[0]?.path).toBe('attachments/passwd');
   });
 
-  it('shows earlier-message attachments as placeholders in the transcript', () => {
+  it('re-seeds earlier-message attachments so documents survive the conversation', () => {
     const data = Buffer.from('x').toString('base64');
     const { prompt, files } = uiChatMessagesToRunInput([
       {
@@ -463,13 +463,40 @@ describe('uiChatMessagesToRunInput', () => {
       { role: 'assistant', parts: [{ type: 'text', text: 'nice chart' }] },
       { role: 'user', parts: [{ type: 'text', text: 'summarize it' }] },
     ]);
-    expect(files).toEqual([]);
+    // The earlier attachment is seeded again: clients resend the full
+    // history, so the bytes are present on every request.
+    expect(files.map(file => file.path)).toEqual(['attachments/chart.png']);
     expect(prompt).toBe(
       'Conversation so far:\n' +
-        'User: here is a chart [attached: chart.png]\n' +
+        'User: here is a chart [attached: attachments/chart.png]\n' +
         'Assistant: nice chart\n\n' +
         'summarize it',
     );
+  });
+
+  it('keeps attachment paths stable across turns', () => {
+    const data = Buffer.from('x').toString('base64');
+    const firstTurn: Parameters<typeof uiChatMessagesToRunInput>[0] = [
+      {
+        role: 'user',
+        parts: [
+          { type: 'text', text: 'read this' },
+          { type: 'file', url: `data:application/pdf;base64,${data}` },
+        ],
+      },
+    ];
+    const secondTurn = [
+      ...firstTurn,
+      { role: 'assistant' as const, parts: [{ type: 'text', text: 'done' }] },
+      { role: 'user' as const, parts: [{ type: 'text', text: 'page 2?' }] },
+    ];
+
+    const first = uiChatMessagesToRunInput(firstTurn);
+    const second = uiChatMessagesToRunInput(secondTurn);
+    expect(first.files.map(file => file.path)).toEqual(
+      second.files.map(file => file.path),
+    );
+    expect(second.prompt).toContain('[attached: attachments/attachment-1.pdf]');
   });
 });
 

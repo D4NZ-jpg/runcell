@@ -121,17 +121,22 @@ function decodeDataUrl(
 
 export interface UIChatRunInput {
   prompt: string;
-  /** Attachments from the last user message, seeded into the workspace. */
+  /** Attachments from every user message, seeded into the workspace. */
   files: { path: string; bytes: Uint8Array; mediaType?: string }[];
 }
 
 /**
  * Fold a UI chat history into a prompt plus workspace files. The last user
- * message is the task; its `file` parts (data URLs) become files under
- * `attachments/`, listed at the end of the prompt so the agent reads them
- * with its file tools. Earlier turns are replayed as conversation context in
- * the same format threads use for neutral replay, with file parts shown as
- * placeholders.
+ * message is the task; earlier turns are replayed as conversation context in
+ * the same format threads use for neutral replay.
+ *
+ * `file` parts (data URLs) on every user message become files under
+ * `attachments/`, so documents from earlier turns stay visible for the whole
+ * conversation — clients resend the full history on each request, so the
+ * bytes arrive every time and re-seeding costs nothing extra. Iteration
+ * order is deterministic, so a message keeps the same attachment paths on
+ * every turn. The transcript names each message's attachments by their
+ * seeded path; assistant `file` parts (generated output) are not re-seeded.
  */
 export function uiChatMessagesToRunInput(
   messages: readonly UIChatMessage[],
@@ -144,44 +149,59 @@ export function uiChatMessagesToRunInput(
     return { prompt: '', files: [] };
   }
 
-  const describe = (message: UIChatMessage): string => {
-    const text = uiChatMessageText(message);
-    const names = uiChatMessageFileParts(message).map(
-      (file, index) => file.filename ?? `attachment-${index + 1}`,
-    );
-    const attachments =
-      names.length > 0 ? `[attached: ${names.join(', ')}]` : '';
-    return [text, attachments].filter(Boolean).join(' ');
-  };
-
   const usedPaths = new Set<string>();
-  const files = uiChatMessageFileParts(last).map((file, index) => {
-    const decoded = decodeDataUrl(file.url, maxAttachmentBytes);
-    const mediaType = file.mediaType ?? decoded.mediaType;
-    return {
-      path: attachmentPath(
+  let attachmentCount = 0;
+  const files: UIChatRunInput['files'] = [];
+  const pathsByMessage = new Map<number, string[]>();
+  messages.forEach((message, messageIndex) => {
+    if (message.role !== 'user') {
+      return;
+    }
+    for (const file of uiChatMessageFileParts(message)) {
+      const decoded = decodeDataUrl(file.url, maxAttachmentBytes);
+      const mediaType = file.mediaType ?? decoded.mediaType;
+      const filePath = attachmentPath(
         {
           ...(mediaType !== undefined ? { mediaType } : {}),
           ...(file.filename !== undefined ? { filename: file.filename } : {}),
         },
-        index,
+        attachmentCount,
         usedPaths,
-      ),
-      bytes: decoded.bytes,
-      ...(mediaType !== undefined ? { mediaType } : {}),
-    };
+      );
+      attachmentCount += 1;
+      files.push({
+        path: filePath,
+        bytes: decoded.bytes,
+        ...(mediaType !== undefined ? { mediaType } : {}),
+      });
+      const paths = pathsByMessage.get(messageIndex) ?? [];
+      paths.push(filePath);
+      pathsByMessage.set(messageIndex, paths);
+    }
   });
 
+  const describe = (message: UIChatMessage, messageIndex: number): string => {
+    const text = uiChatMessageText(message);
+    const paths = pathsByMessage.get(messageIndex) ?? [];
+    const attachments =
+      paths.length > 0 ? `[attached: ${paths.join(', ')}]` : '';
+    return [text, attachments].filter(Boolean).join(' ');
+  };
+
+  const lastPaths = pathsByMessage.get(messages.length - 1) ?? [];
   const attachmentNote =
-    files.length > 0
-      ? `The user attached ${files.length === 1 ? 'this file' : 'these files'} to the message:\n${files
-          .map(file => `- ${file.path}`)
+    lastPaths.length > 0
+      ? `The user attached ${lastPaths.length === 1 ? 'this file' : 'these files'} to the message:\n${lastPaths
+          .map(filePath => `- ${filePath}`)
           .join('\n')}`
       : undefined;
 
   const prior = messages
     .slice(0, -1)
-    .map(message => ({ role: message.role, text: describe(message) }))
+    .map((message, messageIndex) => ({
+      role: message.role,
+      text: describe(message, messageIndex),
+    }))
     .filter(message => message.text.trim().length > 0);
   const lastText = uiChatMessageText(last);
 

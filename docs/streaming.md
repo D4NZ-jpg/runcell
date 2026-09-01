@@ -75,12 +75,14 @@ For durable server-side history, prefer [threads](./threads.md) and
 `prompt`.
 
 Attachments (`file` parts with data URLs, the format `useChat` and
-assistant-ui send) on the last user message are seeded into the run
-workspace under `attachments/`, and the prompt lists them so the agent
-reads them with its file tools. Vision models can view seeded images.
-Remote `http(s)` URLs are rejected: fetch them in your application and
-inline the bytes. Attachments on earlier messages appear as placeholders
-in the replayed context. Each attachment is limited to 20 MB by default.
+assistant-ui send) on every user message are seeded into the run workspace
+under `attachments/`, so a document from an earlier turn stays available
+for the whole conversation — clients resend the full history on each
+request, so the bytes arrive every time. Attachment paths are stable
+across turns, the replayed context names each message's attachments by
+their path, and the prompt lists the last message's attachments. Vision
+models can view seeded images. Remote `http(s)` URLs are rejected: fetch
+them in your application and inline the bytes. Each attachment is limited to 20 MB by default.
 Raise the limit with the `maxAttachmentBytes` run option. Attachments
 decode in server memory, so keep an HTTP body limit in front of the
 endpoint. Whether the model can view an attachment depends on its input
