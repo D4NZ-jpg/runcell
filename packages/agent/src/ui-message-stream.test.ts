@@ -3,7 +3,7 @@ import { TurnError } from './errors.js';
 import type { RunResult, RunUsage } from './types.js';
 import {
   createUIMessageChunkConverter,
-  uiChatMessagesToPrompt,
+  uiChatMessagesToRunInput,
   uiChatMessageText,
   uiMessageChunksToResponse,
 } from './ui-message-stream.js';
@@ -288,32 +288,162 @@ describe('uiChatMessageText', () => {
   });
 });
 
-describe('uiChatMessagesToPrompt', () => {
+describe('uiChatMessagesToRunInput', () => {
   it('uses a lone user message as the prompt', () => {
     expect(
-      uiChatMessagesToPrompt([
+      uiChatMessagesToRunInput([
         { role: 'user', parts: [{ type: 'text', text: 'hello' }] },
       ]),
-    ).toBe('hello');
+    ).toEqual({ prompt: 'hello', files: [] });
   });
 
   it('replays prior turns as conversation context', () => {
     expect(
-      uiChatMessagesToPrompt([
+      uiChatMessagesToRunInput([
         { role: 'user', parts: [{ type: 'text', text: 'hi' }] },
         { role: 'assistant', parts: [{ type: 'text', text: 'hey there' }] },
         { role: 'user', parts: [{ type: 'text', text: 'follow up' }] },
-      ]),
+      ]).prompt,
     ).toBe('Conversation so far:\nUser: hi\nAssistant: hey there\n\nfollow up');
   });
 
   it('skips prior messages with no text', () => {
     expect(
-      uiChatMessagesToPrompt([
+      uiChatMessagesToRunInput([
         { role: 'assistant', parts: [{ type: 'tool-weather' }] },
         { role: 'user', parts: [{ type: 'text', text: 'q' }] },
-      ]),
+      ]).prompt,
     ).toBe('q');
+  });
+
+  it('seeds last-message file parts as workspace attachments', () => {
+    const png = Buffer.from('fake-png-bytes').toString('base64');
+    const { prompt, files } = uiChatMessagesToRunInput([
+      {
+        role: 'user',
+        parts: [
+          { type: 'text', text: 'describe this image' },
+          {
+            type: 'file',
+            url: `data:image/png;base64,${png}`,
+            mediaType: 'image/png',
+            filename: 'photo.png',
+          },
+        ],
+      },
+    ]);
+
+    expect(files).toEqual([
+      {
+        path: 'attachments/photo.png',
+        bytes: Uint8Array.from(Buffer.from('fake-png-bytes')),
+        mediaType: 'image/png',
+      },
+    ]);
+    expect(prompt).toBe(
+      'describe this image\n\n' +
+        'The user attached this file to the message:\n- attachments/photo.png',
+    );
+  });
+
+  it('names unnamed attachments from their media type and dedupes collisions', () => {
+    const data = Buffer.from('x').toString('base64');
+    const { files } = uiChatMessagesToRunInput([
+      {
+        role: 'user',
+        parts: [
+          { type: 'text', text: 'read these' },
+          { type: 'file', url: `data:application/pdf;base64,${data}` },
+          {
+            type: 'file',
+            url: `data:text/plain;base64,${data}`,
+            filename: 'notes.txt',
+          },
+          {
+            type: 'file',
+            url: `data:text/plain;base64,${data}`,
+            filename: 'notes.txt',
+          },
+        ],
+      },
+    ]);
+    expect(files.map(file => file.path)).toEqual([
+      'attachments/attachment-1.pdf',
+      'attachments/notes.txt',
+      'attachments/notes-2.txt',
+    ]);
+  });
+
+  it('decodes non-base64 data URLs', () => {
+    const { files } = uiChatMessagesToRunInput([
+      {
+        role: 'user',
+        parts: [
+          { type: 'text', text: 'go' },
+          { type: 'file', url: 'data:text/plain,hello%20world' },
+        ],
+      },
+    ]);
+    expect(new TextDecoder().decode(files[0]?.bytes)).toBe('hello world');
+    expect(files[0]?.mediaType).toBe('text/plain');
+  });
+
+  it('rejects remote file URLs', () => {
+    expect(() =>
+      uiChatMessagesToRunInput([
+        {
+          role: 'user',
+          parts: [
+            { type: 'text', text: 'go' },
+            { type: 'file', url: 'https://example.com/a.png' },
+          ],
+        },
+      ]),
+    ).toThrow('data URL');
+  });
+
+  it('sanitizes hostile attachment filenames', () => {
+    const data = Buffer.from('x').toString('base64');
+    const { files } = uiChatMessagesToRunInput([
+      {
+        role: 'user',
+        parts: [
+          { type: 'text', text: 'go' },
+          {
+            type: 'file',
+            url: `data:text/plain;base64,${data}`,
+            filename: '../../etc/passwd',
+          },
+        ],
+      },
+    ]);
+    expect(files[0]?.path).toBe('attachments/passwd');
+  });
+
+  it('shows earlier-message attachments as placeholders in the transcript', () => {
+    const data = Buffer.from('x').toString('base64');
+    const { prompt, files } = uiChatMessagesToRunInput([
+      {
+        role: 'user',
+        parts: [
+          { type: 'text', text: 'here is a chart' },
+          {
+            type: 'file',
+            url: `data:image/png;base64,${data}`,
+            filename: 'chart.png',
+          },
+        ],
+      },
+      { role: 'assistant', parts: [{ type: 'text', text: 'nice chart' }] },
+      { role: 'user', parts: [{ type: 'text', text: 'summarize it' }] },
+    ]);
+    expect(files).toEqual([]);
+    expect(prompt).toBe(
+      'Conversation so far:\n' +
+        'User: here is a chart [attached: chart.png]\n' +
+        'Assistant: nice chart\n\n' +
+        'summarize it',
+    );
   });
 });
 

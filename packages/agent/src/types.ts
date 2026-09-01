@@ -130,11 +130,19 @@ export interface AgentOptions {
 /**
  * One message of a UI chat history, structurally compatible with the AI SDK
  * `UIMessage` shape. Text is read from `parts` entries of type `text`, with
- * a plain `content` string accepted as a fallback.
+ * a plain `content` string accepted as a fallback. `file` parts on the last
+ * user message are seeded into the run workspace as files under
+ * `attachments/`; their `url` must be a data URL.
  */
 export interface UIChatMessage {
   role: 'system' | 'user' | 'assistant';
-  parts?: readonly { type: string; text?: string }[];
+  parts?: readonly {
+    type: string;
+    text?: string;
+    url?: string;
+    mediaType?: string;
+    filename?: string;
+  }[];
   content?: string;
 }
 

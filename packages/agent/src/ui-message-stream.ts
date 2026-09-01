@@ -23,31 +23,172 @@ export function uiChatMessageText(message: UIChatMessage): string {
   return typeof message.content === 'string' ? message.content : '';
 }
 
-/**
- * Fold a UI chat history into a single prompt: the last user message is the
- * task, and earlier turns are replayed as conversation context in the same
- * format threads use for neutral replay.
- */
-export function uiChatMessagesToPrompt(
-  messages: readonly UIChatMessage[],
+/** File parts of one UI chat message (AI SDK attachment shape). */
+export function uiChatMessageFileParts(
+  message: UIChatMessage,
+): { url: string; mediaType?: string; filename?: string }[] {
+  const files: { url: string; mediaType?: string; filename?: string }[] = [];
+  for (const part of message.parts ?? []) {
+    if (part.type === 'file' && typeof part.url === 'string') {
+      files.push({
+        url: part.url,
+        ...(typeof part.mediaType === 'string'
+          ? { mediaType: part.mediaType }
+          : {}),
+        ...(typeof part.filename === 'string'
+          ? { filename: part.filename }
+          : {}),
+      });
+    }
+  }
+  return files;
+}
+
+const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+
+const MEDIA_TYPE_EXTENSIONS: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'application/pdf': 'pdf',
+  'text/plain': 'txt',
+  'text/markdown': 'md',
+  'application/json': 'json',
+  'text/csv': 'csv',
+};
+
+function attachmentPath(
+  file: { mediaType?: string; filename?: string },
+  index: number,
+  used: Set<string>,
 ): string {
+  // Keep only a safe basename; the caller-supplied name is untrusted input.
+  const base = ((file.filename ?? '').split(/[/\\]/).at(-1) ?? '')
+    .replace(/[^A-Za-z0-9._-]/g, '_')
+    .replace(/^\.+/, '');
+  const extension =
+    file.mediaType !== undefined
+      ? MEDIA_TYPE_EXTENSIONS[file.mediaType.toLowerCase()]
+      : undefined;
+  const name =
+    base.length > 0
+      ? base
+      : `attachment-${index + 1}${extension ? `.${extension}` : ''}`;
+  let candidate = `attachments/${name}`;
+  let suffix = 2;
+  while (used.has(candidate)) {
+    const dot = name.lastIndexOf('.');
+    const stem = dot > 0 ? name.slice(0, dot) : name;
+    const ext = dot > 0 ? name.slice(dot) : '';
+    candidate = `attachments/${stem}-${suffix}${ext}`;
+    suffix += 1;
+  }
+  used.add(candidate);
+  return candidate;
+}
+
+function decodeDataUrl(url: string): {
+  bytes: Uint8Array;
+  mediaType?: string;
+} {
+  const match = /^data:([^;,]*)?(;base64)?,(.*)$/s.exec(url);
+  if (!match) {
+    throw new Error(
+      'file parts in "messages" must use a data URL. Fetch remote URLs in ' +
+        'your application and inline the bytes.',
+    );
+  }
+  const [, mediaType, base64, data] = match;
+  const bytes = base64
+    ? Uint8Array.from(Buffer.from(data ?? '', 'base64'))
+    : new TextEncoder().encode(decodeURIComponent(data ?? ''));
+  if (bytes.byteLength > MAX_ATTACHMENT_BYTES) {
+    throw new Error(
+      `file parts in "messages" are limited to ${MAX_ATTACHMENT_BYTES} bytes each.`,
+    );
+  }
+  return {
+    bytes,
+    ...(mediaType ? { mediaType } : {}),
+  };
+}
+
+export interface UIChatRunInput {
+  prompt: string;
+  /** Attachments from the last user message, seeded into the workspace. */
+  files: { path: string; bytes: Uint8Array; mediaType?: string }[];
+}
+
+/**
+ * Fold a UI chat history into a prompt plus workspace files. The last user
+ * message is the task; its `file` parts (data URLs) become files under
+ * `attachments/`, listed at the end of the prompt so the agent reads them
+ * with its file tools. Earlier turns are replayed as conversation context in
+ * the same format threads use for neutral replay, with file parts shown as
+ * placeholders.
+ */
+export function uiChatMessagesToRunInput(
+  messages: readonly UIChatMessage[],
+): UIChatRunInput {
   const last = messages.at(-1);
   if (last === undefined) {
-    return '';
+    return { prompt: '', files: [] };
   }
+
+  const describe = (message: UIChatMessage): string => {
+    const text = uiChatMessageText(message);
+    const names = uiChatMessageFileParts(message).map(
+      (file, index) => file.filename ?? `attachment-${index + 1}`,
+    );
+    const attachments =
+      names.length > 0 ? `[attached: ${names.join(', ')}]` : '';
+    return [text, attachments].filter(Boolean).join(' ');
+  };
+
+  const usedPaths = new Set<string>();
+  const files = uiChatMessageFileParts(last).map((file, index) => {
+    const decoded = decodeDataUrl(file.url);
+    const mediaType = file.mediaType ?? decoded.mediaType;
+    return {
+      path: attachmentPath(
+        {
+          ...(mediaType !== undefined ? { mediaType } : {}),
+          ...(file.filename !== undefined ? { filename: file.filename } : {}),
+        },
+        index,
+        usedPaths,
+      ),
+      bytes: decoded.bytes,
+      ...(mediaType !== undefined ? { mediaType } : {}),
+    };
+  });
+
+  const attachmentNote =
+    files.length > 0
+      ? `The user attached ${files.length === 1 ? 'this file' : 'these files'} to the message:\n${files
+          .map(file => `- ${file.path}`)
+          .join('\n')}`
+      : undefined;
+
   const prior = messages
     .slice(0, -1)
-    .map(message => ({ role: message.role, text: uiChatMessageText(message) }))
+    .map(message => ({ role: message.role, text: describe(message) }))
     .filter(message => message.text.trim().length > 0);
   const lastText = uiChatMessageText(last);
-  if (prior.length === 0) {
-    return lastText;
-  }
+
   const speaker = { system: 'System', user: 'User', assistant: 'Assistant' };
-  const lines = prior.map(
-    message => `${speaker[message.role]}: ${message.text}`,
-  );
-  return `Conversation so far:\n${lines.join('\n')}\n\n${lastText}`;
+  const transcript =
+    prior.length > 0
+      ? `Conversation so far:\n${prior
+          .map(message => `${speaker[message.role]}: ${message.text}`)
+          .join('\n')}`
+      : undefined;
+
+  const prompt = [transcript, lastText, attachmentNote]
+    .filter((section): section is string => Boolean(section?.trim()))
+    .join('\n\n');
+  return { prompt, files };
 }
 
 /** Tools that are runcell plumbing, not conversation content. */

@@ -68,10 +68,19 @@ token counts and cost. Failures arrive as an in-band `error`
 chunk. `toUIMessageStream()` exposes the same chunks as an async iterable
 for custom transports.
 
-`messages` accepts the AI SDK `UIMessage` shape (`role` plus `text` parts):
-the last message must be a user message and becomes the prompt; earlier
-user/assistant turns are replayed as conversation context. For durable
-server-side history, prefer [threads](./threads.md) and `prompt`.
+`messages` accepts the AI SDK `UIMessage` shape (`role` plus `text` and
+`file` parts). The last message must be a user message and becomes the
+prompt. Earlier user/assistant turns are replayed as conversation context.
+For durable server-side history, prefer [threads](./threads.md) and
+`prompt`.
+
+Attachments (`file` parts with data URLs, the format `useChat` and
+assistant-ui send) on the last user message are seeded into the run
+workspace under `attachments/`, and the prompt lists them so the agent
+reads them with its file tools. Vision models can view seeded images.
+Remote `http(s)` URLs are rejected: fetch them in your application and
+inline the bytes. Attachments on earlier messages appear as placeholders
+in the replayed context. Each attachment is limited to 20 MB.
 
 ### Wire-level controls
 

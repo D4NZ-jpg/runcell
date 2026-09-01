@@ -59,6 +59,10 @@ export function Chat() {
   chunk's `messageMetadata`, so the UI can show per-message cost.
 - **Failures** end the stream with an in-band `error` chunk. The message is
   masked by default (see below).
+- **Attachments** on the sent message (file parts with data URLs) are seeded
+  into the run workspace under `attachments/`, and the agent reads them with
+  its file tools. See [messages input](../streaming.md#zero-glue-chat-frontends)
+  for limits.
 
 ## Controlling what crosses the wire
 

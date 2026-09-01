@@ -7,7 +7,8 @@ import { resolveSandboxConfig, type SandboxConfig } from './sandbox.js';
 import { getSandboxInternals } from './sandbox-handle.js';
 import { getThreadInternals } from './thread.js';
 import {
-  uiChatMessagesToPrompt,
+  uiChatMessageFileParts,
+  uiChatMessagesToRunInput,
   uiChatMessageText,
   uiMessageChunksToResponse,
   uiMessageStreamFromRun,
@@ -156,9 +157,14 @@ export function validateRunOptions(
       );
     }
     const last = messages.at(-1);
-    if (last?.role !== 'user' || uiChatMessageText(last).trim().length === 0) {
+    if (
+      last?.role !== 'user' ||
+      (uiChatMessageText(last).trim().length === 0 &&
+        uiChatMessageFileParts(last).length === 0)
+    ) {
       throw new InvalidOptionError(
-        'run "messages" must end with a user message that has text content.',
+        'run "messages" must end with a user message that has text content ' +
+          'or file parts.',
       );
     }
   } else if (
@@ -234,9 +240,20 @@ export function createAgent(
     if (opts.messages === undefined) {
       return opts as RunInput & { prompt: string };
     }
+    let derived: ReturnType<typeof uiChatMessagesToRunInput>;
+    try {
+      derived = uiChatMessagesToRunInput(opts.messages);
+    } catch (error) {
+      throw new InvalidOptionError(
+        error instanceof Error ? error.message : String(error),
+      );
+    }
     return {
       ...opts,
-      prompt: uiChatMessagesToPrompt(opts.messages),
+      prompt: derived.prompt,
+      ...(derived.files.length > 0
+        ? { files: [...(opts.files ?? []), ...derived.files] }
+        : {}),
       messages: undefined,
     };
   };

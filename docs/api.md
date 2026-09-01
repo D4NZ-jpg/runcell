@@ -67,18 +67,18 @@ run(options: RunOptionsBase): Promise<RunResult<undefined>>;
 
 ### Run options
 
-| Option      | Type                                  | Description                                                                                                  |
-| ----------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `prompt`    | `string`                              | The task prompt. Provide either `prompt` or `messages`.                                                      |
-| `messages`  | `readonly UIChatMessage[]`            | A UI chat history (AI SDK `UIMessage` shape). Must end with a user message; earlier turns replay as context. |
-| `schema`    | `AgentSchema`                         | Structured output contract ([Standard Schema](https://standardschema.dev)). Omit for a plain turn.           |
-| `files`     | `FileInput[]`                         | Files seeded into the workspace before the run. Relative paths only.                                         |
-| `sandbox`   | `Sandbox \| SandboxOption`            | A caller-owned handle that Runcell does not destroy, or an ephemeral mode option.                            |
-| `thread`    | `Thread`                              | Conversation to continue; mutated in place on success.                                                       |
-| `events`    | `AgentEvents`                         | Per-run lifecycle callbacks, invoked in addition to the agent-level ones.                                    |
-| `pi`        | `{ thinkingLevel?: PiThinkingLevel }` | Per-run thinking-level override. Only `thinkingLevel` is accepted; it wins for this run only.                |
-| `sessionId` | `string`                              | Resume a previous session by id.                                                                             |
-| `signal`    | `AbortSignal`                         | Cancels the run.                                                                                             |
+| Option      | Type                                  | Description                                                                                                                                                                              |
+| ----------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prompt`    | `string`                              | The task prompt. Provide either `prompt` or `messages`.                                                                                                                                  |
+| `messages`  | `readonly UIChatMessage[]`            | A UI chat history (AI SDK `UIMessage` shape). Must end with a user message. Earlier turns replay as context. File parts on the last message become workspace files under `attachments/`. |
+| `schema`    | `AgentSchema`                         | Structured output contract ([Standard Schema](https://standardschema.dev)). Omit for a plain turn.                                                                                       |
+| `files`     | `FileInput[]`                         | Files seeded into the workspace before the run. Relative paths only.                                                                                                                     |
+| `sandbox`   | `Sandbox \| SandboxOption`            | A caller-owned handle that Runcell does not destroy, or an ephemeral mode option.                                                                                                        |
+| `thread`    | `Thread`                              | Conversation to continue; mutated in place on success.                                                                                                                                   |
+| `events`    | `AgentEvents`                         | Per-run lifecycle callbacks, invoked in addition to the agent-level ones.                                                                                                                |
+| `pi`        | `{ thinkingLevel?: PiThinkingLevel }` | Per-run thinking-level override. Only `thinkingLevel` is accepted; it wins for this run only.                                                                                            |
+| `sessionId` | `string`                              | Resume a previous session by id.                                                                                                                                                         |
+| `signal`    | `AbortSignal`                         | Cancels the run.                                                                                                                                                                         |
 
 The per-run `pi` object accepts only `thinkingLevel`; extensions remain
 agent-level. Invalid values throw `InvalidOptionError` eagerly when `run()` is
