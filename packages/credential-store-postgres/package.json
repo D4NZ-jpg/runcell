@@ -3,7 +3,19 @@
   "version": "0.2.0",
   "description": "Postgres-backed CredentialStore for runcell: whole-blob persistence with row-lock queueing for shared OAuth credentials in production.",
   "type": "module",
-  "license": "Apache-2.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/D4NZ-jpg/runcell.git",
+    "directory": "packages/credential-store-postgres"
+  },
+  "homepage": "https://runcell.run/credentials#shared-credential-store",
+  "bugs": {
+    "url": "https://github.com/D4NZ-jpg/runcell/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -41,6 +53,9 @@
     "tsup": "^8.5.1",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "keywords": [
     "runcell",

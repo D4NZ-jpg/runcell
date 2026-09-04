@@ -21,6 +21,24 @@ jobs:
       fail-fast: false
       matrix:
         node: [22, 24]
+    # A real Postgres so runcell-postgres-credentials runs its integration
+    # suite (row-lock queueing, refresh-race serialization) on every push.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: runcell
+          POSTGRES_PASSWORD: runcell
+          POSTGRES_DB: runcell_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U runcell -d runcell_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RUNCELL_PG_TEST_URL: postgres://runcell:runcell@localhost:5432/runcell_test
     steps:
       - uses: actions/checkout@v4
 

@@ -1,6 +1,6 @@
 # runcell-postgres-credentials
 
-A Postgres-backed `CredentialStore` for [runcell](https://github.com/runcell)'s
+A Postgres-backed `CredentialStore` for [runcell](https://github.com/D4NZ-jpg/runcell)'s
 `credentials: { type: 'shared' }` mode: whole-blob credential persistence with
 row-lock queueing, so concurrent deployments never clobber a rotated refresh
 token.
