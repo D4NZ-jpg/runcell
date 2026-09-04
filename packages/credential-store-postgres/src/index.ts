@@ -1,4 +1,17 @@
+import {
+  createCipheriv,
+  createDecipheriv,
+  randomBytes,
+  scrypt as scryptCallback,
+} from 'node:crypto';
+import { promisify } from 'node:util';
 import type { AuthBlob, CredentialStore } from 'runcell';
+
+const scrypt = promisify(scryptCallback) as (
+  password: string,
+  salt: Buffer,
+  keylen: number,
+) => Promise<Buffer>;
 
 /**
  * The subset of a Postgres client this store needs. `pg.PoolClient`
@@ -48,6 +61,16 @@ export interface PostgresCredentialStoreOptions {
   lockTimeoutMs?: number;
 
   /**
+   * When set, blobs are encrypted at rest with AES-256-GCM using a key
+   * derived from this secret (scrypt, random salt per write). Existing
+   * plaintext rows stay readable and are encrypted on their next write.
+   * Reading an encrypted row without the secret — or with the wrong one —
+   * fails with a clear error. Losing the secret means losing the stored
+   * credentials; there is no recovery path.
+   */
+  encryptionKey?: string;
+
+  /**
    * When the database is unreachable, serve the last blob this process
    * successfully read or wrote for the key, so agents keep running through
    * a store outage. Updates made during the outage stay in-process and are
@@ -92,9 +115,12 @@ export function createPostgresCredentialStore(
     ensureTable = true,
     lockTimeoutMs = 0,
     cacheFallback = true,
+    encryptionKey,
   } = options;
 
   const quotedTable = quoteIdentifier(table);
+  const cipher =
+    encryptionKey !== undefined ? createBlobCipher(encryptionKey) : undefined;
   const cache = new Map<string, AuthBlob | undefined>();
   let ensured: Promise<void> | undefined;
 
@@ -143,16 +169,16 @@ export function createPostgresCredentialStore(
         `SELECT blob FROM ${quotedTable} WHERE key = $1 FOR UPDATE`,
         [key],
       );
-      const current = (selected.rows[0]?.blob ?? undefined) as
-        | AuthBlob
-        | undefined;
+      const stored = selected.rows[0]?.blob ?? undefined;
+      const current = await readStoredBlob(stored, cipher);
 
       const { result, next } = await fn(current);
 
       if (next !== undefined) {
+        const payload = cipher ? await cipher.encrypt(next) : next;
         await client.query(
           `UPDATE ${quotedTable} SET blob = $2::jsonb, updated_at = now() WHERE key = $1`,
-          [key, JSON.stringify(next)],
+          [key, JSON.stringify(payload)],
         );
       }
       await client.query('COMMIT');
@@ -185,6 +211,116 @@ export function createPostgresCredentialStore(
       }
     },
   };
+}
+
+/** Marker property of an encrypted blob envelope. */
+const ENCRYPTED_MARKER = '__runcell_encrypted';
+
+interface EncryptedEnvelope {
+  [ENCRYPTED_MARKER]: 1;
+  v: 1;
+  kdf: 'scrypt';
+  salt: string;
+  iv: string;
+  tag: string;
+  data: string;
+}
+
+function isEncryptedEnvelope(value: unknown): value is EncryptedEnvelope {
+  return (
+    value != null &&
+    typeof value === 'object' &&
+    (value as Record<string, unknown>)[ENCRYPTED_MARKER] === 1
+  );
+}
+
+interface BlobCipher {
+  encrypt(blob: AuthBlob): Promise<EncryptedEnvelope>;
+  decrypt(envelope: EncryptedEnvelope): Promise<AuthBlob>;
+}
+
+function createBlobCipher(secret: string): BlobCipher {
+  if (typeof secret !== 'string' || secret.length === 0) {
+    throw new Error('encryptionKey must be a non-empty string.');
+  }
+  // scrypt is deliberately slow; cache derivations per salt so reads of a
+  // row pay the cost once per process, not once per credential access.
+  const derivedKeys = new Map<string, Promise<Buffer>>();
+  const keyFor = (saltBase64: string): Promise<Buffer> => {
+    let derived = derivedKeys.get(saltBase64);
+    if (derived === undefined) {
+      derived = scrypt(secret, Buffer.from(saltBase64, 'base64'), 32);
+      derivedKeys.set(saltBase64, derived);
+    }
+    return derived;
+  };
+
+  return {
+    async encrypt(blob) {
+      const salt = randomBytes(16).toString('base64');
+      const iv = randomBytes(12);
+      const key = await keyFor(salt);
+      const cipher = createCipheriv('aes-256-gcm', key, iv);
+      const data = Buffer.concat([
+        cipher.update(JSON.stringify(blob), 'utf8'),
+        cipher.final(),
+      ]);
+      return {
+        [ENCRYPTED_MARKER]: 1,
+        v: 1,
+        kdf: 'scrypt',
+        salt,
+        iv: iv.toString('base64'),
+        tag: cipher.getAuthTag().toString('base64'),
+        data: data.toString('base64'),
+      };
+    },
+    async decrypt(envelope) {
+      const key = await keyFor(envelope.salt);
+      try {
+        const decipher = createDecipheriv(
+          'aes-256-gcm',
+          key,
+          Buffer.from(envelope.iv, 'base64'),
+        );
+        decipher.setAuthTag(Buffer.from(envelope.tag, 'base64'));
+        const plain = Buffer.concat([
+          decipher.update(Buffer.from(envelope.data, 'base64')),
+          decipher.final(),
+        ]).toString('utf8');
+        return JSON.parse(plain) as AuthBlob;
+      } catch {
+        throw new Error(
+          'Failed to decrypt the stored credential blob: wrong ' +
+            '"encryptionKey" or corrupted data.',
+        );
+      }
+    },
+  };
+}
+
+/**
+ * Interpret a stored blob value: `undefined` for an empty row, a decrypted
+ * `AuthBlob` for an envelope, and a plaintext blob as-is (pre-encryption
+ * rows stay readable when an `encryptionKey` is introduced later).
+ */
+async function readStoredBlob(
+  stored: unknown,
+  cipher: BlobCipher | undefined,
+): Promise<AuthBlob | undefined> {
+  if (stored === undefined || stored === null) {
+    return undefined;
+  }
+  if (isEncryptedEnvelope(stored)) {
+    if (cipher === undefined) {
+      throw new Error(
+        'The stored credential blob is encrypted; pass "encryptionKey" to ' +
+          'createPostgresCredentialStore.',
+      );
+    }
+    return cipher.decrypt(stored);
+  }
+  return stored as AuthBlob;
 }
 
 /** Postgres error classes 08 (connection exception) and 57 (operator

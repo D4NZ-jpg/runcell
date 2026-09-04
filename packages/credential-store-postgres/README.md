@@ -49,6 +49,7 @@ Disable with `cacheFallback: false`.
 | `ensureTable`   | `true`                | Create the table on first use. Disable when the role has no DDL right. |
 | `lockTimeoutMs` | `0` (wait forever)    | Optional `lock_timeout` guard; on expiry the call rejects (`55P03`).   |
 | `cacheFallback` | `true`                | Serve the last-known blob when the database is unreachable.            |
+| `encryptionKey` | — (plaintext)         | Encrypt blobs at rest (AES-256-GCM, scrypt-derived key).               |
 
 With `ensureTable: false`, run the migration yourself:
 
@@ -62,6 +63,28 @@ console.log(postgresCredentialStoreSql());
 //   updated_at timestamptz NOT NULL DEFAULT now()
 // )
 ```
+
+## Encryption at rest
+
+Pass `encryptionKey` to store blobs encrypted:
+
+```ts
+const store = createPostgresCredentialStore({
+  pool,
+  encryptionKey: process.env.CREDENTIAL_STORE_SECRET,
+});
+```
+
+Blobs are encrypted with AES-256-GCM using a key derived from the secret via
+scrypt, with a random salt and IV per write. The `jsonb` column then holds an
+opaque envelope instead of token material. Pre-encryption plaintext rows stay
+readable and are encrypted on their next write, so the option can be
+introduced on an existing table. Reading an encrypted row without the secret,
+or with the wrong one, fails with a clear error.
+
+Losing the secret means losing the stored credentials — there is no recovery
+path. Rotating the secret is not built in: read each blob with the old store
+and write it back through a store created with the new secret.
 
 ## Connection poolers
 

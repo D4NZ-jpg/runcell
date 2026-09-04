@@ -1,6 +1,6 @@
 {
   "name": "runcell-postgres-credentials",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Postgres-backed CredentialStore for runcell: whole-blob persistence with row-lock queueing for shared OAuth credentials in production.",
   "type": "module",
   "license": "Apache-2.0",

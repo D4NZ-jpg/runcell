@@ -240,6 +240,77 @@ describe('createPostgresCredentialStore', () => {
     ).rejects.toThrow('down');
   });
 
+  it('encrypts blobs at rest and round-trips them transparently', async () => {
+    const db = createFakeDb();
+    const store = createPostgresCredentialStore({
+      pool: db.pool,
+      encryptionKey: 'correct horse battery staple',
+    });
+
+    await store.withLock('agent-1', async () => ({ result: 0, next: blobA }));
+
+    // At rest: an envelope, with no token material in the stored JSON.
+    const stored = db.rows.get('agent-1') as Record<string, unknown>;
+    expect(stored.__runcell_encrypted).toBe(1);
+    expect(JSON.stringify(stored)).not.toContain('a1');
+    expect(JSON.stringify(stored)).not.toContain('r1');
+
+    // Through the store: the plaintext blob.
+    const seen = await store.withLock('agent-1', async current => ({
+      result: current,
+    }));
+    expect(seen).toEqual(blobA);
+  });
+
+  it('fails clearly with the wrong encryption key', async () => {
+    const db = createFakeDb();
+    const writer = createPostgresCredentialStore({
+      pool: db.pool,
+      encryptionKey: 'right-key',
+    });
+    await writer.withLock('agent-1', async () => ({ result: 0, next: blobA }));
+
+    const wrong = createPostgresCredentialStore({
+      pool: db.pool,
+      encryptionKey: 'wrong-key',
+    });
+    await expect(
+      wrong.withLock('agent-1', async () => ({ result: 0 })),
+    ).rejects.toThrow('Failed to decrypt');
+
+    const missing = createPostgresCredentialStore({ pool: db.pool });
+    await expect(
+      missing.withLock('agent-1', async () => ({ result: 0 })),
+    ).rejects.toThrow('pass "encryptionKey"');
+  });
+
+  it('reads pre-encryption plaintext rows and encrypts them on write', async () => {
+    const db = createFakeDb();
+    db.rows.set('agent-1', blobA); // legacy plaintext row
+    const store = createPostgresCredentialStore({
+      pool: db.pool,
+      encryptionKey: 'secret',
+    });
+
+    const seen = await store.withLock('agent-1', async current => ({
+      result: current,
+      next: blobB,
+    }));
+    expect(seen).toEqual(blobA);
+
+    const stored = db.rows.get('agent-1') as Record<string, unknown>;
+    expect(stored.__runcell_encrypted).toBe(1);
+  });
+
+  it('rejects an empty encryption key', () => {
+    expect(() =>
+      createPostgresCredentialStore({
+        pool: createFakeDb().pool,
+        encryptionKey: '',
+      }),
+    ).toThrow('non-empty');
+  });
+
   it('rejects unsafe table names', () => {
     expect(() =>
       createPostgresCredentialStore({
