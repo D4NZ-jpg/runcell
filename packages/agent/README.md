@@ -52,6 +52,10 @@ application can rely on:
 - **Local credentials**: `credentials: 'local'` can use supported provider
   logins on a development machine. Provider terms govern subscription use;
   production use requires explicit opt-in.
+- **Shared credentials**: `credentials: { type: 'shared' }` takes a lockable
+  store for deployments that share refreshable credentials. The official
+  Postgres implementation is
+  [`@runcell/postgres-credentials`](https://www.npmjs.com/package/@runcell/postgres-credentials).
 
 ## Install
 

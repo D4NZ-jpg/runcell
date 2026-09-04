@@ -164,6 +164,11 @@ export async function POST(req: Request) {
   see each other's files.
 - **Resumable jobs**: snapshot the workspace + serialize the thread, park them
   in your database, pick both up later on another machine.
+- **Production credentials without a secrets sidecar**: share one set of
+  refreshable credentials across deployments with
+  [`@runcell/postgres-credentials`](https://www.npmjs.com/package/@runcell/postgres-credentials),
+  which serializes token refreshes on a Postgres row lock and can encrypt
+  the stored blobs at rest.
 
 ## Sandboxes
 
