@@ -51,7 +51,7 @@
     "@ai-sdk/sandbox-vercel": "1.0.33",
     "@napi-rs/canvas": "^1.0.8",
     "@types/node": "^24.0.0",
-    "ai": "7.0.28",
+    "ai": "7.0.89",
     "del-cli": "^6.0.0",
     "pdfjs-dist": "^6.3.289",
     "tsup": "^8.5.1",
