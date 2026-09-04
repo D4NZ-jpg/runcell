@@ -28,8 +28,8 @@ itself is not a dependency of this package.
 
 Each `withLock` call runs one transaction: upsert the key's row, take
 `SELECT ... FOR UPDATE` on it, run the callback with the current blob, write
-the updated blob if the callback returns one, commit. Concurrent callers —
-across processes and machines — queue on the row lock rather than fail, which
+the updated blob if the callback returns one, commit. Concurrent callers,
+across processes and machines, queue on the row lock rather than fail, which
 is what the runcell `CredentialStore` contract requires. A refresh in one
 deployment always sees the blob committed by the previous lock holder, so a
 rotated token is never overwritten with a stale one.
@@ -82,7 +82,7 @@ readable and are encrypted on their next write, so the option can be
 introduced on an existing table. Reading an encrypted row without the secret,
 or with the wrong one, fails with a clear error.
 
-Losing the secret means losing the stored credentials — there is no recovery
+Losing the secret means losing the stored credentials. There is no recovery
 path. Rotating the secret is not built in: read each blob with the old store
 and write it back through a store created with the new secret.
 
