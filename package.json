@@ -11,7 +11,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @local/harness-pi-raw && npm run build -w runcell && npm run build -w runcell-postgres-credentials",
+    "build": "npm run build -w @local/harness-pi-raw && npm run build -w runcell && npm run build -w @runcell/postgres-credentials",
     "typecheck": "npm run typecheck --workspaces --if-present && tsc -p examples/tsconfig.json --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -39,8 +39,8 @@
     "test:consumer": "node scripts/consumer-smoke.mjs",
     "release:dry": "npm run build && npm publish -w runcell --dry-run",
     "release": "npm run check && npm publish -w runcell",
-    "release:pg:dry": "npm run build && npm publish -w runcell-postgres-credentials --dry-run",
-    "release:pg": "npm run check && npm publish -w runcell-postgres-credentials"
+    "release:pg:dry": "npm run build && npm publish -w @runcell/postgres-credentials --dry-run",
+    "release:pg": "npm run check && npm publish -w @runcell/postgres-credentials"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.6.1",

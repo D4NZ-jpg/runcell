@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `runcell-postgres-credentials` are documented here. The
+All notable changes to `@runcell/postgres-credentials` are documented here. The
 format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 the package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 

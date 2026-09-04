@@ -1,4 +1,4 @@
-# runcell-postgres-credentials
+# @runcell/postgres-credentials
 
 A Postgres-backed `CredentialStore` for [runcell](https://github.com/D4NZ-jpg/runcell)'s
 `credentials: { type: 'shared' }` mode: whole-blob credential persistence with
@@ -10,7 +10,7 @@ token.
 ```ts
 import pg from 'pg';
 import { createAgent } from 'runcell';
-import { createPostgresCredentialStore } from 'runcell-postgres-credentials';
+import { createPostgresCredentialStore } from '@runcell/postgres-credentials';
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const store = createPostgresCredentialStore({ pool });
@@ -54,7 +54,7 @@ Disable with `cacheFallback: false`.
 With `ensureTable: false`, run the migration yourself:
 
 ```ts
-import { postgresCredentialStoreSql } from 'runcell-postgres-credentials';
+import { postgresCredentialStoreSql } from '@runcell/postgres-credentials';
 
 console.log(postgresCredentialStoreSql());
 // CREATE TABLE IF NOT EXISTS "runcell_credentials" (
@@ -99,5 +99,5 @@ the locking semantics runs against a real Postgres when
 `RUNCELL_PG_TEST_URL` is set:
 
 ```bash
-RUNCELL_PG_TEST_URL=postgres://user:pass@localhost:5432/db npm test -w runcell-postgres-credentials
+RUNCELL_PG_TEST_URL=postgres://user:pass@localhost:5432/db npm test -w @runcell/postgres-credentials
 ```

@@ -1,5 +1,5 @@
 {
-  "name": "runcell-postgres-credentials",
+  "name": "@runcell/postgres-credentials",
   "version": "0.2.0",
   "description": "Postgres-backed CredentialStore for runcell: whole-blob persistence with row-lock queueing for shared OAuth credentials in production.",
   "type": "module",

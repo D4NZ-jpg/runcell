@@ -97,7 +97,22 @@ const agent = createAgent({
 ## Shared credential store
 
 For deployments that need shared OAuth state or refreshable credentials, provide
-a lockable store:
+a lockable store. The official Postgres implementation is
+[`@runcell/postgres-credentials`](https://www.npmjs.com/package/@runcell/postgres-credentials):
+
+```ts
+import pg from 'pg';
+import { createPostgresCredentialStore } from '@runcell/postgres-credentials';
+
+const store = createPostgresCredentialStore({
+  pool: new pg.Pool({ connectionString: process.env.DATABASE_URL }),
+  encryptionKey: process.env.CREDENTIAL_STORE_SECRET, // optional, at-rest encryption
+});
+```
+
+It serializes concurrent refreshes across deployments on a Postgres row lock,
+so a rotated token is never clobbered. To back the store with something else,
+implement the interface yourself:
 
 ```ts
 const agent = createAgent({
