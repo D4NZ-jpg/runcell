@@ -533,7 +533,11 @@ describe('defaultRuntime', () => {
     );
 
     expect(result.data).toEqual({ ok: true });
-    expect(turnSignal?.reason).toBe(Symbol.for('runcell.pi.silent-turn-abort'));
+    // Both the submission's silent abort and the late caller abort reach
+    // the composite turn signal. Which reason it reports is a Node
+    // implementation detail (it differs between 22 and 24); the contract is
+    // that the turn was aborted and the submission still won.
+    expect(turnSignal?.aborted).toBe(true);
   });
 
   it('returns the first valid submission despite a trailing stream error', async () => {
