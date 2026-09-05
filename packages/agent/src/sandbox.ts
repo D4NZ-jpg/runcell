@@ -521,9 +521,50 @@ class HostSandboxSession implements HarnessV1NetworkSandboxSession {
   ): NodeJS.ProcessEnv {
     return {
       ...baseHostEnv(process.env, this.settings.inheritHostEnv),
-      ...dropUndefined(this.settings.env),
-      ...env,
+      ...this.toHostEnv(dropUndefined(this.settings.env)),
+      ...this.toHostEnv(env),
     };
+  }
+
+  /**
+   * Translate virtual-root paths in env values, mirroring `toHostCommand`
+   * for the command string. Callers (the harness included) pass workspace
+   * paths through env — `mkdir -p "$WORK_DIR"` with
+   * `WORK_DIR=/workspace/pi-<id>` — and the shell expands them literally, so
+   * untranslated values escape `rootDir` (or fail where `/workspace` is
+   * not writable). Colon-separated lists are translated per segment; values
+   * that are not virtual paths pass through unchanged.
+   */
+  private toHostEnv(
+    env: Record<string, string> | undefined,
+  ): Record<string, string> {
+    if (!env) {
+      return {};
+    }
+    const out: Record<string, string> = {};
+    for (const [name, value] of Object.entries(env)) {
+      out[name] = value
+        .split(':')
+        .map(segment => this.toHostEnvSegment(segment))
+        .join(':');
+    }
+    return out;
+  }
+
+  private toHostEnvSegment(value: string): string {
+    if (
+      value !== HOST_VIRTUAL_ROOT &&
+      !value.startsWith(`${HOST_VIRTUAL_ROOT}/`)
+    ) {
+      return value;
+    }
+    try {
+      return this.toHostPath(value);
+    } catch {
+      // A virtual path that resolves outside rootDir is left for the
+      // command to fail on, exactly as it would in the command string.
+      return value;
+    }
   }
 
   private toHostCommand(command: string): string {

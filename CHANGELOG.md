@@ -4,6 +4,19 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- Host sandbox: virtual-root paths passed through `session.run({ env })` are
+  now translated to `rootDir`, matching the existing translation of the
+  command string and working directory. `@ai-sdk/harness` creates its work
+  directory with `mkdir -p "$WORK_DIR"` and `WORK_DIR=/workspace/pi-<id>`,
+  so every `agent.run({ sandbox })` in host mode failed on hosts without a
+  writable `/workspace` (macOS) and silently created a directory outside
+  `rootDir` on hosts that have one. Colon-separated values are translated
+  per segment; values that are not virtual paths pass through unchanged.
+
 ## 1.9.1 - 2026-09-01
 
 ### Fixed

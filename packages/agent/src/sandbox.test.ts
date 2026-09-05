@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -127,6 +127,42 @@ describe('host sandbox provider', () => {
     await expect(
       readFile(path.join(rootDir, 'out.txt'), 'utf-8'),
     ).resolves.toBe('changed');
+  });
+
+  it('translates virtual-root paths passed through env', async () => {
+    // Regression: @ai-sdk/harness creates its work directory with
+    // `mkdir -p "$WORK_DIR"` and WORK_DIR=/workspace/pi-<id>. The shell
+    // expands env literally, so untranslated values target the host's
+    // /workspace instead of rootDir.
+    const rootDir = await mkdtemp(path.join(tmpdir(), 'runcell-host-'));
+    const provider = createSandboxProvider({
+      type: 'host',
+      rootDir,
+      isolation: 'external',
+      env: { FROM_SETTINGS: '/workspace/pi-test-session/settings-dir' },
+    });
+    const session = await provider.createSession({ sessionId: 'test-session' });
+
+    // Assert on filesystem effects: stdout is rewritten back to virtual
+    // paths for display, so it cannot show the translation.
+    const result = await session.run({
+      command:
+        'mkdir -p "$WORK_DIR" "$FROM_SETTINGS" && ' +
+        'first="${LIST%%:*}" && third="${LIST##*:}" && mkdir -p "$first" "$third/from-list" && ' +
+        'printf "%s" "$PROSE"',
+      env: {
+        WORK_DIR: '/workspace/pi-test-session/via-env',
+        LIST: '/workspace/pi-test-session/a:/usr/bin:/workspace',
+        PROSE: 'see /workspace for details',
+      },
+    });
+
+    expect(result).toMatchObject({ exitCode: 0, stderr: '' });
+    // Non-path prose is left alone (not a virtual path, so untouched).
+    expect(result.stdout).toBe('see /workspace for details');
+    for (const created of ['via-env', 'settings-dir', 'a', 'from-list']) {
+      await expect(stat(path.join(rootDir, created))).resolves.toBeTruthy();
+    }
   });
 
   it('exposes only system vars and explicit opt-ins by default', async () => {
