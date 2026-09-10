@@ -1,3 +1,6 @@
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -880,6 +883,8 @@ describe('defaultRuntime', () => {
     const runtime = await loadRuntime();
     const schema = z.object({ ok: z.boolean() });
 
+    // The dirs do not exist; an env key satisfies the credential preflight.
+    vi.stubEnv('ANTHROPIC_API_KEY', 'env-key');
     await runtime.run(
       createRuntimeInput(schema, {
         config: { credentials: { mode: 'local' } },
@@ -895,6 +900,88 @@ describe('defaultRuntime', () => {
       { agentDir: '/agent-dir' },
       { agentDir: '/custom-agent' },
     ]);
+  });
+
+  it('fails fast with guidance when file credentials are absent', async () => {
+    // Clear every provider variable the env passthrough would accept.
+    for (const key of Object.keys(process.env)) {
+      if (
+        key.endsWith('_API_KEY') ||
+        key.endsWith('_BASE_URL') ||
+        key === 'ANTHROPIC_AUTH_TOKEN' ||
+        key === 'VERCEL_OIDC_TOKEN'
+      ) {
+        vi.stubEnv(key, '');
+      }
+    }
+    const emptyDir = await mkdtemp(join(tmpdir(), 'runcell-noauth-'));
+
+    installRuntimeMocks([]);
+    const runtime = await loadRuntime();
+    const { CredentialError } = await import('./errors.js');
+
+    const failure = await runtime
+      .run(
+        createRuntimeInput(z.object({ ok: z.boolean() }), {
+          config: {
+            credentials: { mode: 'agentDir', path: emptyDir },
+          },
+        }),
+      )
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(CredentialError);
+    const message = (failure as Error).message;
+    expect(message).toContain('auth.json');
+    expect(message).toContain('npx pi');
+    expect(message).toContain('ANTHROPIC_API_KEY');
+    expect(message).toContain('runcell.run/credentials');
+  });
+
+  it('runs when auth.json exists even without env keys', async () => {
+    for (const key of Object.keys(process.env)) {
+      if (key.endsWith('_API_KEY') || key.endsWith('_BASE_URL')) {
+        vi.stubEnv(key, '');
+      }
+    }
+    const dir = await mkdtemp(join(tmpdir(), 'runcell-auth-'));
+    await writeFile(join(dir, 'auth.json'), '{}');
+
+    installRuntimeMocks([
+      agent => {
+        agent.submit({ ok: true });
+        return [{ type: 'finish', finishReason: 'stop' }];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    const result = await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() }), {
+        config: { credentials: { mode: 'agentDir', path: dir } },
+      }),
+    );
+    expect(result.data).toEqual({ ok: true });
+  });
+
+  it('appends credential guidance to provider auth failures', async () => {
+    installRuntimeMocks([
+      () => [
+        {
+          type: 'error',
+          error: new Error('No API key for provider: anthropic'),
+        },
+      ],
+    ]);
+    const runtime = await loadRuntime();
+
+    const failure = await runtime
+      .run(createRuntimeInput(z.object({ ok: z.boolean() })))
+      .catch((error: unknown) => error);
+
+    const message = (failure as Error).message;
+    expect(message).toContain('No API key for provider: anthropic');
+    expect(message).toContain('ANTHROPIC_API_KEY');
+    expect(message).toContain('runcell.run/credentials');
   });
 
   it('maps shared credentials to a pi-ai credential store', async () => {

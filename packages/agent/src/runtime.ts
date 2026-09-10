@@ -27,10 +27,16 @@ import {
   type PiSessionUsageTotals,
   type PiThinkingLevel,
 } from '@local/harness-pi-raw';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { ResolvedAgentConfig } from './create-agent.js';
 import type { AuthBlob, CredentialStore } from './credentials.js';
-import { ExtensionError, IncompleteResultError, TurnError } from './errors.js';
+import {
+  CredentialError,
+  ExtensionError,
+  IncompleteResultError,
+  TurnError,
+} from './errors.js';
 import { normalizeFiles, type NormalizedFile } from './files.js';
 import {
   createReadPdfPagesTool,
@@ -215,6 +221,8 @@ async function runWithHarness({
       activeTurnAbortController?.abort(PI_SILENT_TURN_ABORT_REASON);
     },
   });
+
+  assertFileCredentialsPresent(config.credentials);
 
   const {
     provider: baseProvider,
@@ -496,14 +504,81 @@ function toRunFailure(error: unknown, usage: RunUsage): Error {
 }
 
 function failureMessage(error: unknown): string {
+  let message: string;
   try {
     if (error instanceof Error && typeof error.message === 'string') {
-      return error.message;
+      message = error.message;
+    } else {
+      message = String(error);
     }
-    return String(error);
   } catch {
     return 'Agent turn failed.';
   }
+  return appendCredentialGuidance(message);
+}
+
+/**
+ * Fail a `local`/`agentDir` run before any model work when nothing could
+ * possibly authenticate: the directory has no `auth.json` and the
+ * environment has no provider keys. The error says exactly what to do,
+ * because this is the failure AI coding agents hit when they configure
+ * `credentials: 'local'` without the one-time interactive human login.
+ */
+function assertFileCredentialsPresent(
+  plan: ResolvedAgentConfig['credentials'],
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (plan.mode !== 'local' && plan.mode !== 'agentDir') {
+    return;
+  }
+  const dir =
+    plan.mode === 'local' ? (plan.agentDir ?? getAgentDir()) : plan.path;
+  const authFile = path.join(dir, 'auth.json');
+  if (existsSync(authFile)) {
+    return;
+  }
+  if (Object.keys(collectProviderEnv(env)).length > 0) {
+    // Provider env keys can still authenticate this run.
+    return;
+  }
+  throw new CredentialError(
+    `No credentials found: ${authFile} does not exist and the environment ` +
+      'has no provider API keys. Either a human runs `npx pi` and types ' +
+      '/login once (interactive; an AI agent cannot do this step), or set ' +
+      'a provider API key such as ANTHROPIC_API_KEY. ' +
+      'See https://runcell.run/credentials',
+  );
+}
+
+/**
+ * Append actionable guidance to the two credential failures Pi reports at
+ * request time. The error message is the documentation the caller — human
+ * or AI agent — actually reads.
+ */
+function appendCredentialGuidance(message: string): string {
+  if (message.includes('runcell.run/credentials')) {
+    return message;
+  }
+  const noKey = /No API key (?:found )?for provider:? "?([\w-]+)"?/.exec(
+    message,
+  );
+  if (noKey?.[1]) {
+    return (
+      `${message} — set ${providerToEnvPrefix(noKey[1])} in the ` +
+      "environment, or use credentials: 'local' after a human runs " +
+      '`npx pi` and types /login. See https://runcell.run/credentials'
+    );
+  }
+  const refresh = /OAuth refresh failed for ([\w-]+)/.exec(message);
+  if (refresh?.[1]) {
+    return (
+      `${message} — the stored ${refresh[1]} login can no longer refresh. ` +
+      'A human must run `npx pi` and /login again, or switch to an API ' +
+      `key (${providerToEnvPrefix(refresh[1])}). ` +
+      'See https://runcell.run/credentials'
+    );
+  }
+  return message;
 }
 
 /** Teardown is best-effort: a failure only degrades the next run. */

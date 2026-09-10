@@ -4,6 +4,19 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Credential errors now teach. A `local`/`agentDir` run fails fast with a
+  `CredentialError` that names the missing `auth.json`, the one-time
+  interactive `npx pi` login (which a human must perform), and the API-key
+  alternative, instead of failing later with an opaque provider error. It
+  fires only when nothing could authenticate: no auth file and no provider
+  keys in the environment. Provider auth failures at request time (`No API
+key for provider`, `OAuth refresh failed`) carry appended guidance naming
+  the exact environment variable and the docs page.
+
 ## 1.9.2 - 2026-09-04
 
 ### Fixed
