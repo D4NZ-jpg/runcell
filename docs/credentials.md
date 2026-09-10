@@ -49,6 +49,25 @@ failure modes:
   either run `npx pi` and `/login` (subscription) or provide an API key.
   There is no credential you can generate yourself.
 
+To give these rules to your own coding agents, paste this into your
+project's `AGENTS.md` or `CLAUDE.md`:
+
+```md
+## runcell credentials
+
+- Default (no `credentials` option) reads env vars: `ANTHROPIC_API_KEY`,
+  `OPENAI_API_KEY`, etc. (exact names, pattern `<PROVIDER>_API_KEY`).
+- `credentials: 'local'` needs a one-time interactive login that only a
+  human can run: `npx pi`, then `/login`. Check that `~/.pi/agent/auth.json`
+  exists before using `'local'`; do not launch `npx pi` yourself.
+- Never create, edit, or commit `~/.pi/agent/auth.json`.
+- No logins and no API keys means stop and ask; you cannot generate
+  credentials. Reference: https://runcell.run/credentials
+```
+
+The same rules are machine-readable at
+[runcell.run/llms.txt](https://runcell.run/llms.txt).
+
 ## Use your subscription
 
 `credentials: 'local'` runs agents on the provider logins stored on your
