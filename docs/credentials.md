@@ -2,12 +2,57 @@
 
 Runcell agents authenticate two ways: with an AI subscription you already pay
 for, or with provider API keys. Subscriptions are the fastest way to run your
-first agent; API keys are the path for production.
+first agent. API keys are the path for production.
+
+## Which mode?
+
+Pick the row that matches your situation and use its exact config:
+
+| Your situation                                                               | Config                                                                                                                                |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| You have a provider API key in an environment variable                       | Omit `credentials` (the default reads env, see the table below)                                                                       |
+| You have a Claude/ChatGPT/Copilot subscription, local development            | `credentials: 'local'` after a one-time [interactive login](#use-your-subscription)                                                   |
+| Your app loads secrets itself (vault, config service)                        | `credentials: { type: 'apiKeys', keys: { anthropic: '...' } }`                                                                        |
+| One [Vercel AI Gateway](https://vercel.com/ai-gateway) key for all providers | Set `AI_GATEWAY_API_KEY` and omit `credentials`                                                                                       |
+| Many deployments share refreshable credentials                               | `credentials: { type: 'shared' }` with [`@runcell/postgres-credentials`](https://www.npmjs.com/package/@runcell/postgres-credentials) |
+| Credentials live in a specific directory (CI cache, mounted secret)          | `credentials: { type: 'agentDir', path: '...' }`                                                                                      |
+
+The default (`env`) passes through exactly these variables: any `*_API_KEY`,
+any `*_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, and `VERCEL_OIDC_TOKEN`. The
+variable name for a provider is its id upper-cased with `_API_KEY` appended:
+
+| Provider (model prefix) | Environment variable |
+| ----------------------- | -------------------- |
+| `anthropic/...`         | `ANTHROPIC_API_KEY`  |
+| `openai/...`            | `OPENAI_API_KEY`     |
+| `google/...`            | `GOOGLE_API_KEY`     |
+| Vercel AI Gateway       | `AI_GATEWAY_API_KEY` |
+
+## For AI coding agents
+
+If you are an AI agent setting up runcell, these rules prevent the common
+failure modes:
+
+- **The subscription login is interactive and requires a human.** `npx pi`
+  opens a terminal UI, and `/login` opens a browser sign-in. You cannot
+  complete this step. Ask the human to run it once, then use
+  `credentials: 'local'`.
+- **Check for existing logins without the terminal UI**: if
+  `~/.pi/agent/auth.json` exists, logins are present and
+  `credentials: 'local'` will work. Do not run `npx pi` to find out.
+- **Never create or edit `~/.pi/agent/auth.json` by hand.** It is written by
+  the login flow and refreshed automatically. A hand-made file will not
+  authenticate. Never commit it.
+- **Use the exact environment variable names** from the table above. Do not
+  invent variants such as `OPENAI_KEY` or `ANTHROPIC_TOKEN`.
+- **If neither logins nor API keys exist, stop and ask.** Tell the human to
+  either run `npx pi` and `/login` (subscription) or provide an API key.
+  There is no credential you can generate yourself.
 
 ## Use your subscription
 
 `credentials: 'local'` runs agents on the provider logins stored on your
-machine — no API key required. Supported subscription logins:
+machine, with no API key required. Supported subscription logins:
 
 - Anthropic Claude Pro/Max
 - OpenAI ChatGPT Plus/Pro (Codex)
@@ -19,6 +64,10 @@ once:
 ```bash
 npx pi     # then type /login and pick your provider
 ```
+
+This step is interactive: the terminal UI plus a browser sign-in. A human
+runs it once per machine. AI coding agents cannot complete it (see
+[For AI coding agents](#for-ai-coding-agents)).
 
 The browser opens, you sign in, and the OAuth tokens land in
 `~/.pi/agent/auth.json`. From then on:
@@ -36,11 +85,11 @@ stay observable on a flat-rate subscription (see
 [`RunUsage`](./api.md#runusage)).
 
 Provider terms govern subscription use, and they differ per provider and
-change over time — review yours before relying on it. Individual use of your
+change over time, so review yours before relying on it. Individual use of your
 own subscription is the commonly accepted pattern (Anthropic has publicly
 said as much); API keys are the provider-supported path for deployed and
 commercial work. For that reason `'local'` is refused when `NODE_ENV` is
-`production` unless you opt in explicitly — for example, a remote test box
+`production` unless you opt in explicitly, for example a remote test box
 running under your own account:
 
 ```ts

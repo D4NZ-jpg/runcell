@@ -28,6 +28,11 @@ Plus/Pro, or GitHub Copilot. Log in once through the bundled Pi CLI, then use
 npx pi     # then type /login and pick your provider
 ```
 
+The login is interactive (terminal UI plus browser sign-in), so a human runs
+it once per machine. If you already have a provider API key, skip this step:
+the default reads `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` from the
+environment.
+
 ```ts
 const agent = createAgent({
   model: 'anthropic/claude-sonnet-4-5',
