@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { createAgent, type Credentials, type ToolCallEvent } from './index.js';
-import { tinyPdf } from './pdf-pages.test.js';
+import { tinyPdf } from './pdf-pages.fixture.js';
 
 const live = process.env['RUNCELL_LIVE'] === '1' ? it : it.skip;
 const timeoutMs = Number(process.env['RUNCELL_LIVE_TIMEOUT_MS'] ?? 120_000);
