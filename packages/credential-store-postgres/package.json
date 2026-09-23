@@ -46,7 +46,7 @@
     "runcell": "^1.4.0"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.6.2",
     "@types/pg": "^8.11.0",
     "del-cli": "^6.0.0",
     "pg": "^8.13.0",
