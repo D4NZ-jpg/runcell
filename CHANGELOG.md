@@ -4,6 +4,18 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Credentials fallback chain: `credentials` accepts an array of sources tried
+  in order. A run that fails with a credential error (unrefreshable login,
+  missing key for the provider, `401`) before any tool has executed is
+  retried on the next source, and the new `onCredentialFallback` event
+  reports each hop with `from`, `to`, and `cause`. Credential errors after a
+  tool ran, and all non-credential errors, propagate immediately. Retried
+  failures do not reach `onError`.
+
 ## 1.10.0 - 2026-09-23
 
 ### Changed

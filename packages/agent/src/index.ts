@@ -74,7 +74,9 @@ export type {
 
 export type {
   Credentials,
+  CredentialSource,
   CredentialPlan,
+  ConcreteCredentialPlan,
   CredentialStore,
   AuthBlob,
   StoredCredential,
@@ -100,4 +102,5 @@ export type {
   ToolResultEvent,
   RepairEvent,
   FinishEvent,
+  CredentialFallbackEvent,
 } from './types.js';

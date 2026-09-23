@@ -46,13 +46,24 @@ export interface CredentialStore {
  * - `{ type: 'agentDir' }` — an explicit agent dir path holding `auth.json`.
  * - `{ type: 'shared' }` — a shared {@link CredentialStore} (OAuth in prod).
  */
-export type Credentials =
+export type CredentialSource =
   | 'local'
   | { type: 'local'; agentDir?: string; allowInProduction?: boolean }
   | { type: 'env' }
   | { type: 'apiKeys'; keys: Record<string, string> }
   | { type: 'agentDir'; path: string }
   | { type: 'shared'; key: string; store: CredentialStore };
+
+/**
+ * A single credential source, or a fallback chain of sources tried in
+ * order. With a chain, a run starts on the first source; if it fails with a
+ * credential error (revoked or unrefreshable login, missing key for the
+ * provider, `401`) before any tool has executed, runcell retries the whole
+ * run on the next source, firing `onCredentialFallback` for each hop.
+ * Non-credential errors, and credential errors after a tool has executed
+ * (retrying would repeat side effects), propagate immediately.
+ */
+export type Credentials = CredentialSource | readonly CredentialSource[];
 
 /**
  * A resolved, validated description of how credentials will be obtained at run
@@ -63,7 +74,21 @@ export type CredentialPlan =
   | { mode: 'env' }
   | { mode: 'apiKeys'; keys: Record<string, string> }
   | { mode: 'agentDir'; path: string }
-  | { mode: 'shared'; key: string; store: CredentialStore };
+  | { mode: 'shared'; key: string; store: CredentialStore }
+  | { mode: 'chain'; sources: readonly ConcreteCredentialPlan[] };
+
+/** A {@link CredentialPlan} that is not itself a chain. */
+export type ConcreteCredentialPlan = Exclude<CredentialPlan, { mode: 'chain' }>;
+
+/**
+ * The ordered concrete plans a run should try: the chain's sources, or the
+ * single plan itself.
+ */
+export function credentialPlanSources(
+  plan: CredentialPlan,
+): readonly ConcreteCredentialPlan[] {
+  return plan.mode === 'chain' ? plan.sources : [plan];
+}
 
 export interface NormalizeCredentialsContext {
   /** The value of `process.env.NODE_ENV` (or equivalent). */
@@ -80,8 +105,37 @@ export function normalizeCredentials(
   credentials: Credentials | undefined,
   context: NormalizeCredentialsContext = {},
 ): CredentialPlan {
+  if (Array.isArray(credentials)) {
+    const sources = credentials as readonly CredentialSource[];
+    if (sources.length === 0) {
+      throw new CredentialError(
+        'A credentials chain needs at least one source.',
+      );
+    }
+    const plans = sources.map((source, index) => {
+      if (Array.isArray(source)) {
+        throw new CredentialError(
+          `credentials[${index}] is an array; chains cannot be nested.`,
+        );
+      }
+      return normalizeSource(source, context);
+    });
+    const [single] = plans;
+    return plans.length === 1 && single !== undefined
+      ? single
+      : { mode: 'chain', sources: plans };
+  }
+  return normalizeSource(
+    (credentials ?? { type: 'env' }) as CredentialSource,
+    context,
+  );
+}
+
+function normalizeSource(
+  value: CredentialSource,
+  context: NormalizeCredentialsContext,
+): ConcreteCredentialPlan {
   const isProduction = context.nodeEnv === 'production';
-  const value: Credentials = credentials ?? { type: 'env' };
 
   if (value === 'local') {
     return assertLocalAllowed(isProduction, false, {});
@@ -140,7 +194,7 @@ function assertLocalAllowed(
   isProduction: boolean,
   allowInProduction: boolean,
   extra: { agentDir?: string },
-): CredentialPlan {
+): ConcreteCredentialPlan {
   if (isProduction && !allowInProduction) {
     throw new CredentialError(
       'Local file credentials are refused in production. Use { type: "env" }, ' +

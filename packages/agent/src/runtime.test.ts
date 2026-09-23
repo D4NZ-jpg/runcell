@@ -963,6 +963,176 @@ describe('defaultRuntime', () => {
     expect(result.data).toEqual({ ok: true });
   });
 
+  describe('credentials chain', () => {
+    const deadStore: CredentialStore = {
+      withLock: async <T>(
+        _key: string,
+        fn: (
+          current: AuthBlob | undefined,
+        ) => Promise<{ result: T; next?: AuthBlob }>,
+      ): Promise<T> => (await fn(undefined)).result,
+    };
+    const chain = {
+      mode: 'chain' as const,
+      sources: [
+        { mode: 'shared' as const, key: 'prod', store: deadStore },
+        { mode: 'apiKeys' as const, keys: { anthropic: 'fallback-key' } },
+      ],
+    };
+
+    it('falls back to the next source on a credential error and reports it', async () => {
+      const fallbacks: unknown[] = [];
+      const errors: unknown[] = [];
+      const state = installRuntimeMocks([
+        // Attempt 1 (shared): the provider rejects the credentials.
+        () => [
+          {
+            type: 'error',
+            error: new Error('OAuth refresh failed for anthropic'),
+          },
+        ],
+        // Attempt 2 (apiKeys): succeeds.
+        agent => {
+          agent.submit({ ok: true });
+          return [{ type: 'finish', finishReason: 'stop' }];
+        },
+      ]);
+      const runtime = await loadRuntime();
+
+      const result = await runtime.run(
+        createRuntimeInput(z.object({ ok: z.boolean() }), {
+          agentOptions: {
+            events: {
+              onCredentialFallback: info => fallbacks.push(info),
+              onError: error => errors.push(error),
+            },
+          },
+          config: { credentials: chain },
+        }),
+      );
+
+      expect(result.data).toEqual({ ok: true });
+      // One agent per attempt, each wired to its own source.
+      expect(state.piSettings).toHaveLength(2);
+      expect(state.piSettings[0]).toHaveProperty('piCredentials');
+      expect(state.piSettings[1]).toMatchObject({
+        auth: { customEnv: { ANTHROPIC_API_KEY: 'fallback-key' } },
+      });
+      expect(fallbacks).toEqual([
+        expect.objectContaining({ from: 'shared', to: 'apiKeys' }),
+      ]);
+      expect((fallbacks[0] as { cause: Error }).cause.message).toContain(
+        'OAuth refresh failed',
+      );
+      // The retried failure is not also surfaced as a run error.
+      expect(errors).toEqual([]);
+    });
+
+    it('does not fall back on non-credential errors', async () => {
+      const fallbacks: unknown[] = [];
+      const state = installRuntimeMocks([
+        () => [{ type: 'error', error: new Error('model overloaded (529)') }],
+        agent => {
+          agent.submit({ ok: true });
+          return [];
+        },
+      ]);
+      const runtime = await loadRuntime();
+
+      await expect(
+        runtime.run(
+          createRuntimeInput(z.object({ ok: z.boolean() }), {
+            agentOptions: {
+              events: { onCredentialFallback: info => fallbacks.push(info) },
+            },
+            config: { credentials: chain },
+          }),
+        ),
+      ).rejects.toThrow('model overloaded');
+      expect(state.piSettings).toHaveLength(1);
+      expect(fallbacks).toEqual([]);
+    });
+
+    it('does not fall back once a tool has executed', async () => {
+      const fallbacks: unknown[] = [];
+      const errors: unknown[] = [];
+      const state = installRuntimeMocks([
+        () => [
+          {
+            type: 'tool-call',
+            toolCallId: 'c1',
+            toolName: 'bash',
+            input: { command: 'rm -rf build' },
+          },
+          {
+            type: 'error',
+            error: new Error('No API key for provider: anthropic'),
+          },
+        ],
+        agent => {
+          agent.submit({ ok: true });
+          return [];
+        },
+      ]);
+      const runtime = await loadRuntime();
+
+      await expect(
+        runtime.run(
+          createRuntimeInput(z.object({ ok: z.boolean() }), {
+            agentOptions: {
+              events: {
+                onCredentialFallback: info => fallbacks.push(info),
+                onError: error => errors.push(error),
+              },
+            },
+            config: { credentials: chain },
+          }),
+        ),
+      ).rejects.toThrow('No API key');
+      // Retrying would re-run the tool's side effects: surface instead.
+      expect(state.piSettings).toHaveLength(1);
+      expect(fallbacks).toEqual([]);
+      expect(errors).toHaveLength(1);
+    });
+
+    it('surfaces the last error when every source fails', async () => {
+      const fallbacks: unknown[] = [];
+      const errors: unknown[] = [];
+      installRuntimeMocks([
+        () => [
+          {
+            type: 'error',
+            error: new Error('OAuth refresh failed for anthropic'),
+          },
+        ],
+        () => [
+          {
+            type: 'error',
+            error: new Error('No API key for provider: anthropic'),
+          },
+        ],
+      ]);
+      const runtime = await loadRuntime();
+
+      await expect(
+        runtime.run(
+          createRuntimeInput(z.object({ ok: z.boolean() }), {
+            agentOptions: {
+              events: {
+                onCredentialFallback: info => fallbacks.push(info),
+                onError: error => errors.push(error),
+              },
+            },
+            config: { credentials: chain },
+          }),
+        ),
+      ).rejects.toThrow('No API key');
+      expect(fallbacks).toHaveLength(1);
+      // Only the terminal failure reaches onError.
+      expect(errors).toHaveLength(1);
+    });
+  });
+
   it('appends credential guidance to provider auth failures', async () => {
     installRuntimeMocks([
       () => [

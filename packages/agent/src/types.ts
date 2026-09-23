@@ -63,6 +63,18 @@ export interface FinishEvent {
 }
 
 /**
+ * Fired when a credentials chain falls back to its next source after a
+ * credential error. `from`/`to` are the source modes (e.g. `'shared'` →
+ * `'env'`); `cause` is the error that triggered the hop. This is the signal
+ * that a preferred credential source is dying.
+ */
+export interface CredentialFallbackEvent {
+  from: string;
+  to: string;
+  cause: unknown;
+}
+
+/**
  * Streaming + lifecycle callbacks. All are optional and best-effort: a
  * throwing callback is swallowed and never affects the run.
  */
@@ -74,6 +86,7 @@ export interface AgentEvents {
   onRepair?: (info: RepairEvent) => void;
   onFinish?: (info: FinishEvent) => void;
   onError?: (error: unknown) => void;
+  onCredentialFallback?: (info: CredentialFallbackEvent) => void;
 }
 
 /**

@@ -18,16 +18,16 @@ const agent = createAgent({
 });
 ```
 
-| Option         | Type                             | Description                                                                                 |
-| -------------- | -------------------------------- | ------------------------------------------------------------------------------------------- |
-| `model`        | `string`                         | Model id, display name, or provider-qualified id (`openai-codex/gpt-5.5`). Required.        |
-| `systemPrompt` | `string`                         | Persistent system prompt: system role, re-applied every turn, survives thread resume.       |
-| `credentials`  | `Credentials`                    | Credential source. Defaults to `{ type: 'env' }`. See [Credentials](./credentials.md).      |
-| `tools`        | `Record<string, ToolDefinition>` | Host functions the agent can call. See [Files, tools, and events](./files-tools-events.md). |
-| `events`       | `AgentEvents`                    | Lifecycle callbacks.                                                                        |
-| `sandbox`      | `SandboxOption`                  | Agent-level default sandbox mode. Defaults to `'virtual'`.                                  |
-| `maxRepairs`   | `number`                         | Repair-turn budget for structured runs. Defaults to `1`.                                    |
-| `pi`           | `PiOptions`                      | Pi engine options. See [Pi options](./pi-extensions.md).                                    |
+| Option         | Type                             | Description                                                                                                                            |
+| -------------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `model`        | `string`                         | Model id, display name, or provider-qualified id (`openai-codex/gpt-5.5`). Required.                                                   |
+| `systemPrompt` | `string`                         | Persistent system prompt: system role, re-applied every turn, survives thread resume.                                                  |
+| `credentials`  | `Credentials`                    | Credential source, or an array tried in order as a fallback chain. Defaults to `{ type: 'env' }`. See [Credentials](./credentials.md). |
+| `tools`        | `Record<string, ToolDefinition>` | Host functions the agent can call. See [Files, tools, and events](./files-tools-events.md).                                            |
+| `events`       | `AgentEvents`                    | Lifecycle callbacks.                                                                                                                   |
+| `sandbox`      | `SandboxOption`                  | Agent-level default sandbox mode. Defaults to `'virtual'`.                                                                             |
+| `maxRepairs`   | `number`                         | Repair-turn budget for structured runs. Defaults to `1`.                                                                               |
+| `pi`           | `PiOptions`                      | Pi engine options. See [Pi options](./pi-extensions.md).                                                                               |
 
 A configured `model` that is not present in Pi's catalog fails at session
 startup with `Unknown model "…"` and up to five likely catalog matches. Runcell
@@ -365,8 +365,9 @@ through `onError` like other model errors.
 ## Events (`AgentEvents`)
 
 The optional callbacks are `onText`, `onToolCall`, `onToolResult`,
-`onFileChange`, `onRepair`, `onFinish`, and `onError`. Callbacks registered at
-the agent and run levels both fire. See
+`onFileChange`, `onRepair`, `onFinish`, `onError`, and
+`onCredentialFallback`. Callbacks registered at the agent and run levels both
+fire. See
 [Files, tools, and events](./files-tools-events.md).
 
 ## Files

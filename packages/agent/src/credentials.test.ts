@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { normalizeCredentials, type CredentialStore } from './credentials.js';
+import {
+  normalizeCredentials,
+  type AuthBlob,
+  type CredentialSource,
+  type CredentialStore,
+} from './credentials.js';
 import { CredentialError } from './errors.js';
 
 describe('normalizeCredentials', () => {
@@ -71,5 +76,66 @@ describe('normalizeCredentials', () => {
       store,
     });
     expect(plan).toEqual({ mode: 'shared', key: 'prod-agent', store });
+  });
+
+  describe('chains', () => {
+    const store: CredentialStore = {
+      withLock: async <T>(
+        _key: string,
+        fn: (
+          current: AuthBlob | undefined,
+        ) => Promise<{ result: T; next?: AuthBlob }>,
+      ): Promise<T> => (await fn(undefined)).result,
+    };
+
+    it('resolves an ordered chain of sources', () => {
+      const plan = normalizeCredentials(
+        [
+          { type: 'shared', key: 'prod', store },
+          { type: 'env' },
+          { type: 'apiKeys', keys: { anthropic: 'k' } },
+        ],
+        { nodeEnv: 'production' },
+      );
+      expect(plan).toEqual({
+        mode: 'chain',
+        sources: [
+          { mode: 'shared', key: 'prod', store },
+          { mode: 'env' },
+          { mode: 'apiKeys', keys: { anthropic: 'k' } },
+        ],
+      });
+    });
+
+    it('unwraps a single-source array to the plain plan', () => {
+      expect(
+        normalizeCredentials([{ type: 'env' }], { nodeEnv: 'development' }),
+      ).toEqual({ mode: 'env' });
+    });
+
+    it('validates every source with the same rules', () => {
+      expect(() =>
+        normalizeCredentials(['local', { type: 'env' }], {
+          nodeEnv: 'production',
+        }),
+      ).toThrow(CredentialError);
+      expect(() =>
+        normalizeCredentials([{ type: 'apiKeys', keys: {} }], {
+          nodeEnv: 'development',
+        }),
+      ).toThrow('at least one provider key');
+    });
+
+    it('rejects empty and nested chains', () => {
+      expect(() =>
+        normalizeCredentials([], { nodeEnv: 'development' }),
+      ).toThrow('at least one source');
+      expect(() =>
+        normalizeCredentials(
+          [[{ type: 'env' }] as unknown as CredentialSource, { type: 'env' }],
+          { nodeEnv: 'development' },
+        ),
+      ).toThrow('cannot be nested');
+    });
   });
 });
