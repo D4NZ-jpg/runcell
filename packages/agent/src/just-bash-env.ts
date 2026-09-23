@@ -47,8 +47,7 @@ function withInlinedEnv<T extends object>(target: T): T {
     get(obj, prop, receiver) {
       if (prop === 'run' || prop === 'spawn') {
         const original = Reflect.get(obj, prop) as
-          | ((options: RunLikeOptions) => unknown)
-          | undefined;
+          ((options: RunLikeOptions) => unknown) | undefined;
         if (typeof original !== 'function') return original;
         return (options: RunLikeOptions) =>
           original.call(obj, {
@@ -81,8 +80,7 @@ export function createPatchedJustBashSandbox(
     get(obj, prop, receiver) {
       if (prop === 'createSession' || prop === 'resume') {
         const original = Reflect.get(obj, prop) as
-          | ((...fnArgs: unknown[]) => Promise<object>)
-          | undefined;
+          ((...fnArgs: unknown[]) => Promise<object>) | undefined;
         if (typeof original !== 'function') return original;
         return async (...fnArgs: unknown[]) =>
           withInlinedEnv(await original.apply(obj, fnArgs));

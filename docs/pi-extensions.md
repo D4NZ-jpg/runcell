@@ -114,9 +114,7 @@ const corp = defineExtension(pi => {
     baseUrl: 'https://ai.corp.example/v1',
     apiKey: '$CORPORATE_AI_KEY',
     api: 'openai-completions',
-    models: [
-      /* ... */
-    ],
+    models: [/* ... */],
   });
 });
 

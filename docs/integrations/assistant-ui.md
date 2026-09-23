@@ -14,9 +14,7 @@ import { createAgent } from 'runcell';
 
 const agent = createAgent({
   model: 'anthropic/claude-sonnet-4-5',
-  tools: {
-    /* host tools */
-  },
+  tools: {/* host tools */},
 });
 
 export async function POST(req: Request): Promise<Response> {

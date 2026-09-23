@@ -10,8 +10,8 @@
  *
  * Opt in with RUNCELL_LIVE=1; see runtime.live.ts for credential options.
  */
-import { validateTypes } from '@ai-sdk/provider-utils';
 import { readUIMessageStream, uiMessageChunkSchema } from 'ai';
+import type { UIMessageChunk } from 'ai';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { createAgent, type Credentials, type RunUsage } from './index.js';
@@ -73,13 +73,22 @@ describe('live UI message stream conformance', () => {
         .map(block => block.slice('data: '.length));
       expect(events.at(-1)).toBe('[DONE]');
 
-      const chunks = await Promise.all(
-        events.slice(0, -1).map(payload =>
-          validateTypes({
-            value: JSON.parse(payload),
-            schema: uiMessageChunkSchema,
-          }),
-        ),
+      // Validate with the schema object's own validate(), the stable
+      // surface across ai versions (helper generics are not).
+      const validateChunk = uiMessageChunkSchema().validate;
+      if (typeof validateChunk !== 'function') {
+        throw new Error('uiMessageChunkSchema no longer exposes validate()');
+      }
+      const chunks: UIMessageChunk[] = await Promise.all(
+        events.slice(0, -1).map(async payload => {
+          const result = await validateChunk(JSON.parse(payload));
+          if (!result.success) {
+            throw new Error(
+              `chunk failed the AI SDK schema: ${result.error.message}`,
+            );
+          }
+          return result.value;
+        }),
       );
       expect(chunks[0]).toEqual({ type: 'start' });
       expect(chunks.some(chunk => chunk.type === 'error')).toBe(false);
@@ -87,7 +96,7 @@ describe('live UI message stream conformance', () => {
       // Assemble the final UIMessage with the real AI SDK reader.
       let finalMessage: unknown;
       for await (const message of readUIMessageStream({
-        stream: ReadableStream.from(chunks),
+        stream: ReadableStream.from<UIMessageChunk>(chunks),
       })) {
         finalMessage = message;
       }
