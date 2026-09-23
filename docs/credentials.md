@@ -162,6 +162,46 @@ const agent = createAgent({
 });
 ```
 
+## Fallback chain
+
+Pass an array to try credential sources in order:
+
+```ts
+const agent = createAgent({
+  model: 'anthropic/claude-sonnet-4-5',
+  credentials: [
+    { type: 'shared', key: 'prod', store }, // preferred: shared subscription logins
+    { type: 'env' }, // fallback: API keys from the environment
+  ],
+  events: {
+    onCredentialFallback: ({ from, to, cause }) =>
+      log.warn('credentials fell back', { from, to, cause }),
+  },
+});
+```
+
+A run starts on the first source. If it fails with a credential error (a
+login that can no longer refresh, no key for the resolved provider, a
+provider `401`), runcell retries the whole run on the next source and fires
+`onCredentialFallback` for the hop. The retried failure does not reach
+`onError`; only a failure on the last source does.
+
+Two limits keep the retry safe and honest:
+
+- **No fallback after a tool has executed.** Re-running the run would repeat
+  the tool's side effects, so a credential error after any tool call
+  propagates instead. Credential errors happen on the first request to the
+  provider, before any tool exists, so in practice this rarely blocks a
+  fallback.
+- **Only credential errors fall back.** Model errors, tool errors, and
+  timeouts propagate immediately.
+
+Each source is a complete credential set: the chain picks one source per
+attempt, and does not mix providers across sources within a run. Every
+source is validated with the same rules as a single source, including the
+production guard on `'local'`. `onCredentialFallback` is the signal that a
+preferred source is dying; treat repeated fallbacks as an alert.
+
 ## Shared credential store
 
 For deployments that need shared OAuth state or refreshable credentials, provide

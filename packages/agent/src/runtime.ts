@@ -30,7 +30,12 @@ import {
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { ResolvedAgentConfig } from './create-agent.js';
-import type { AuthBlob, CredentialStore } from './credentials.js';
+import {
+  credentialPlanSources,
+  type AuthBlob,
+  type ConcreteCredentialPlan,
+  type CredentialStore,
+} from './credentials.js';
 import {
   CredentialError,
   ExtensionError,
@@ -90,6 +95,23 @@ export interface RuntimeRunInput {
    * turns of the run (used by `agent.stream` for UI message streams).
    */
   onStreamPart?: (part: { type: string; [key: string]: unknown }) => void;
+  /**
+   * Internal: the credential source for this attempt (a chain's current
+   * hop) and the attempt's side-effect tracker. Set by the attempt loop.
+   */
+  attempt?: RunAttempt;
+}
+
+interface RunAttempt {
+  credentials: ConcreteCredentialPlan;
+  /** Set once any tool other than submitResult has executed. */
+  toolExecuted: boolean;
+  /**
+   * Whether a credential failure of this attempt would be retried on the
+   * next source. When true, the attempt's failure is not emitted to
+   * `onError` (the fallback event carries it instead).
+   */
+  hasNextSource: boolean;
 }
 
 export interface RuncellRuntime {
@@ -103,20 +125,80 @@ interface SandboxContext {
 
 export const defaultRuntime: RuncellRuntime = {
   async run(input) {
-    try {
-      return await runWithHarness(input);
-    } catch (error) {
-      if (isInstanceOfSafe(error, ExtensionError)) {
+    const sources = credentialPlanSources(input.config.credentials);
+    const events = mergeEvents(
+      input.agentOptions.events,
+      input.runOptions.events,
+    );
+    for (const [index, source] of sources.entries()) {
+      const next = sources[index + 1];
+      const attempt: RunAttempt = {
+        credentials: source,
+        toolExecuted: false,
+        hasNextSource: next !== undefined,
+      };
+      try {
+        return await runWithHarness({ ...input, attempt });
+      } catch (error) {
+        // A credentials chain retries the run on the next source when the
+        // failure is a credential error and no tool has executed yet;
+        // retrying after a tool ran would repeat its side effects.
+        if (
+          next !== undefined &&
+          !attempt.toolExecuted &&
+          isCredentialFailure(error)
+        ) {
+          safeEmit(events?.onCredentialFallback, {
+            from: attempt.credentials.mode,
+            to: next.mode,
+            cause: error,
+          });
+          continue;
+        }
+        if (isInstanceOfSafe(error, ExtensionError)) {
+          throw error;
+        }
+        const extensionError = findPiExtensionError(error);
+        if (extensionError) {
+          throw new ExtensionError(extensionError.message, { cause: error });
+        }
         throw error;
       }
-      const extensionError = findPiExtensionError(error);
-      if (extensionError) {
-        throw new ExtensionError(extensionError.message, { cause: error });
-      }
-      throw error;
     }
+    // Unreachable: the loop returns or throws on the last source.
+    throw new Error('credentials chain exhausted without a result.');
   },
 };
+
+/**
+ * Whether a failure means the credential source itself cannot authenticate:
+ * the preflight `CredentialError`, a dead OAuth refresh, a missing key for
+ * the resolved provider, or a provider `401`. Walks the cause chain because
+ * the runtime wraps engine errors in `TurnError`.
+ */
+function isCredentialFailure(error: unknown): boolean {
+  const seen = new Set<object>();
+  let current: unknown = error;
+  try {
+    while (current instanceof Error && !seen.has(current)) {
+      seen.add(current);
+      if (current instanceof CredentialError) {
+        return true;
+      }
+      if (
+        /OAuth refresh failed|No API key|\b401\b|Unauthorized|invalid_grant|authentication_error/i.test(
+          current.message,
+        )
+      ) {
+        return true;
+      }
+      current = current.cause;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
 
 /**
  * `instanceof` that treats a throwing check (an exotic proxy) as `false`.
@@ -166,7 +248,14 @@ async function runWithHarness({
   runOptions,
   onTextDelta,
   onStreamPart,
+  attempt: runAttempt,
 }: RuntimeRunInput): Promise<RunResult<unknown>> {
+  // Direct callers (tests, custom runtimes) may omit the attempt loop; a
+  // chain then requires it, so resolve the concrete source here.
+  const credentials: ConcreteCredentialPlan = runAttempt?.credentials ??
+    credentialPlanSources(config.credentials)[0] ??
+      // credentialPlanSources never returns empty; satisfy the type.
+      { mode: 'env' };
   const files = normalizeFiles(runOptions.files ?? []);
   const changedFiles = new Map<string, ChangedFile>();
   let text = '';
@@ -222,7 +311,7 @@ async function runWithHarness({
     },
   });
 
-  assertFileCredentialsPresent(config.credentials);
+  assertFileCredentialsPresent(credentials);
 
   const {
     provider: baseProvider,
@@ -248,7 +337,12 @@ async function runWithHarness({
 
   const harnessAgent = new HarnessAgent({
     id: 'runcell',
-    harness: createPi(createPiSettings(config, runOptions.pi?.thinkingLevel)),
+    harness: createPi(
+      createPiSettings(
+        { ...config, credentials },
+        runOptions.pi?.thinkingLevel,
+      ),
+    ),
     sandbox: sandboxProvider,
     permissionMode: 'allow-all',
     instructions: schema
@@ -352,6 +446,11 @@ async function runWithHarness({
             setStreamError(cause) {
               streamError ??= { cause };
             },
+            markToolExecuted() {
+              if (runAttempt) {
+                runAttempt.toolExecuted = true;
+              }
+            },
           });
         }
       } catch (error) {
@@ -450,7 +549,15 @@ async function runWithHarness({
             getPiSessionUsageTotals(session),
           ),
         );
-    safeEmit(events?.onError, failure);
+    // A credential failure that the chain will retry on the next source is
+    // reported through onCredentialFallback instead of onError.
+    const willFallBack =
+      runAttempt?.hasNextSource === true &&
+      !runAttempt.toolExecuted &&
+      isCredentialFailure(failure);
+    if (!willFallBack) {
+      safeEmit(events?.onError, failure);
+    }
     throw failure;
   } finally {
     const ownedSandbox = ownsSandbox ? sandboxSession : undefined;
@@ -525,7 +632,7 @@ function failureMessage(error: unknown): string {
  * `credentials: 'local'` without the one-time interactive human login.
  */
 function assertFileCredentialsPresent(
-  plan: ResolvedAgentConfig['credentials'],
+  plan: ConcreteCredentialPlan,
   env: NodeJS.ProcessEnv = process.env,
 ): void {
   if (plan.mode !== 'local' && plan.mode !== 'agentDir') {
@@ -617,6 +724,10 @@ function mergeEvents(
     onRepair: both(agent.onRepair, run.onRepair),
     onFinish: both(agent.onFinish, run.onFinish),
     onError: both(agent.onError, run.onError),
+    onCredentialFallback: both(
+      agent.onCredentialFallback,
+      run.onCredentialFallback,
+    ),
   };
 }
 
@@ -1134,6 +1245,7 @@ async function handleStreamPart({
   setFinishReason,
   addUsage,
   setStreamError,
+  markToolExecuted,
 }: {
   part: { type: string; [key: string]: unknown };
   events: AgentOptions['events'];
@@ -1145,6 +1257,7 @@ async function handleStreamPart({
   setFinishReason: (reason: string) => void;
   addUsage: (usage: RunUsage) => void;
   setStreamError: (cause: unknown) => void;
+  markToolExecuted: () => void;
 }): Promise<void> {
   switch (part.type) {
     case 'text-delta': {
@@ -1157,6 +1270,10 @@ async function handleStreamPart({
     case 'tool-call': {
       const name = typeof part['toolName'] === 'string' ? part['toolName'] : '';
       if (name && name !== 'submitResult') {
+        // Any real tool (including fileChange, which reports a sandbox write)
+        // means the attempt has side effects; a credentials fallback must
+        // not re-run it.
+        markToolExecuted();
         safeEmit(events?.onToolCall, {
           id: typeof part['toolCallId'] === 'string' ? part['toolCallId'] : '',
           name,
@@ -1260,7 +1377,9 @@ function isFileChangePayload(
 }
 
 function createPiSettings(
-  config: ResolvedAgentConfig,
+  config: Omit<ResolvedAgentConfig, 'credentials'> & {
+    credentials: ConcreteCredentialPlan;
+  },
   runThinkingLevel?: PiThinkingLevel,
 ): PiHarnessSettings {
   const { credentials, model, systemPrompt, extensions } = config;
