@@ -11,6 +11,12 @@ updates:
     open-pull-requests-limit: 10
     versioning-strategy: increase
     groups:
+      pi-engine:
+        patterns:
+          - '@earendil-works/*'
+        update-types:
+          - minor
+          - patch
       ai-sdk:
         patterns:
           - '@ai-sdk/*'
