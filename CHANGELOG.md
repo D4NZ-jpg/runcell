@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Changed
+
+- Updated the bundled Pi engine from 0.80 to 0.87. The model catalog now
+  includes the latest frontier models — `openai-codex/gpt-6-luna`,
+  `openai-codex/gpt-6-sol`, `anthropic/claude-opus-5-5`, and more — so they
+  resolve through `createAgent()` without a custom provider extension
+  ([#18](https://github.com/D4NZ-jpg/runcell/issues/18)).
+
 ### Added
 
 - Credential errors now teach. A `local`/`agentDir` run fails fast with a
