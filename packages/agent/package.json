@@ -52,7 +52,7 @@
     "@napi-rs/canvas": "^1.0.8",
     "@types/node": "^26.6.2",
     "ai": "7.0.28",
-    "del-cli": "^6.0.0",
+    "del-cli": "^7.0.0",
     "pdfjs-dist": "^6.3.289",
     "tsup": "^8.5.1",
     "typescript": "^5.8.3",
