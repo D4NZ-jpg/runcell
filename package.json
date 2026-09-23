@@ -43,7 +43,7 @@
     "release:pg": "npm run check && npm publish -w @runcell/postgres-credentials"
   },
   "devDependencies": {
-    "@commitlint/cli": "^19.6.1",
+    "@commitlint/cli": "^21.2.3",
     "@commitlint/config-conventional": "^19.6.0",
     "@eslint/js": "^9.18.0",
     "@types/node": "^24.0.0",
