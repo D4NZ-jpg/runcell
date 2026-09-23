@@ -326,10 +326,7 @@ violates these is rejected.
 type ToolContentPartInput = ToolContentTextPart | ToolContentImageInput;
 type ToolContentPart = ToolContentTextPart | ToolContentImagePart;
 type ToolContentImageMediaType =
-  | 'image/png'
-  | 'image/jpeg'
-  | 'image/gif'
-  | 'image/webp';
+  'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
 
 interface ToolContentTextPart {
   readonly type: 'text';
@@ -376,8 +373,7 @@ the agent and run levels both fire. See
 
 ```ts
 type FileInput =
-  | { path: string; text: string }
-  | { path: string; bytes: Uint8Array };
+  { path: string; text: string } | { path: string; bytes: Uint8Array };
 ```
 
 Paths must be relative workspace paths (no absolute paths, no `..`).
