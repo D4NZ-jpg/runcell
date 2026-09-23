@@ -2279,7 +2279,7 @@ describe('defaultRuntime', () => {
   });
 
   it('registers the built-in readPdfPages tool when a PDF is seeded', async () => {
-    const { tinyPdf } = await import('./pdf-pages.test.js');
+    const { tinyPdf } = await import('./pdf-pages.fixture.js');
     const state = installRuntimeMocks([
       agent => {
         agent.submit({ ok: true });
