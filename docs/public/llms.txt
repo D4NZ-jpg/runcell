@@ -14,7 +14,7 @@
   Vercel AI Gateway).
 - `credentials: 'local'`: uses subscription logins from `~/.pi/agent`.
   The login (`npx pi`, then `/login`) is interactive with a browser
-  sign-in. A HUMAN must run it once per machine; an AI agent cannot.
+  sign-in. A HUMAN must run it once per machine. An AI agent cannot.
   Check `~/.pi/agent/auth.json` exists instead of launching the TUI.
 - NEVER create or edit `~/.pi/agent/auth.json` by hand. Never commit it.
 - If neither logins nor API keys exist, stop and ask the human. There is
@@ -23,7 +23,7 @@
   `credentials: { type: 'shared' }` with `@runcell/postgres-credentials`.
 - Fallback: pass an array (`credentials: [sourceA, sourceB]`) to try
   sources in order. The run moves to the next source only on a credential
-  error before any tool has run. `onCredentialFallback` reports each move.
+  error before any tool runs. `onCredentialFallback` reports each move.
 
 ## Files and attachments
 

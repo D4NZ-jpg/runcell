@@ -41,13 +41,13 @@ failure modes:
 - **Check for existing logins without the terminal UI**: if
   `~/.pi/agent/auth.json` exists, logins are present and
   `credentials: 'local'` will work. Do not run `npx pi` to find out.
-- **Never create or edit `~/.pi/agent/auth.json` by hand.** It is written by
-  the login flow and refreshed automatically. A hand-made file will not
+- **Never create or edit `~/.pi/agent/auth.json` by hand.** The login flow
+  writes it, and Pi refreshes it automatically. A hand-made file will not
   authenticate. Never commit it.
 - **Use the exact environment variable names** from the table above. Do not
   invent variants such as `OPENAI_KEY` or `ANTHROPIC_TOKEN`.
 - **If neither logins nor API keys exist, stop and ask.** Tell the human to
-  either run `npx pi` and `/login` (subscription) or provide an API key.
+  either run `npx pi` and `/login` (subscription) or supply an API key.
   There is no credential you can generate yourself.
 
 To give these rules to your own coding agents, paste this into your
@@ -106,9 +106,9 @@ stay observable on a flat-rate subscription (see
 
 Provider terms govern subscription use, and they differ per provider and
 change over time, so review yours before relying on it. Individual use of your
-own subscription is the commonly accepted pattern (Anthropic has publicly
-said as much); API keys are the provider-supported path for deployed and
-commercial work. For that reason `'local'` is refused when `NODE_ENV` is
+own subscription is the commonly accepted pattern (Anthropic said so
+publicly). API keys are the provider-supported path for deployed and
+commercial work. For that reason, runcell refuses `'local'` when `NODE_ENV` is
 `production` unless you opt in explicitly, for example a remote test box
 running under your own account:
 
@@ -118,7 +118,7 @@ credentials: { type: 'local', allowInProduction: true }
 
 ## Default behavior: environment variables
 
-When `credentials` is omitted, `runcell` uses environment variables:
+If you omit `credentials`, `runcell` uses environment variables:
 
 ```ts
 const agent = createAgent({
@@ -185,11 +185,11 @@ A run starts on the first source. If it fails with a credential error (a
 login that can no longer refresh, no key for the resolved provider, a
 provider `401`), runcell retries the whole run on the next source and fires
 `onCredentialFallback` for the hop. The retried failure does not reach
-`onError`; only a failure on the last source does.
+`onError`. Only a failure on the last source does.
 
-Two limits keep the retry safe and honest:
+Two limits apply:
 
-- **No fallback after a tool has executed.** Re-running the run would repeat
+- **No fallback after a tool runs.** A retry of the run would repeat
   the tool's side effects, so a credential error after any tool call
   propagates instead. Credential errors happen on the first request to the
   provider, before any tool exists, so in practice this rarely blocks a
@@ -198,14 +198,14 @@ Two limits keep the retry safe and honest:
   timeouts propagate immediately.
 
 Each source is a complete credential set: the chain picks one source per
-attempt, and does not mix providers across sources within a run. Every
-source is validated with the same rules as a single source, including the
-production guard on `'local'`. `onCredentialFallback` is the signal that a
-preferred source is dying; treat repeated fallbacks as an alert.
+attempt, and does not mix providers across sources within a run. Runcell
+validates every source with the same rules as a single source, including the
+production guard on `'local'`. `onCredentialFallback` shows that a preferred
+source is failing. Treat repeated fallbacks as an alert.
 
 ## Shared credential store
 
-For deployments that need shared OAuth state or refreshable credentials, provide
+For deployments that need shared OAuth state or refreshable credentials, supply
 a lockable store. The official Postgres implementation is
 [`@runcell/postgres-credentials`](https://www.npmjs.com/package/@runcell/postgres-credentials):
 

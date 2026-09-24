@@ -15,12 +15,12 @@ await agent.run({
 });
 ```
 
-Paths must be relative workspace paths; absolute paths, `..` segments,
-backslashes, and drive letters are rejected before the run starts.
+Paths must be relative workspace paths. Runcell rejects absolute paths, `..`
+segments, backslashes, and drive letters before the run starts.
 
 ## Files out
 
-Created and modified files are returned on the result:
+The result returns created and modified files:
 
 ```ts
 const result = await agent.run({ prompt, schema });
@@ -59,9 +59,9 @@ const agent = createAgent({
 ```
 
 - `schema` accepts any [Standard Schema](https://standardschema.dev)
-  validator. The input is validated before `execute` runs and typed from the
-  schema.
-- The return value is serialized back to the model.
+  validator. Runcell validates the input before `execute` runs, and the schema
+  sets the input type.
+- Runcell serializes the return value back to the model.
 - Reserved names (used by the runtime): `read`, `write`, `edit`, `bash`,
   `grep`, `glob`, `ls`, `submitResult`, `fileChange`, `readPdfPages`.
   Registering one throws
@@ -109,11 +109,10 @@ const agent = createAgent({
 | Anything else        | `JSON.stringify` text (values that serialize to `undefined` become `'null'`), unchanged from ordinary tool results |
 
 `toolContent()` accepts a non-empty array of text and image parts. Image data
-may be a `Uint8Array` or a base64 string; a base64 string must be standard
+can be a `Uint8Array` or a base64 string. A base64 string must be standard
 padded canonical base64: no whitespace, no `data:` URL prefix, no base64url
-alphabet. Raw bytes are base64-encoded once;
-media types are matched case-insensitively, with `image/jpg` normalized to
-`image/jpeg`. Supported types are `image/png`, `image/jpeg`, `image/gif`, and
+alphabet. The helper base64-encodes raw bytes once. It matches media types
+case-insensitively and normalizes `image/jpg` to `image/jpeg`. Supported types are `image/png`, `image/jpeg`, `image/gif`, and
 `image/webp`, with a 5 MB decoded limit per image. Invalid input throws eagerly
 from `toolContent()`.
 
@@ -121,7 +120,7 @@ The helper is an explicit opt-in. Returning a bare array that looks like content
 parts still follows the ordinary JSON-stringified path. Text-only
 `toolContent([...])` is also valid. For these results, `onToolResult` and result
 tool projections expose the normalized, JSON-safe content array with base64
-image data. Runcell does not pre-check whether a model supports vision; a
+image data. Runcell does not pre-check whether a model supports vision. A
 provider rejection surfaces through `onError` like other model errors.
 
 See the runnable `examples/11-image-tool-results.ts` with
@@ -130,7 +129,7 @@ See the runnable `examples/11-image-tool-results.ts` with
 ## Events
 
 Lifecycle callbacks support logging, UIs, and metrics. They are optional and
-best-effort: callback errors are swallowed and do not affect the run. Register
+best-effort: runcell ignores callback errors, and they do not affect the run. Register
 callbacks at the agent level for every run or per run via
 `agent.run({ ..., events })`. If both are set, both fire.
 
@@ -149,20 +148,20 @@ const agent = createAgent({
 });
 ```
 
-| Event                  | Fires when                                                                                                        |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `onText`               | a text delta streams from the model                                                                               |
-| `onToolCall`           | the agent invokes one of your tools                                                                               |
-| `onToolResult`         | one of your tools returns                                                                                         |
-| `onFileChange`         | the agent creates/modifies a workspace file                                                                       |
-| `onRepair`             | a repair turn starts (structured runs only)                                                                       |
-| `onFinish`             | a turn completes, with its finish reason                                                                          |
-| `onError`              | the run fails after the session starts; usage is attached before the callback and the same object rejects the run |
-| `onCredentialFallback` | a credentials chain moves to its next source after a credential error, with `from`, `to`, and `cause`             |
+| Event                  | Fires when                                                                                                          |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `onText`               | a text delta streams from the model                                                                                 |
+| `onToolCall`           | the agent invokes one of your tools                                                                                 |
+| `onToolResult`         | one of your tools returns                                                                                           |
+| `onFileChange`         | the agent creates/modifies a workspace file                                                                         |
+| `onRepair`             | a repair turn starts (structured runs only)                                                                         |
+| `onFinish`             | a turn completes, with its finish reason                                                                            |
+| `onError`              | the run fails after the session starts. Runcell attaches usage before the callback. The same object rejects the run |
+| `onCredentialFallback` | a credentials chain moves to its next source after a credential error, with `from`, `to`, and `cause`               |
 
-Callback exceptions are swallowed. In particular, an exception from `onError`
+Runcell ignores callback exceptions. In particular, an exception from `onError`
 does not replace the enriched failure object used to reject the run.
 
 Events fire for `run()` and `stream()` alike. For streaming text to a client,
-prefer `agent.stream()`'s `textStream` over `onText`; see
+prefer `agent.stream()`'s `textStream` over `onText`. See
 [Streaming](./streaming.md).

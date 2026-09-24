@@ -1,6 +1,6 @@
 # API reference
 
-The public API is exported from the `runcell` entrypoint.
+The `runcell` entrypoint exports the public API.
 
 ## `createAgent(options): Agent`
 
@@ -47,10 +47,10 @@ interface PiOptions {
 `thinkingLevel` sets the agent-level default reasoning effort. Pi maps it to
 such provider-native controls as Anthropic's thinking budget and OpenAI's
 `reasoning_effort`, then clamps it to what the selected model supports. When
-unset, Pi's default for that model applies. Invalid values throw
-`InvalidOptionError` when `createAgent()` is called.
+unset, Pi's default for that model applies. Invalid values make
+`createAgent()` throw `InvalidOptionError`.
 
-`PiThinkingLevel` is exported from `runcell`. See
+`runcell` exports `PiThinkingLevel`. See
 [Pi options](./pi-extensions.md) for examples and extension semantics.
 
 ## `agent.run(options)`
@@ -69,44 +69,44 @@ run(options: RunOptionsBase): Promise<RunResult<undefined>>;
 
 | Option               | Type                                  | Description                                                                                                                                                                              |
 | -------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `prompt`             | `string`                              | The task prompt. Provide either `prompt` or `messages`.                                                                                                                                  |
+| `prompt`             | `string`                              | The task prompt. Supply either `prompt` or `messages`.                                                                                                                                   |
 | `messages`           | `readonly UIChatMessage[]`            | A UI chat history (AI SDK `UIMessage` shape). Must end with a user message. Earlier turns replay as context. File parts on the last message become workspace files under `attachments/`. |
 | `maxAttachmentBytes` | `number`                              | Per-attachment size limit for `file` parts in `messages`. Defaults to 20 MB.                                                                                                             |
 | `schema`             | `AgentSchema`                         | Structured output contract ([Standard Schema](https://standardschema.dev)). Omit for a plain turn.                                                                                       |
 | `files`              | `FileInput[]`                         | Files seeded into the workspace before the run. Relative paths only.                                                                                                                     |
 | `sandbox`            | `Sandbox \| SandboxOption`            | A caller-owned handle that Runcell does not destroy, or an ephemeral mode option.                                                                                                        |
-| `thread`             | `Thread`                              | Conversation to continue; mutated in place on success.                                                                                                                                   |
+| `thread`             | `Thread`                              | Conversation to continue. A successful run mutates it in place.                                                                                                                          |
 | `events`             | `AgentEvents`                         | Per-run lifecycle callbacks, invoked in addition to the agent-level ones.                                                                                                                |
-| `pi`                 | `{ thinkingLevel?: PiThinkingLevel }` | Per-run thinking-level override. Only `thinkingLevel` is accepted; it wins for this run only.                                                                                            |
+| `pi`                 | `{ thinkingLevel?: PiThinkingLevel }` | Per-run thinking-level override. The only accepted key is `thinkingLevel`. It wins for this run only.                                                                                    |
 | `sessionId`          | `string`                              | Resume a previous session by id.                                                                                                                                                         |
 | `signal`             | `AbortSignal`                         | Cancels the run.                                                                                                                                                                         |
 
-The per-run `pi` object accepts only `thinkingLevel`; extensions remain
-agent-level. Invalid values throw `InvalidOptionError` eagerly when `run()` is
-called.
+The per-run `pi` object accepts only `thinkingLevel`. Extensions stay
+agent-level. Invalid values make `run()` throw `InvalidOptionError` before the
+run starts.
 
 With a schema, the first schema-valid `submitResult` call is terminal: runcell
 cancels the active model turn and returns that submission. A trailing stream
-timeout or transport error does not discard an already accepted result. Text
-and file changes observed before the submission are preserved.
+timeout or transport error does not discard an already accepted result. Runcell
+keeps the text and file changes that it observed before the submission.
 
 ### `RunResult<TData>`
 
-| Field          | Type            | Description                                                           |
-| -------------- | --------------- | --------------------------------------------------------------------- |
-| `data`         | `TData`         | Validated structured output, or `undefined` when no schema was given. |
-| `text`         | `string`        | The model's prose and the output for plain turns.                     |
-| `files`        | `ChangedFile[]` | Files created/modified during this run (`{ path, change, bytes }`).   |
-| `finishReason` | `string`        | Why the final turn stopped, e.g. `"stop"`.                            |
-| `sessionId`    | `string`        | Identifier of the underlying run session.                             |
-| `usage`        | `RunUsage`      | Token usage and estimated cost for this run.                          |
+| Field          | Type            | Description                                                            |
+| -------------- | --------------- | ---------------------------------------------------------------------- |
+| `data`         | `TData`         | Validated structured output, or `undefined` for runs without a schema. |
+| `text`         | `string`        | The model's prose and the output for plain turns.                      |
+| `files`        | `ChangedFile[]` | Files created/modified during this run (`{ path, change, bytes }`).    |
+| `finishReason` | `string`        | Why the final turn stopped, e.g. `"stop"`.                             |
+| `sessionId`    | `string`        | Identifier of the underlying run session.                              |
+| `usage`        | `RunUsage`      | Token usage and estimated cost for this run.                           |
 
 ### `RunUsage`
 
 Token usage and estimated cost for one run, accumulated across every model
 turn in the run (including repair turns). Successful runs expose it as
-`result.usage`; use `getRunUsage(error)` to discover it safely on failures after
-a session starts.
+`result.usage`. On failures after a session starts, use `getRunUsage(error)` to
+get it safely.
 
 | Field              | Type      | Description                                          |
 | ------------------ | --------- | ---------------------------------------------------- |
@@ -118,8 +118,8 @@ a session starts.
 | `costUsd`          | `number`  | Estimated cost in US dollars at API list price.      |
 | `costMeasured`     | `boolean` | Whether `costUsd` is a real measurement.             |
 
-`costUsd` is computed from the [models.dev](https://models.dev)-derived model
-catalog, including tiered pricing. It is always the as-if-API price: runs on
+Runcell computes `costUsd` from the [models.dev](https://models.dev)-derived
+model catalog, including tiered pricing. It is always the as-if-API price: runs on
 subscription (OAuth) credentials report what the same tokens would have cost
 through the provider's API. Models the catalog does not price report `0`
 with `costMeasured: false`, so a zero can be told apart from genuinely free
@@ -149,7 +149,7 @@ const final = await result; // always await this
 | Field                                 | Type                            | Description                                                               |
 | ------------------------------------- | ------------------------------- | ------------------------------------------------------------------------- |
 | `textStream`                          | `AsyncIterable<string>`         | The model's text deltas.                                                  |
-| `result`                              | `Promise<RunResult>`            | Final result; rejects on failure. Always await it.                        |
+| `result`                              | `Promise<RunResult>`            | Final result. Rejects on failure. Always await it.                        |
 | `toUIMessageStream(options?)`         | `AsyncIterable<UIMessageChunk>` | The run as AI SDK UI Message Stream chunks.                               |
 | `toUIMessageStreamResponse(options?)` | `Response`                      | The run as a UI Message Stream SSE response for `useChat` / assistant-ui. |
 
@@ -174,7 +174,7 @@ for the route-handler pattern.
 Creates a caller-owned sandbox handle on any backend (`virtual`, `host`,
 `vercel`, or `custom`). The option defaults to `{ type: 'virtual' }`. Pass the
 same handle to multiple `agent.run()` calls to share one live provider session
-and workspace; runcell does not destroy caller-owned handles.
+and workspace. Runcell does not destroy caller-owned handles.
 
 If provider session creation succeeds but workspace setup fails, runcell
 destroys the session before rejecting.
@@ -187,7 +187,7 @@ variables for every command.
 ### `restoreSandbox(snapshot, options?): Promise<Sandbox>`
 
 Creates a fresh virtual sandbox and writes a snapshot's files back into it.
-The snapshot is validated before the sandbox is created. Escaping paths,
+Runcell validates the snapshot before it creates the sandbox. Escaping paths,
 duplicate paths, and malformed base64 throw `InvalidOptionError`.
 
 ### `Sandbox`
@@ -200,11 +200,11 @@ duplicate paths, and malformed base64 throw `InvalidOptionError`.
 | `readFile(path)`        | `Uint8Array \| null`.                                                                 |
 | `readTextFile(path)`    | `string \| null`.                                                                     |
 | `writeFile(path, data)` | Writes text or bytes, creating parent directories.                                    |
-| `remove(path)`          | Removes a file or directory; no-op when missing.                                      |
+| `remove(path)`          | Removes a file or directory. Does nothing if the path does not exist.                 |
 | `snapshot()`            | Portable, JSON-serializable capture of workspace **files** (`SandboxSnapshot`).       |
 | `exposeUrl?(port)`      | Public URL for a port. Present only when `capabilities.ports` is `true`.              |
 | `lock(key, fn)`         | Opt-in mutex, serialized per key on this handle.                                      |
-| `destroy()`             | Dispose the sandbox. Idempotent; later operations throw. Only the caller does this.   |
+| `destroy()`             | Dispose the sandbox. Idempotent. Later operations throw. Only the caller does this.   |
 
 File paths passed to `readFile`, `writeFile`, `remove`, and similar methods
 must be relative POSIX paths. Absolute paths and `..` throw
@@ -233,7 +233,7 @@ type SandboxOption =
   | { type: 'custom'; provider: SandboxProvider };
 ```
 
-See [Sandboxes](./sandboxes.md) for semantics; `vercel` requires the optional
+See [Sandboxes](./sandboxes.md) for semantics. `vercel` requires the optional
 `@ai-sdk/sandbox-vercel` peer dependency and Node.js 22+.
 
 ### `SandboxProvider`
@@ -255,12 +255,12 @@ Rebuilds a thread from a persisted `ThreadState`.
 
 ### `Thread`
 
-| Member     | Description                                             |
-| ---------- | ------------------------------------------------------- |
-| `id`       | Conversation id.                                        |
-| `messages` | `readonly ThreadMessage[]`: the readable turn log.      |
-| `clone()`  | Deep, independent copy (fork the conversation).         |
-| `toJSON()` | `ThreadState`: plain JSON-safe value; persist anywhere. |
+| Member     | Description                                                |
+| ---------- | ---------------------------------------------------------- |
+| `id`       | Conversation id.                                           |
+| `messages` | `readonly ThreadMessage[]`: the readable turn log.         |
+| `clone()`  | Deep, independent copy (fork the conversation).            |
+| `toJSON()` | `ThreadState`: plain JSON-safe value. Persist it anywhere. |
 
 ### `ThreadMessage`
 
@@ -298,11 +298,11 @@ const result = toolContent([
 ```
 
 `parts` must be a non-empty array. Image `data` accepts `Uint8Array` or a
-base64 string; bytes are base64-encoded by the helper. A base64 string must be
-standard padded canonical base64 — no whitespace, no `data:` URL prefix, no
+base64 string. The helper base64-encodes bytes. A base64 string must be
+standard padded canonical base64: no whitespace, no `data:` URL prefix, no
 base64url alphabet. Supported media types are `image/png`,
 `image/jpeg`, `image/gif`, and `image/webp`. Matching is case-insensitive and
-`image/jpg` normalizes to `image/jpeg`. Each image is limited to 5 MB decoded.
+`image/jpg` normalizes to `image/jpeg`. The limit is 5 MB decoded per image.
 Invalid inputs throw eagerly. Text-only content is valid.
 
 The returned envelope has
@@ -317,8 +317,8 @@ image data.
 Returns whether `value` is a valid normalized `ToolContent` envelope. Beyond
 the structural shape (discriminator, version, part shapes, supported media
 types) it re-checks the data invariants: image `data` must be canonical padded
-base64 and at most 5 MB decoded. A hand-built or deserialized envelope that
-violates these is rejected.
+base64 and at most 5 MB decoded. It returns `false` for a hand-built or
+deserialized envelope that violates them.
 
 ### Tool content types
 
@@ -356,7 +356,7 @@ const TOOL_CONTENT_TYPE = 'runcell.tool-content';
 
 `ToolContent`, `ToolContentPart`, `ToolContentPartInput`,
 `ToolContentTextPart`, `ToolContentImagePart`, `ToolContentImageInput`,
-`ToolContentImageMediaType`, and `TOOL_CONTENT_TYPE` are exported from
+`ToolContentImageMediaType`, and `TOOL_CONTENT_TYPE` are also exports of
 `runcell`.
 
 Runcell does not pre-check model vision support. Provider failures surface
@@ -383,14 +383,14 @@ Paths must be relative workspace paths (no absolute paths, no `..`).
 
 All runcell errors extend `RuncellError`:
 
-| Error                   | Thrown when                                                                                                                                                           |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `InvalidOptionError`    | Options are malformed (bad sandbox option, reserved tool name, foreign thread…).                                                                                      |
-| `IncompleteResultError` | A structured run exhausted its repair budget without a valid payload. Its `usage` includes every unsuccessful repair turn.                                            |
-| `TurnError`             | The engine reported a terminal turn error, such as a provider failure or abort. The original error is available as `cause`; reconciled usage is available as `usage`. |
-| `CredentialError`       | Credential configuration is unsafe or malformed (e.g. `local` in production).                                                                                         |
-| `ExtensionError`        | A supplied Pi extension failed to load or registered a colliding tool. Raised before any model request; the original error is `cause`.                                |
-| `NotImplementedError`   | A declared-but-unavailable capability was invoked.                                                                                                                    |
+| Error                   | Thrown when                                                                                                                                     |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `InvalidOptionError`    | Options are malformed (bad sandbox option, reserved tool name, foreign thread…).                                                                |
+| `IncompleteResultError` | A structured run exhausted its repair budget without a valid payload. Its `usage` includes every unsuccessful repair turn.                      |
+| `TurnError`             | The engine reported a terminal turn error, such as a provider failure or abort. The original error is `cause`. The reconciled usage is `usage`. |
+| `CredentialError`       | Credential configuration is unsafe or malformed (e.g. `local` in production).                                                                   |
+| `ExtensionError`        | A supplied Pi extension failed to load or registered a colliding tool. Raised before any model request. The original error is `cause`.          |
+| `NotImplementedError`   | Code called a capability that runcell declares but does not implement.                                                                          |
 
 ```ts
 import { getRunUsage } from 'runcell';
@@ -404,18 +404,18 @@ try {
 ```
 
 `getRunUsage(value)` validates every token bucket, the total, cost, and
-measurement flag before returning `RunUsage`; malformed or absent usage returns
-`undefined`.
+measurement flag before it returns `RunUsage`. For malformed or absent usage,
+it returns `undefined`.
 
 Failures after session startup reject with one of Runcell's own error
 classes. Runtime-created `TurnError` and `IncompleteResultError` carry the
-reconciled usage directly; every other rejection value — harness errors, tool
-errors, caller abort reasons — is wrapped in a `TurnError` that carries the
+reconciled usage directly. Runcell wraps every other rejection value (harness
+errors, tool errors, caller abort reasons) in a `TurnError` that carries the
 usage, with the original value unmodified as `cause`. Runcell never mutates
 objects it does not own, so an externally supplied abort reason or a
 third-party error (including one with its own `usage` property) is always
-recovered exactly via `error.cause`. The same final error is delivered to
-`onError` and used to reject the run.
+recovered exactly via `error.cause`. Runcell gives the same final error to
+`onError` and uses it to reject the run.
 
 `TurnError` and `IncompleteResultError` have optional `usage`: runtime-created
 failures after session startup carry it, while manually constructed instances

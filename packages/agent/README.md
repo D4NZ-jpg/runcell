@@ -32,12 +32,12 @@ const review = await agent.run({
 runcell gives an agent a sandbox workspace and gives you back values your
 application can rely on:
 
-- **Streaming**: `agent.stream()` returns `{ textStream, result }`; pipe
+- **Streaming**: `agent.stream()` returns `{ textStream, result }`. Pipe
   deltas to a UI and await the final result.
 - **Structured output**: pass any
   [Standard Schema](https://standardschema.dev) validator (Zod 3/4, Valibot,
-  ArkType); runcell validates the agent's submission, runs repair turns when
-  the model misses, and fails the run when they don't help. Omit
+  ArkType). Runcell validates the agent's submission, runs repair turns when
+  the model misses, and fails the run when repairs do not help. Omit
   the schema for plain text turns.
 - **Sandboxes**: ephemeral by default. Or create a caller-owned handle:
   reuse it across runs, `exec`/read/write it directly, `snapshot()` it to
@@ -50,14 +50,14 @@ application can rely on:
   expose host functions, receive lifecycle callbacks, and use extension hooks
   to block tool calls.
 - **Local credentials**: `credentials: 'local'` can use supported provider
-  logins on a development machine. Provider terms govern subscription use;
-  production use requires explicit opt-in.
+  logins on a development machine. Provider terms govern subscription use.
+  Production use requires explicit opt-in.
 - **Shared credentials**: `credentials: { type: 'shared' }` takes a lockable
   store for deployments that share refreshable credentials. The official
   Postgres implementation is
   [`@runcell/postgres-credentials`](https://www.npmjs.com/package/@runcell/postgres-credentials).
-- **Credential fallback**: pass an array of sources. A run that fails with a
-  credential error before any tool runs is retried on the next source.
+- **Credential fallback**: pass an array of sources. If a run fails with a
+  credential error before any tool runs, runcell retries it on the next source.
 
 ## Install
 

@@ -22,10 +22,10 @@ Runcell is an open-source TypeScript runtime for agents that work with files
 and tools. Choose a catalog model or register a provider, then run it in a
 workspace. A run can return:
 
-- changed files as bytes;
-- schema-validated data, with invalid results repaired or rejected;
-- streamed text through `agent.stream()`;
-- token usage and estimated cost for the run (`result.usage`);
+- changed files as bytes
+- schema-validated data, with repair or rejection of invalid results
+- streamed text through `agent.stream()`
+- token usage and estimated cost for the run (`result.usage`)
 - threads and sandbox snapshots that you can store as JSON.
 
 ```ts
@@ -76,17 +76,17 @@ providers. Extensions can register additional providers before Runcell resolves
 the configured model. Lifecycle callbacks report run activity, and extension
 hooks can block tool calls.
 
-Successful runs expose `result.usage`; `getRunUsage(error)` safely discovers
-usage on measurable failures after a session starts. Both report per-run token
+Successful runs expose `result.usage`. `getRunUsage(error)` safely gets usage
+on measurable failures after a session starts. Both report per-run token
 counts and the estimated cost in US dollars at API list price, sourced from the
 [models.dev](https://models.dev)-derived catalog. Runs on subscription
 credentials report the same as-if-API price, so agent costs stay observable
 regardless of how you authenticate.
 
 For local and personal projects, `credentials: 'local'` runs agents on the AI
-subscriptions you already pay for — Claude Pro/Max, ChatGPT Plus/Pro, or
-GitHub Copilot — via a one-time `npx pi` `/login`. Provider terms govern this
-use and differ per provider; API keys are the provider-supported path for
+subscriptions you already pay for (Claude Pro/Max, ChatGPT Plus/Pro, or
+GitHub Copilot) after a one-time `npx pi` `/login`. Provider terms govern this
+use and differ per provider. API keys are the provider-supported path for
 commercial and deployed work, and Runcell refuses local credentials in
 production unless explicitly enabled.
 
@@ -160,8 +160,8 @@ export async function POST(req: Request) {
   back as bytes.
 - **Typed extraction and triage**: reviews, reports, classifications your
   code consumes as data, not prose.
-- **Multi-agent workspaces**: share one sandbox handle between agents; they
-  see each other's files.
+- **Multi-agent workspaces**: share one sandbox handle between agents. The
+  agents see each other's files.
 - **Resumable jobs**: snapshot the workspace + serialize the thread, park them
   in your database, pick both up later on another machine.
 - **Production credentials without a secrets sidecar**: share one set of
@@ -209,10 +209,10 @@ Read the [full documentation](https://runcell.run/).
 
 ## Examples
 
-The examples in [`examples/`](examples/) are compile-checked and runnable; they
-default to local credentials so they're easy to run on a configured machine.
+The examples in [`examples/`](examples/) are compile-checked and runnable. They
+use local credentials by default, so they run on a machine with a login.
 
-| Command              | Demonstrates                                                |
+| Command              | Shows                                                       |
 | -------------------- | ----------------------------------------------------------- |
 | `npm run example:01` | Minimal `createAgent()` + `agent.run()`                     |
 | `npm run example:02` | Structured output validation and incomplete-result handling |
@@ -237,5 +237,5 @@ npm run check      # build, format, lint, typecheck, tests
 RUNCELL_LIVE=1 RUNCELL_LIVE_CREDENTIALS=local npm run test:live
 ```
 
-Monorepo layout: the public package lives in `packages/agent/` (published as
-`runcell`); `examples/` are compile-checked against it.
+Monorepo layout: the public package is in `packages/agent/` (published as
+`runcell`). The `examples/` compile against it.
