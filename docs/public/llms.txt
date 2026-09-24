@@ -21,6 +21,16 @@
   no credential an agent can generate.
 - Production with shared refreshable credentials:
   `credentials: { type: 'shared' }` with `@runcell/postgres-credentials`.
+- Fallback: pass an array (`credentials: [sourceA, sourceB]`) to try
+  sources in order. The run moves to the next source only on a credential
+  error before any tool has run. `onCredentialFallback` reports each move.
+
+## Files and attachments
+
+- File parts in `messages` become workspace files under `attachments/`
+  (data URLs only, 20 MB each by default via `maxAttachmentBytes`).
+- PDFs: install the optional peers `pdfjs-dist` and `@napi-rs/canvas` to
+  enable the built-in `readPdfPages` tool.
 
 ## Docs
 

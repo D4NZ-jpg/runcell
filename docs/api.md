@@ -282,7 +282,7 @@ interface ToolDefinition<TSchema extends AgentSchema = AgentSchema> {
 ```
 
 Reserved tool names: `read`, `write`, `edit`, `bash`, `grep`, `glob`, `ls`,
-`submitResult`, `fileChange`.
+`submitResult`, `fileChange`, `readPdfPages`.
 
 ### `toolContent(parts): ToolContent`
 

@@ -63,8 +63,17 @@ const agent = createAgent({
   schema.
 - The return value is serialized back to the model.
 - Reserved names (used by the runtime): `read`, `write`, `edit`, `bash`,
-  `grep`, `glob`, `ls`, `submitResult`, `fileChange`. Registering one throws
+  `grep`, `glob`, `ls`, `submitResult`, `fileChange`, `readPdfPages`.
+  Registering one throws
   at `createAgent` time.
+
+### Built-in PDF tool
+
+When a run seeds a PDF and the optional peers `pdfjs-dist` and
+`@napi-rs/canvas` are installed, runcell registers `readPdfPages`. This tool
+renders pages as images that the model can view. See
+[Streaming](./streaming.md) for the limits. You do not need to write your own
+renderer for this case.
 
 ### Multi-part and image results
 
@@ -101,7 +110,7 @@ const agent = createAgent({
 
 `toolContent()` accepts a non-empty array of text and image parts. Image data
 may be a `Uint8Array` or a base64 string; a base64 string must be standard
-padded canonical base64 — no whitespace, no `data:` URL prefix, no base64url
+padded canonical base64: no whitespace, no `data:` URL prefix, no base64url
 alphabet. Raw bytes are base64-encoded once;
 media types are matched case-insensitively, with `image/jpg` normalized to
 `image/jpeg`. Supported types are `image/png`, `image/jpeg`, `image/gif`, and

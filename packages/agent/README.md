@@ -56,6 +56,8 @@ application can rely on:
   store for deployments that share refreshable credentials. The official
   Postgres implementation is
   [`@runcell/postgres-credentials`](https://www.npmjs.com/package/@runcell/postgres-credentials).
+- **Credential fallback**: pass an array of sources. A run that fails with a
+  credential error before any tool runs is retried on the next source.
 
 ## Install
 

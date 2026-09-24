@@ -168,7 +168,8 @@ export async function POST(req: Request) {
   refreshable credentials across deployments with
   [`@runcell/postgres-credentials`](https://www.npmjs.com/package/@runcell/postgres-credentials),
   which serializes token refreshes on a Postgres row lock and can encrypt
-  the stored blobs at rest.
+  the stored blobs at rest. Pass an array of sources to fall back (for
+  example to API keys) when a login stops working.
 
 ## Sandboxes
 
@@ -202,7 +203,7 @@ Read the [full documentation](https://runcell.run/).
 | [Structured output](https://runcell.run/structured-output)         | Schemas, repair turns, plain turns            |
 | [Streaming](https://runcell.run/streaming)                         | `agent.stream()` and SSE                      |
 | [Files, tools, and events](https://runcell.run/files-tools-events) | Workspace I/O, host tools, callbacks          |
-| [Credentials](https://runcell.run/credentials)                     | env, local, API keys, shared stores           |
+| [Credentials](https://runcell.run/credentials)                     | env, local, API keys, shared stores, fallback |
 | [Pi extensions](https://runcell.run/pi-extensions)                 | Custom providers, auth extensions, hooks      |
 | [API reference](https://runcell.run/api)                           | Every export and type                         |
 

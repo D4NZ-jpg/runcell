@@ -16,6 +16,7 @@ Pick the row that matches your situation and use its exact config:
 | One [Vercel AI Gateway](https://vercel.com/ai-gateway) key for all providers | Set `AI_GATEWAY_API_KEY` and omit `credentials`                                                                                       |
 | Many deployments share refreshable credentials                               | `credentials: { type: 'shared' }` with [`@runcell/postgres-credentials`](https://www.npmjs.com/package/@runcell/postgres-credentials) |
 | Credentials live in a specific directory (CI cache, mounted secret)          | `credentials: { type: 'agentDir', path: '...' }`                                                                                      |
+| A preferred source with a backup (for example shared logins, then API keys)  | An array: `credentials: [{ type: 'shared', ... }, { type: 'env' }]`. See [Fallback chain](#fallback-chain)                            |
 
 The default (`env`) passes through exactly these variables: any `*_API_KEY`,
 any `*_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, and `VERCEL_OIDC_TOKEN`. The
@@ -219,7 +220,13 @@ const store = createPostgresCredentialStore({
 ```
 
 It serializes concurrent refreshes across deployments on a Postgres row lock,
-so a rotated token is never clobbered. To back the store with something else,
+so a rotated token is never clobbered. When the database is unreachable, it
+serves the last blob that the process read (`cacheFallback`, on by default).
+For all options (`table`, `ensureTable`, `lockTimeoutMs`, `cacheFallback`,
+`encryptionKey`) and the manual migration SQL, see the
+[package README](https://www.npmjs.com/package/@runcell/postgres-credentials).
+
+Pass the store as a `shared` source. To back the store with something else,
 implement the interface yourself:
 
 ```ts
