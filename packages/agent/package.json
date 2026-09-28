@@ -55,7 +55,7 @@
     "del-cli": "^7.0.0",
     "pdfjs-dist": "^6.3.289",
     "tsup": "^8.5.1",
-    "typescript": "^5.8.3",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.10"
   },
   "keywords": [
