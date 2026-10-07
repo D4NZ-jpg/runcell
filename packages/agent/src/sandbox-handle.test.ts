@@ -167,9 +167,9 @@ describe('createSandbox', () => {
             const session = await base.createSession(options);
             return new Proxy(session, {
               get(target, property, receiver) {
-                if (property === 'getPortUrl') {
+                if (property === 'getPortEndpoint') {
                   return ({ port }: { port: number }) =>
-                    Promise.resolve(`https://sandbox.test:${port}`);
+                    Promise.resolve({ url: `https://sandbox.test:${port}` });
                 }
                 const value = Reflect.get(
                   target,
@@ -224,7 +224,7 @@ describe('createSandbox', () => {
   it('destroys an acquired session when workspace setup fails', async () => {
     const base = createSandboxProvider({ type: 'virtual' });
     const session = await base.createSession();
-    const destroy = vi.fn(() => session.destroy?.());
+    const destroy = vi.fn(() => session.destroy());
     const provider: SandboxProvider = {
       specificationVersion: 'harness-sandbox-v1',
       providerId: 'failing-custom',
@@ -254,7 +254,7 @@ describe('createSandbox', () => {
   it('destroys an acquired session when workspace setup exits nonzero', async () => {
     const base = createSandboxProvider({ type: 'virtual' });
     const session = await base.createSession();
-    const destroy = vi.fn(() => session.destroy?.());
+    const destroy = vi.fn(() => session.destroy());
     const provider: SandboxProvider = {
       specificationVersion: 'harness-sandbox-v1',
       providerId: 'nonzero-custom',
@@ -409,7 +409,7 @@ describe('agent reuse', () => {
       });
       // ...and cleanup calls are no-ops, so the caller keeps ownership.
       await guarded.stop();
-      await guarded.destroy?.();
+      await guarded.destroy();
 
       const alive = await sandbox.exec('echo alive');
       expect(alive.exitCode).toBe(0);

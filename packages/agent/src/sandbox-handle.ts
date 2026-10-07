@@ -130,6 +130,18 @@ export interface VirtualSandboxOptions {
  *
  * Defaults to the bundled virtual sandbox.
  */
+/**
+ * Destroy a sandbox session, or stop it when it has no `destroy`.
+ * `@ai-sdk/harness` now types `destroy` as required, but `type: 'custom'`
+ * providers are user code that may predate that, so the fallback stays.
+ */
+export function disposeSandboxSession(session: {
+  readonly stop: () => PromiseLike<void>;
+  readonly destroy?: () => PromiseLike<void>;
+}): Promise<void> {
+  return Promise.resolve(session.destroy ? session.destroy() : session.stop());
+}
+
 export async function createSandbox(
   option: SandboxOption = { type: 'virtual' },
 ): Promise<Sandbox> {
@@ -213,9 +225,7 @@ async function createHandleFromProvider(
     });
     return sandbox;
   } catch (error) {
-    await Promise.resolve(
-      session.destroy ? session.destroy() : session.stop(),
-    ).catch(() => undefined);
+    await disposeSandboxSession(session).catch(() => undefined);
     throw error;
   }
 }
@@ -357,7 +367,7 @@ class SessionSandbox implements Sandbox {
     if (capabilities.ports) {
       this.exposeUrl = async (port: number) => {
         this.assertActive();
-        return this.session.getPortUrl({ port });
+        return (await this.session.getPortEndpoint({ port })).url;
       };
     }
   }
@@ -457,9 +467,7 @@ class SessionSandbox implements Sandbox {
     this.destroyPromise ??= (() => {
       this.destroyed = true;
       internalsRegistry.delete(this);
-      return Promise.resolve(
-        this.session.destroy ? this.session.destroy() : this.session.stop(),
-      );
+      return disposeSandboxSession(this.session);
     })();
     return this.destroyPromise;
   }

@@ -113,7 +113,10 @@ export function createPi(
         sessionId: startOpts.sessionId,
         sandboxSession: startOpts.sandboxSession,
         sessionWorkDir: startOpts.sessionWorkDir,
-        skills: startOpts.skills ?? [],
+        // @ai-sdk/harness 1.0.124 moved skills from start options to
+        // per-turn settings. runcell does not pass harness skills (Pi loads
+        // its own from `.pi/`/`.agents/`), so the session starts without any.
+        skills: [],
         settings,
         isResume: lifecycleState != null,
         permissionMode: startOpts.permissionMode,

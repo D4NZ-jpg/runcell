@@ -409,7 +409,13 @@ export interface PiSessionSettings {
 
 export interface CreatePiSessionInput {
   readonly sessionId: string;
-  readonly sandboxSession: HarnessV1NetworkSandboxSession;
+  /**
+   * Since @ai-sdk/harness 1.0.124 the framework may hand over a plain sandbox
+   * session without the network surface. Only `restricted()` is network-only.
+   */
+  readonly sandboxSession:
+    | HarnessV1NetworkSandboxSession
+    | Experimental_SandboxSession;
   readonly sessionWorkDir: string;
   readonly skills: ReadonlyArray<HarnessV1Skill>;
   readonly settings: PiSessionSettings;
@@ -569,7 +575,10 @@ export async function createPiSession(
   // not exist on the host, so it is a safe, collision-free VFS mount point.
   const sessionWorkDir = input.sessionWorkDir;
 
-  const sandbox = input.sandboxSession.restricted();
+  const sandbox =
+    'restricted' in input.sandboxSession
+      ? input.sandboxSession.restricted()
+      : input.sandboxSession;
   const permissionMode = input.permissionMode ?? 'allow-all';
 
   // Constructed up front (the mount happens mid-acquisition below) so a

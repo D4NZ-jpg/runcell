@@ -492,13 +492,21 @@ class HostSandboxSession implements HarnessV1NetworkSandboxSession {
     };
   };
 
-  getPortUrl = (options: {
+  getPortEndpoint = (options: {
     port: number;
     protocol?: 'http' | 'https' | 'ws';
-  }): Promise<string> => {
+  }): Promise<{ url: string }> => {
     const protocol = options.protocol ?? 'http';
-    return Promise.resolve(`${protocol}://127.0.0.1:${String(options.port)}`);
+    return Promise.resolve({
+      url: `${protocol}://127.0.0.1:${String(options.port)}`,
+    });
   };
+
+  /** @deprecated upstream; kept until `@ai-sdk/harness` drops it. */
+  getPortUrl = async (options: {
+    port: number;
+    protocol?: 'http' | 'https' | 'ws';
+  }): Promise<string> => (await this.getPortEndpoint(options)).url;
 
   stop = (): Promise<void> => Promise.resolve();
 
