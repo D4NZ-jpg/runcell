@@ -33,7 +33,7 @@ vi.mock('@ai-sdk/harness/agent', () => ({
       });
       return {
         sessionId: options.sessionId ?? 'test',
-        destroy: () => (session.destroy ? session.destroy() : session.stop()),
+        destroy: () => session.destroy(),
       };
     }
 
@@ -124,7 +124,7 @@ describe('resolveRunSandbox', () => {
           sessionId: resolved.sessionId,
         });
         await session.stop();
-        await session.destroy?.();
+        await session.destroy();
       }
 
       // createSandbox owns the only provider acquisition. The two run paths

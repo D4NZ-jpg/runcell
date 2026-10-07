@@ -4,6 +4,16 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- Bundled Pi engine updated to `@earendil-works/pi-coding-agent` 1.0.
+- `@ai-sdk/harness` and the sandbox packages updated to 1.0.124. The Vercel
+  sandbox peer now also accepts `@vercel/sandbox` 3.
+- `Sandbox.exposeUrl()` resolves ports through the new `getPortEndpoint`
+  API instead of the deprecated `getPortUrl`.
+
 ## 1.11.0 - 2026-09-23
 
 ### Added

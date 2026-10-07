@@ -6,7 +6,13 @@ export default defineConfig({
   target: 'es2022',
   // Inline declarations from the private workspace package so the published
   // .d.ts never references the unpublished `@local/harness-pi-raw` specifier.
-  dts: { resolve: ['@local/harness-pi-raw'] },
+  // tsup 8.5 hardcodes `baseUrl: "."` in its declaration build, which
+  // TypeScript 6 deprecates. Scoped here so typecheck still reports other
+  // deprecations. Remove when tsup stops setting baseUrl.
+  dts: {
+    resolve: ['@local/harness-pi-raw'],
+    compilerOptions: { ignoreDeprecations: '6.0' },
+  },
   sourcemap: false,
   clean: false,
   // Workspace + peer-ish deps are resolved by the consumer at runtime.

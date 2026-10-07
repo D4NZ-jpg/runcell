@@ -57,6 +57,7 @@ import {
 } from './sandbox.js';
 import {
   createReusedSandboxProvider,
+  disposeSandboxSession,
   getSandboxInternals,
 } from './sandbox-handle.js';
 import {
@@ -259,7 +260,7 @@ async function runWithHarness({
   const files = normalizeFiles(runOptions.files ?? []);
   const changedFiles = new Map<string, ChangedFile>();
   let text = '';
-  let finishReason = 'stop';
+  let finishReason: string;
   const usage = createRunUsage();
   let sandboxContext: SandboxContext | undefined;
   const submission: { hasValue: boolean; data: unknown } = {
@@ -836,11 +837,7 @@ async function readJournal(
 async function disposeSandbox(
   session: HarnessV1NetworkSandboxSession,
 ): Promise<void> {
-  if (session.destroy) {
-    await session.destroy();
-  } else {
-    await session.stop();
-  }
+  await disposeSandboxSession(session);
 }
 
 /**
