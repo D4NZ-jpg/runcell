@@ -50,10 +50,10 @@
   "devDependencies": {
     "@ai-sdk/sandbox-vercel": "1.0.124",
     "@napi-rs/canvas": "^1.0.10",
-    "@types/node": "^26.6.4",
-    "ai": "7.0.127",
+    "@types/node": "^26.6.5",
+    "ai": "7.0.137",
     "del-cli": "^7.0.0",
-    "pdfjs-dist": "^6.3.289",
+    "pdfjs-dist": "^6.4.299",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
     "vitest": "^5.0.2"
