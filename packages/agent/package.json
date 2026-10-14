@@ -35,25 +35,25 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "@ai-sdk/sandbox-vercel": "1.0.124",
+    "@ai-sdk/sandbox-vercel": "1.0.148",
     "@napi-rs/canvas": ">=1",
     "pdfjs-dist": ">=5"
   },
   "dependencies": {
-    "@ai-sdk/harness": "1.0.124",
-    "@ai-sdk/provider-utils": "5.0.47",
-    "@ai-sdk/sandbox-just-bash": "1.0.124",
-    "@earendil-works/pi-coding-agent": "^1.0.0",
+    "@ai-sdk/harness": "1.0.148",
+    "@ai-sdk/provider-utils": "5.0.58",
+    "@ai-sdk/sandbox-just-bash": "1.0.148",
+    "@earendil-works/pi-coding-agent": "^1.1.0",
     "@standard-schema/spec": "^1.1.0",
     "zod": "^3.25.76 || ^4.1.8"
   },
   "devDependencies": {
-    "@ai-sdk/sandbox-vercel": "1.0.124",
+    "@ai-sdk/sandbox-vercel": "1.0.148",
     "@napi-rs/canvas": "^1.0.10",
-    "@types/node": "^26.6.4",
-    "ai": "7.0.127",
-    "del-cli": "^7.0.0",
-    "pdfjs-dist": "^6.3.289",
+    "@types/node": "^26.6.5",
+    "ai": "7.0.137",
+    "del-cli": "^8.0.1",
+    "pdfjs-dist": "^6.4.299",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
     "vitest": "^5.0.2"

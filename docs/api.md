@@ -239,9 +239,25 @@ See [Sandboxes](./sandboxes.md) for semantics. `vercel` requires the optional
 ### `SandboxProvider`
 
 The provider interface accepted by `{ type: 'custom' }`: an object with
-`specificationVersion: 'harness-sandbox-v1'`, a `providerId`, and a
-`createSession()` method. Existing providers from the `@ai-sdk/sandbox-*`
-family satisfy it directly.
+`specificationVersion: 'harness-sandbox-v1'`, a `providerId`, a
+`createSession({ sessionId, abortSignal })` method, and an optional
+`resumeSession({ sessionId, abortSignal })` method. Both methods return a
+network sandbox session. runcell owns that session: it disposes the session
+after the run, unless the sandbox is a handle from `createSandbox()`.
+
+The `@ai-sdk/sandbox-*` packages deprecate their provider objects in favor of
+session factories. Wrap a factory to build a provider:
+
+```ts
+import { createVercelNetworkSandboxSession } from '@ai-sdk/sandbox-vercel';
+
+const provider: SandboxProvider = {
+  specificationVersion: 'harness-sandbox-v1',
+  providerId: 'my-vercel',
+  createSession: ({ abortSignal } = {}) =>
+    createVercelNetworkSandboxSession({ runtime: 'node24', abortSignal }),
+};
+```
 
 ## Threads
 

@@ -74,7 +74,9 @@ describe('defaultRuntime', () => {
         costMeasured: true,
       },
     });
-    expect(state.sandboxSettings).toEqual([undefined]);
+    expect(state.sandboxSettings).toEqual([{}]);
+    // runcell owns the sandbox it created and disposes it after the run.
+    expect(state.sandboxSession.destroyCount).toBe(1);
     expect(state.piSettings[0]).toMatchObject({
       model: 'anthropic/test',
       auth: { customEnv: { ANTHROPIC_API_KEY: 'test-key' } },
@@ -104,6 +106,37 @@ describe('defaultRuntime', () => {
       { path: '/work/assets/blob.bin', content: bytes },
     ]);
     expect(state.instances[0]?.session?.destroyCount).toBe(1);
+  });
+
+  it('generates a session id when the run does not pin one', async () => {
+    installRuntimeMocks([
+      agent => {
+        agent.submit({ ok: true });
+        return [{ type: 'text-delta', text: 'done' }];
+      },
+    ]);
+    const runtime = await loadRuntime();
+
+    const result = await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() }), {
+        runOptions: { sessionId: undefined },
+      }),
+    );
+
+    expect(result.sessionId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+  });
+
+  it('disposes the owned sandbox when session initialization fails', async () => {
+    const state = installRuntimeMocks();
+    state.createSessionError = new Error('init failed');
+    const runtime = await loadRuntime();
+
+    await expect(
+      runtime.run(createRuntimeInput(z.object({ ok: z.boolean() }))),
+    ).rejects.toThrow('init failed');
+    expect(state.sandboxSession.destroyCount).toBe(1);
   });
 
   it('terminates the active turn immediately after a valid submission', async () => {
@@ -2519,6 +2552,7 @@ function createRuntimeInput<TSchema extends AgentSchema>(
     runOptions: {
       prompt: 'do it',
       schema,
+      sessionId: 'test-session',
       ...overrides.runOptions,
     },
   };
@@ -2607,9 +2641,9 @@ function installRuntimeMocks(scripts: StreamScript[] = []): TestState {
   }));
 
   vi.doMock('@ai-sdk/sandbox-just-bash', () => ({
-    createJustBashSandbox(settings?: SandboxSettings) {
+    createJustBashNetworkSandboxSession(settings?: SandboxSettings) {
       state.sandboxSettings.push(settings);
-      return { settings };
+      return Promise.resolve(state.sandboxSession);
     },
   }));
 
@@ -2772,6 +2806,7 @@ class TestHarnessSession {
 }
 
 class TestSandboxSession {
+  destroyCount = 0;
   readonly runs: RunCommand[] = [];
   readonly textWrites: TextWrite[] = [];
   readonly binaryWrites: BinaryWrite[] = [];
@@ -2798,5 +2833,14 @@ class TestSandboxSession {
   readBinaryFile(input: BinaryRead): Promise<Uint8Array | null> {
     this.binaryReads.push(input);
     return Promise.resolve(this.readResults.get(input.path) ?? null);
+  }
+
+  stop(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  destroy(): Promise<void> {
+    this.destroyCount += 1;
+    return Promise.resolve();
   }
 }

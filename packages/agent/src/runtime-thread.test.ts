@@ -78,7 +78,6 @@ class MockSession {
 class MockHarnessAgent {
   readonly settings: {
     tools: Record<string, { execute(input: unknown): unknown }>;
-    sandbox?: { createSession(options: object): Promise<unknown> };
     sandboxConfig?: {
       onSession?: (opts: {
         session: FakeSandbox;
@@ -103,7 +102,6 @@ class MockHarnessAgent {
     resumeFrom?: unknown;
   }): Promise<MockSession> {
     this.createSessionCalls.push(options ?? {});
-    await this.settings.sandbox?.createSession({});
     await this.settings.sandboxConfig?.onSession?.({
       session: this.sandbox,
       sessionWorkDir: '/work',
@@ -217,13 +215,15 @@ describe('thread continuation lifecycle', () => {
     const continuation = getThreadInternals(thread)?.continuation;
 
     await defaultRuntime.run(makeInput('second', { thread }));
-    const second = state.instances[1];
+    const [first, second] = state.instances;
 
     // The second run resumes rather than replaying neutral context.
     expect(second?.createSessionCalls[0]?.resumeFrom).toEqual(
       continuation?.resume,
     );
-    expect(second?.createSessionCalls[0]?.sessionId).toBe('pi-sess');
+    expect(second?.createSessionCalls[0]?.sessionId).toBe(
+      `pi-${first?.createSessionCalls[0]?.sessionId ?? ''}`,
+    );
     expect(second?.streamCalls[0]?.prompt).toBe('second');
 
     // The journal was re-materialized into the fresh sandbox before Pi started.

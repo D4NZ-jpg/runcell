@@ -27,6 +27,7 @@ import {
   type PiSessionUsageTotals,
   type PiThinkingLevel,
 } from '@local/harness-pi-raw';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { ResolvedAgentConfig } from './create-agent.js';
@@ -315,7 +316,7 @@ async function runWithHarness({
   assertFileCredentialsPresent(credentials);
 
   const {
-    provider: baseProvider,
+    provider: sandboxProvider,
     sessionId: pinnedSessionId,
     ownsSandbox,
   } = resolveRunSandbox({ config, runOptions });
@@ -329,13 +330,6 @@ async function runWithHarness({
       ? renderThreadContext(threadInternals.messages)
       : undefined;
 
-  // Capture the network session so an owned sandbox can be disposed after the
-  // journal is flushed on detach.
-  let sandboxSession: HarnessV1NetworkSandboxSession | undefined;
-  const sandboxProvider = withSessionCapture(baseProvider, captured => {
-    sandboxSession = captured;
-  });
-
   const harnessAgent = new HarnessAgent({
     id: 'runcell',
     harness: createPi(
@@ -344,7 +338,6 @@ async function runWithHarness({
         runOptions.pi?.thinkingLevel,
       ),
     ),
-    sandbox: sandboxProvider,
     permissionMode: 'allow-all',
     instructions: schema
       ? 'When the task is complete, call submitResult with the structured result.'
@@ -375,14 +368,36 @@ async function runWithHarness({
   // A caller-owned sandbox pins the session id so every run shares one
   // workspace directory; the continuation's own id only decides where an
   // ephemeral sandbox resumes.
+  // runcell acquires the sandbox and passes it to the harness, so the id is
+  // generated here to name both the sandbox and the harness session.
   const sessionId =
     pinnedSessionId ??
-    (continuation ? continuationSessionId(continuation) : undefined);
-  const session = await harnessAgent.createSession({
-    ...(sessionId ? { sessionId } : {}),
-    ...(resumeFrom ? { resumeFrom } : {}),
+    (continuation ? continuationSessionId(continuation) : undefined) ??
+    randomUUID();
+  const sandboxSession = await acquireSandboxSession(sandboxProvider, {
+    sessionId,
+    resume: resumeFrom !== undefined,
     ...(runOptions.signal ? { abortSignal: runOptions.signal } : {}),
   });
+  // The harness never stops or destroys a sandbox it was handed, so runcell
+  // disposes the sandboxes it owns.
+  const disposeOwnedSandbox = async () => {
+    if (ownsSandbox) {
+      await bestEffort(() => disposeSandboxSession(sandboxSession));
+    }
+  };
+  let session: Awaited<ReturnType<typeof harnessAgent.createSession>>;
+  try {
+    session = await harnessAgent.createSession({
+      sessionId,
+      sandboxSession,
+      ...(resumeFrom ? { resumeFrom } : {}),
+      ...(runOptions.signal ? { abortSignal: runOptions.signal } : {}),
+    });
+  } catch (error) {
+    await disposeOwnedSandbox();
+    throw error;
+  }
 
   // Authoritative usage accounting: snapshot the adapter's cumulative
   // per-session totals now and diff at return time. Stream finish parts can
@@ -561,7 +576,6 @@ async function runWithHarness({
     }
     throw failure;
   } finally {
-    const ownedSandbox = ownsSandbox ? sandboxSession : undefined;
     if (succeeded && threadInternals) {
       // Flush Pi's journal into the sandbox (leaves it running) and capture
       // it into the thread. The continuation is cleared up front so a failed
@@ -575,12 +589,10 @@ async function runWithHarness({
           threadInternals.continuation = { engine: 'pi', resume, journalGz };
         }
       });
-      if (ownedSandbox) {
-        await bestEffort(() => disposeSandbox(ownedSandbox));
-      }
     } else {
       await bestEffort(() => session.destroy());
     }
+    await disposeOwnedSandbox();
   }
 }
 
@@ -834,36 +846,22 @@ async function readJournal(
   return bytes ? gzipToBase64(bytes) : undefined;
 }
 
-async function disposeSandbox(
-  session: HarnessV1NetworkSandboxSession,
-): Promise<void> {
-  await disposeSandboxSession(session);
-}
-
 /**
- * Wrap a provider so it exposes `resumeSession` (falling back to a fresh
- * session) and reports each network session it hands out.
+ * Get the sandbox session for a run. A resumed conversation reattaches to its
+ * sandbox when the provider supports it, otherwise it starts a fresh one.
  */
-function withSessionCapture(
+async function acquireSandboxSession(
   provider: SandboxProvider,
-  onSession: (session: HarnessV1NetworkSandboxSession) => void,
-): SandboxProvider {
-  return {
-    specificationVersion: 'harness-sandbox-v1',
-    providerId: provider.providerId,
-    createSession: async options => {
-      const session = await provider.createSession(options);
-      onSession(session);
-      return session;
-    },
-    resumeSession: async options => {
-      const session = provider.resumeSession
-        ? await provider.resumeSession(options)
-        : await provider.createSession(options);
-      onSession(session);
-      return session;
-    },
-  };
+  {
+    sessionId,
+    resume,
+    abortSignal,
+  }: { sessionId: string; resume: boolean; abortSignal?: AbortSignal },
+): Promise<HarnessV1NetworkSandboxSession> {
+  const options = { sessionId, ...(abortSignal ? { abortSignal } : {}) };
+  return resume && provider.resumeSession
+    ? provider.resumeSession(options)
+    : provider.createSession(options);
 }
 
 function gzipToBase64(bytes: Uint8Array): string {
