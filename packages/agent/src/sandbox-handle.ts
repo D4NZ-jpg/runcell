@@ -1,12 +1,9 @@
-import type {
-  HarnessV1NetworkSandboxSession,
-  HarnessV1SandboxProvider,
-} from '@ai-sdk/harness';
+import type { HarnessV1NetworkSandboxSession } from '@ai-sdk/harness';
 import { HARNESS_ID } from '@local/harness-pi-raw';
 import { InvalidOptionError } from './errors.js';
-import { createPatchedJustBashSandbox } from './just-bash-env.js';
 import {
   createSandboxProvider,
+  createVirtualSandboxProvider,
   resolveSandboxConfig,
   type SandboxConfig,
   type SandboxOption,
@@ -184,7 +181,7 @@ export function getSandboxInternals(
 export async function createVirtualSandbox(
   options: VirtualSandboxOptions = {},
 ): Promise<Sandbox> {
-  const provider = createPatchedJustBashSandbox(
+  const provider = createVirtualSandboxProvider(
     options.env ? { env: options.env } : {},
   );
   return createHandleFromProvider(provider, {
@@ -311,7 +308,7 @@ function validateSnapshot(
  */
 export function createReusedSandboxProvider(
   internals: SandboxInternals,
-): HarnessV1SandboxProvider {
+): SandboxProvider {
   return {
     specificationVersion: 'harness-sandbox-v1',
     providerId: 'runcell-reused-sandbox',
@@ -321,8 +318,9 @@ export function createReusedSandboxProvider(
 }
 
 /**
- * A view of a session with `stop`/`destroy` neutralized so the harness cleanup
- * cannot dispose a caller-owned sandbox. All other members delegate unchanged.
+ * A view of a session with `stop`/`destroy` neutralized so nothing inside an
+ * agent run (harness, adapter, or runcell's own cleanup) can dispose a
+ * caller-owned sandbox. All other members delegate unchanged.
  */
 function guardSession(
   session: HarnessV1NetworkSandboxSession,

@@ -9,7 +9,6 @@ vi.mock('@ai-sdk/harness/agent', () => ({
   HarnessAgent: class MockHarnessAgent {
     constructor(
       private readonly settings: {
-        sandbox: SandboxProvider;
         sandboxConfig?: {
           onSession?: (input: {
             session: Awaited<ReturnType<SandboxProvider['createSession']>>;
@@ -22,9 +21,11 @@ vi.mock('@ai-sdk/harness/agent', () => ({
 
     async createSession(options: {
       sessionId?: string;
+      sandboxSession: Awaited<ReturnType<SandboxProvider['createSession']>>;
       abortSignal?: AbortSignal;
     }) {
-      const session = await this.settings.sandbox.createSession(options);
+      // Like the real harness, a caller-provided sandbox is never disposed.
+      const session = options.sandboxSession;
       harnessMock.sessions.push(session);
       await this.settings.sandboxConfig?.onSession?.({
         session,
@@ -33,7 +34,7 @@ vi.mock('@ai-sdk/harness/agent', () => ({
       });
       return {
         sessionId: options.sessionId ?? 'test',
-        destroy: () => session.destroy(),
+        destroy: () => Promise.resolve(),
       };
     }
 

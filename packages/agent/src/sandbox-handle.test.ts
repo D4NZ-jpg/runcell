@@ -15,15 +15,18 @@ import {
 import { createSandboxProvider, type SandboxProvider } from './sandbox.js';
 
 const vercelMock = vi.hoisted(() => ({
-  createProvider: vi.fn(),
+  createSession: vi.fn(),
+  resumeSession: vi.fn(),
 }));
 
 vi.mock('@ai-sdk/sandbox-vercel', () => ({
-  createVercelSandbox: vercelMock.createProvider,
+  createVercelNetworkSandboxSession: vercelMock.createSession,
+  resumeVercelNetworkSandboxSession: vercelMock.resumeSession,
 }));
 
 afterEach(() => {
-  vercelMock.createProvider.mockReset();
+  vercelMock.createSession.mockReset();
+  vercelMock.resumeSession.mockReset();
 });
 
 async function withSandbox(fn: (sandbox: Sandbox) => Promise<void> | void) {
@@ -158,33 +161,21 @@ describe('createSandbox', () => {
 
   it('loads the Vercel provider lazily and exposes configured ports', async () => {
     const base = createSandboxProvider({ type: 'virtual' });
-    vercelMock.createProvider.mockImplementation(
-      () =>
-        ({
-          specificationVersion: 'harness-sandbox-v1',
-          providerId: 'mock-vercel',
-          createSession: async options => {
-            const session = await base.createSession(options);
-            return new Proxy(session, {
-              get(target, property, receiver) {
-                if (property === 'getPortEndpoint') {
-                  return ({ port }: { port: number }) =>
-                    Promise.resolve({ url: `https://sandbox.test:${port}` });
-                }
-                const value = Reflect.get(
-                  target,
-                  property,
-                  receiver,
-                ) as unknown;
-                return typeof value === 'function'
-                  ? (value as (...args: unknown[]) => unknown).bind(target)
-                  : value;
-              },
-            });
-          },
-          resumeSession: options => base.createSession(options),
-        }) satisfies SandboxProvider,
-    );
+    vercelMock.createSession.mockImplementation(async () => {
+      const session = await base.createSession();
+      return new Proxy(session, {
+        get(target, property, receiver) {
+          if (property === 'getPortEndpoint') {
+            return ({ port }: { port: number }) =>
+              Promise.resolve({ url: `https://sandbox.test:${port}` });
+          }
+          const value = Reflect.get(target, property, receiver) as unknown;
+          return typeof value === 'function'
+            ? (value as (...args: unknown[]) => unknown).bind(target)
+            : value;
+        },
+      });
+    });
 
     const sandbox = await createSandbox({
       type: 'vercel',
@@ -192,10 +183,13 @@ describe('createSandbox', () => {
       ports: [3000],
     });
     try {
-      expect(vercelMock.createProvider).toHaveBeenCalledWith({
-        runtime: 'node24',
-        ports: [3000],
-      });
+      expect(vercelMock.createSession).toHaveBeenCalledOnce();
+      const [options] = vercelMock.createSession.mock.calls[0] as [
+        Record<string, unknown>,
+      ];
+      const { sandboxId, ...settings } = options;
+      expect(settings).toEqual({ runtime: 'node24', ports: [3000] });
+      expect(sandboxId).toMatch(/^ai-sdk-harness-session-/);
       expect(sandbox.capabilities).toEqual({
         ports: true,
         nativeSnapshot: false,
@@ -210,11 +204,7 @@ describe('createSandbox', () => {
   });
 
   it('propagates Vercel session creation failures', async () => {
-    vercelMock.createProvider.mockReturnValue({
-      specificationVersion: 'harness-sandbox-v1',
-      providerId: 'mock-vercel',
-      createSession: () => Promise.reject(new Error('create failed')),
-    });
+    vercelMock.createSession.mockRejectedValue(new Error('create failed'));
 
     await expect(createSandbox({ type: 'vercel' })).rejects.toThrow(
       'create failed',

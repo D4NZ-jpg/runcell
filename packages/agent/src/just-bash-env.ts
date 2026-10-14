@@ -1,4 +1,4 @@
-import { createJustBashSandbox } from '@ai-sdk/sandbox-just-bash';
+import { createJustBashNetworkSandboxSession } from '@ai-sdk/sandbox-just-bash';
 import { shellQuote } from './shell.js';
 
 /*
@@ -12,8 +12,8 @@ import { shellQuote } from './shell.js';
  *
  * Until that is fixed upstream, this wrapper rewrites `run`/`spawn` commands
  * to inline the env as `export KEY='value'` prefixes — plain `export` works
- * correctly in just-bash. Everything else on the provider and its sessions is
- * passed through untouched.
+ * correctly in just-bash. Everything else on the session is passed through
+ * untouched.
  */
 
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -69,26 +69,11 @@ function withInlinedEnv<T extends object>(target: T): T {
 }
 
 /**
- * `createJustBashSandbox` with the env-inlining workaround applied to every
- * session it creates. Drop-in replacement for the upstream factory.
+ * `createJustBashNetworkSandboxSession` with the env-inlining workaround
+ * applied. Drop-in replacement for the upstream factory.
  */
-export function createPatchedJustBashSandbox(
-  ...args: Parameters<typeof createJustBashSandbox>
-): ReturnType<typeof createJustBashSandbox> {
-  const provider = createJustBashSandbox(...args);
-  return new Proxy(provider, {
-    get(obj, prop, receiver) {
-      if (prop === 'createSession' || prop === 'resume') {
-        const original = Reflect.get(obj, prop) as
-          ((...fnArgs: unknown[]) => Promise<object>) | undefined;
-        if (typeof original !== 'function') return original;
-        return async (...fnArgs: unknown[]) =>
-          withInlinedEnv(await original.apply(obj, fnArgs));
-      }
-      const value: unknown = Reflect.get(obj, prop, receiver);
-      return typeof value === 'function'
-        ? (value as (...fnArgs: unknown[]) => unknown).bind(obj)
-        : value;
-    },
-  });
+export async function createPatchedJustBashSandboxSession(
+  ...args: Parameters<typeof createJustBashNetworkSandboxSession>
+): ReturnType<typeof createJustBashNetworkSandboxSession> {
+  return withInlinedEnv(await createJustBashNetworkSandboxSession(...args));
 }

@@ -310,37 +310,51 @@ describe('host sandbox provider', () => {
 describe('vercel sandbox provider', () => {
   it('loads the optional provider only when a session starts', async () => {
     const mockSession = { id: 'vercel-session' };
-    const createSession = vi.fn().mockResolvedValue(mockSession);
-    const resumeSession = vi.fn().mockResolvedValue(mockSession);
-    const createVercelSandbox = vi.fn(() => ({
-      specificationVersion: 'harness-sandbox-v1',
-      providerId: 'vercel-sandbox',
-      createSession,
-      resumeSession,
-    }));
-    vi.doMock('@ai-sdk/sandbox-vercel', () => ({ createVercelSandbox }));
+    const createVercelNetworkSandboxSession = vi
+      .fn()
+      .mockResolvedValue(mockSession);
+    const resumeVercelNetworkSandboxSession = vi
+      .fn()
+      .mockResolvedValue(mockSession);
+    const loaded = vi.fn();
+    vi.doMock('@ai-sdk/sandbox-vercel', () => {
+      loaded();
+      return {
+        createVercelNetworkSandboxSession,
+        resumeVercelNetworkSandboxSession,
+      };
+    });
 
     const provider = createSandboxProvider({
       type: 'vercel',
       runtime: 'node24',
       ports: [3000],
       timeout: 60_000,
+      name: 'legacy-template-name',
+      teamId: 'team_1',
     });
 
-    expect(createVercelSandbox).not.toHaveBeenCalled();
+    expect(loaded).not.toHaveBeenCalled();
     await expect(
       provider.createSession({ sessionId: 'test-session' }),
     ).resolves.toBe(mockSession);
-    expect(createVercelSandbox).toHaveBeenCalledWith({
+    // `name` named the legacy bootstrap template; it must not become the
+    // live sandbox name, which follows the legacy session naming instead.
+    expect(createVercelNetworkSandboxSession).toHaveBeenCalledWith({
       runtime: 'node24',
       ports: [3000],
       timeout: 60_000,
+      teamId: 'team_1',
+      sandboxId: 'ai-sdk-harness-session-test-session',
     });
-    expect(createSession).toHaveBeenCalledWith({ sessionId: 'test-session' });
 
     await expect(
       provider.resumeSession?.({ sessionId: 'test-session' }),
     ).resolves.toBe(mockSession);
-    expect(resumeSession).toHaveBeenCalledWith({ sessionId: 'test-session' });
+    // Resume forwards only the lookup settings.
+    expect(resumeVercelNetworkSandboxSession).toHaveBeenCalledWith({
+      teamId: 'team_1',
+      sandboxId: 'ai-sdk-harness-session-test-session',
+    });
   });
 });

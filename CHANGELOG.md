@@ -4,6 +4,21 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- Bundled Pi engine now requires `@earendil-works/pi-coding-agent` ^1.1.0.
+- `@ai-sdk/harness` and the sandbox packages updated to 1.0.148. The Vercel
+  sandbox peer is now 1.0.148.
+- runcell now creates the sandbox session itself and passes it to the
+  harness, instead of passing a sandbox provider to the harness. This
+  replaces the deprecated `@ai-sdk` provider API, which also printed a
+  deprecation warning on every virtual and Vercel run. The `SandboxProvider`
+  interface and `{ type: 'custom', provider }` work as before. Vercel
+  sandboxes keep their names, so sandboxes created by earlier versions can
+  still be resumed.
+
 ## 1.11.1 - 2026-10-07
 
 ### Changed

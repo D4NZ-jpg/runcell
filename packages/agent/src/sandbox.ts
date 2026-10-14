@@ -1,9 +1,6 @@
-import { createPatchedJustBashSandbox } from './just-bash-env.js';
+import { createPatchedJustBashSandboxSession } from './just-bash-env.js';
 import { shellQuote } from './shell.js';
-import type {
-  HarnessV1NetworkSandboxSession,
-  HarnessV1SandboxProvider,
-} from '@ai-sdk/harness';
+import type { HarnessV1NetworkSandboxSession } from '@ai-sdk/harness';
 import type {
   Experimental_SandboxProcess,
   Experimental_SandboxSession,
@@ -71,7 +68,29 @@ function loadOptionalModule(specifier: string): Promise<unknown> {
   return import(/* webpackIgnore: true */ opaque);
 }
 
-export type SandboxProvider = HarnessV1SandboxProvider;
+/**
+ * Creates (and optionally resumes) network sandbox sessions for runcell.
+ * runcell acquires the session itself and hands it to the harness, so it
+ * also owns the session's disposal. Structurally compatible with the legacy
+ * `HarnessV1SandboxProvider` from `@ai-sdk/harness`.
+ */
+export interface SandboxProvider {
+  readonly specificationVersion: 'harness-sandbox-v1';
+  readonly providerId: string;
+  /**
+   * Create a fresh session. `sessionId` is stable per run, so providers that
+   * support resume should name the underlying resource after it.
+   */
+  readonly createSession: (options?: {
+    sessionId?: string;
+    abortSignal?: AbortSignal;
+  }) => PromiseLike<HarnessV1NetworkSandboxSession>;
+  /** Reattach to the resource previously created for `sessionId`. */
+  readonly resumeSession?: (options: {
+    sessionId: string;
+    abortSignal?: AbortSignal;
+  }) => PromiseLike<HarnessV1NetworkSandboxSession>;
+}
 
 export type SandboxOption =
   | 'virtual'
@@ -190,7 +209,7 @@ export function resolveSandboxConfig(sandbox: unknown): SandboxConfig {
 export function createSandboxProvider(config: SandboxConfig): SandboxProvider {
   switch (config.type) {
     case 'virtual':
-      return createPatchedJustBashSandbox();
+      return createVirtualSandboxProvider();
 
     case 'host':
       return new HostSandboxProvider(config);
@@ -217,50 +236,94 @@ function normalizeVercelSandboxConfig(
   return out;
 }
 
-interface VercelSandboxModule {
-  createVercelSandbox(settings?: Record<string, unknown>): SandboxProvider;
+/**
+ * The in-memory just-bash sandbox. just-bash runs in-process, so there is
+ * nothing to resume.
+ */
+export function createVirtualSandboxProvider(
+  settings: { env?: Record<string, string> } = {},
+): SandboxProvider {
+  return {
+    specificationVersion: 'harness-sandbox-v1',
+    providerId: 'just-bash-sandbox',
+    createSession: options =>
+      createPatchedJustBashSandboxSession({
+        ...settings,
+        ...(options?.abortSignal ? { abortSignal: options.abortSignal } : {}),
+      }),
+  };
 }
+
+interface VercelSandboxModule {
+  createVercelNetworkSandboxSession(
+    options: Record<string, unknown>,
+  ): Promise<HarnessV1NetworkSandboxSession>;
+  resumeVercelNetworkSandboxSession(
+    options: Record<string, unknown>,
+  ): Promise<HarnessV1NetworkSandboxSession>;
+}
+
+// Keeps the sandbox naming of the legacy `createVercelSandbox` provider, so
+// sandboxes created by earlier runcell versions stay resumable.
+const VERCEL_SESSION_NAME_PREFIX = 'ai-sdk-harness-session';
+
+// Settings `Sandbox.get` needs to find an existing sandbox on resume.
+const VERCEL_LOOKUP_KEYS = ['fetch', 'projectId', 'teamId', 'token'] as const;
 
 class LazyVercelSandboxProvider implements SandboxProvider {
   readonly specificationVersion = 'harness-sandbox-v1';
   readonly providerId = 'vercel-sandbox';
 
-  private providerPromise: Promise<SandboxProvider> | undefined;
+  private modulePromise: Promise<VercelSandboxModule> | undefined;
 
   constructor(private readonly settings: VercelSandboxOption) {}
 
   createSession = async (options?: {
     sessionId?: string;
     abortSignal?: AbortSignal;
-    identity?: string;
-    onFirstCreate?: (
-      session: Experimental_SandboxSession,
-      opts: { abortSignal?: AbortSignal },
-    ) => Promise<void>;
   }): Promise<HarnessV1NetworkSandboxSession> => {
-    return (await this.provider()).createSession(options);
+    const vercel = await this.module();
+    // `name` only named the bootstrap template in the legacy provider; runcell
+    // has no bootstrap, so it never reaches the live sandbox.
+    const { type: _type, name: _name, ...createSettings } = this.settings;
+    return vercel.createVercelNetworkSandboxSession({
+      ...createSettings,
+      ...(options?.sessionId
+        ? { sandboxId: vercelSandboxName(options.sessionId) }
+        : {}),
+      ...(options?.abortSignal ? { abortSignal: options.abortSignal } : {}),
+    });
   };
 
   resumeSession = async (options: {
     sessionId: string;
     abortSignal?: AbortSignal;
   }): Promise<HarnessV1NetworkSandboxSession> => {
-    const provider = await this.provider();
-    if (provider.resumeSession) {
-      return provider.resumeSession(options);
+    const vercel = await this.module();
+    const lookup: Record<string, unknown> = {};
+    for (const key of VERCEL_LOOKUP_KEYS) {
+      if (this.settings[key] !== undefined) {
+        lookup[key] = this.settings[key];
+      }
     }
-    return provider.createSession(options);
+    return vercel.resumeVercelNetworkSandboxSession({
+      ...lookup,
+      sandboxId: vercelSandboxName(options.sessionId),
+      ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+    });
   };
 
-  private provider(): Promise<SandboxProvider> {
-    this.providerPromise ??= loadVercelSandboxProvider(this.settings);
-    return this.providerPromise;
+  private module(): Promise<VercelSandboxModule> {
+    this.modulePromise ??= loadVercelSandboxModule();
+    return this.modulePromise;
   }
 }
 
-async function loadVercelSandboxProvider(
-  settings: VercelSandboxOption,
-): Promise<SandboxProvider> {
+function vercelSandboxName(sessionId: string): string {
+  return `${VERCEL_SESSION_NAME_PREFIX}-${sessionId}`;
+}
+
+async function loadVercelSandboxModule(): Promise<VercelSandboxModule> {
   const imported: unknown = await loadOptionalModule(
     VERCEL_SANDBOX_PACKAGE,
   ).catch((error: unknown) => {
@@ -272,12 +335,10 @@ async function loadVercelSandboxProvider(
 
   if (!isVercelSandboxModule(imported)) {
     throw new InvalidOptionError(
-      '@ai-sdk/sandbox-vercel did not export createVercelSandbox.',
+      '@ai-sdk/sandbox-vercel did not export createVercelNetworkSandboxSession.',
     );
   }
-
-  const { type: _type, ...vercelSettings } = settings;
-  return imported.createVercelSandbox(vercelSettings);
+  return imported;
 }
 
 class HostSandboxProvider implements SandboxProvider {
@@ -654,7 +715,11 @@ function isSandboxProvider(value: unknown): value is SandboxProvider {
 }
 
 function isVercelSandboxModule(value: unknown): value is VercelSandboxModule {
-  return isRecord(value) && typeof value['createVercelSandbox'] === 'function';
+  return (
+    isRecord(value) &&
+    typeof value['createVercelNetworkSandboxSession'] === 'function' &&
+    typeof value['resumeVercelNetworkSandboxSession'] === 'function'
+  );
 }
 
 function toOptionalStringRecord(
