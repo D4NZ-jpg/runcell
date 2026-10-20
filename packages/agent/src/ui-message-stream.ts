@@ -1,4 +1,4 @@
-import { getRunUsage } from './errors.js';
+import { getRunUsage, InvalidOptionError } from './errors.js';
 import type {
   RunResult,
   UIChatMessage,
@@ -98,7 +98,7 @@ function decodeDataUrl(
 } {
   const match = /^data:([^;,]*)?(;base64)?,(.*)$/s.exec(url);
   if (!match) {
-    throw new Error(
+    throw new InvalidOptionError(
       'file parts in "messages" must use a data URL. Fetch remote URLs in ' +
         'your application and inline the bytes.',
     );
@@ -108,7 +108,7 @@ function decodeDataUrl(
     ? Uint8Array.from(Buffer.from(data ?? '', 'base64'))
     : new TextEncoder().encode(decodeURIComponent(data ?? ''));
   if (bytes.byteLength > maxBytes) {
-    throw new Error(
+    throw new InvalidOptionError(
       `file parts in "messages" are limited to ${maxBytes} bytes each. ` +
         'Raise the limit with the "maxAttachmentBytes" run option.',
     );
@@ -123,6 +123,66 @@ export interface UIChatRunInput {
   prompt: string;
   /** Attachments from every user message, seeded into the workspace. */
   files: { path: string; bytes: Uint8Array; mediaType?: string }[];
+}
+
+/** One `file` part of a UI chat history, as a run seeds it. */
+export interface UIChatAttachment {
+  /** Workspace path, e.g. `attachments/image-2.jpg`; the prompt uses it. */
+  path: string;
+  /** The original `filename` of the file part, before sanitizing. */
+  filename?: string;
+  mediaType?: string;
+  bytes: Uint8Array;
+}
+
+function collectAttachments(
+  messages: readonly UIChatMessage[],
+  maxAttachmentBytes: number,
+): (UIChatAttachment & { messageIndex: number })[] {
+  const usedPaths = new Set<string>();
+  const attachments: (UIChatAttachment & { messageIndex: number })[] = [];
+  messages.forEach((message, messageIndex) => {
+    if (message.role !== 'user') {
+      return;
+    }
+    for (const file of uiChatMessageFileParts(message)) {
+      const decoded = decodeDataUrl(file.url, maxAttachmentBytes);
+      const mediaType = file.mediaType ?? decoded.mediaType;
+      const path = attachmentPath(
+        {
+          ...(mediaType !== undefined ? { mediaType } : {}),
+          ...(file.filename !== undefined ? { filename: file.filename } : {}),
+        },
+        attachments.length,
+        usedPaths,
+      );
+      attachments.push({
+        messageIndex,
+        path,
+        ...(file.filename !== undefined ? { filename: file.filename } : {}),
+        ...(mediaType !== undefined ? { mediaType } : {}),
+        bytes: decoded.bytes,
+      });
+    }
+  });
+  return attachments;
+}
+
+/**
+ * The attachments a run seeds for a UI chat history, in seeding order, with
+ * the same workspace paths the prompt names. Use it in host code (for
+ * example a tool) to map a path the model mentions back to its file. Throws
+ * the same errors as a run: non-data URLs and attachments over
+ * `maxAttachmentBytes` (default 20 MB) are rejected.
+ */
+export function uiChatMessageAttachments(
+  messages: readonly UIChatMessage[],
+  options?: { maxAttachmentBytes?: number },
+): UIChatAttachment[] {
+  return collectAttachments(
+    messages,
+    options?.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES,
+  ).map(({ messageIndex: _messageIndex, ...attachment }) => attachment);
 }
 
 /**
@@ -149,36 +209,20 @@ export function uiChatMessagesToRunInput(
     return { prompt: '', files: [] };
   }
 
-  const usedPaths = new Set<string>();
-  let attachmentCount = 0;
   const files: UIChatRunInput['files'] = [];
   const pathsByMessage = new Map<number, string[]>();
-  messages.forEach((message, messageIndex) => {
-    if (message.role !== 'user') {
-      return;
-    }
-    for (const file of uiChatMessageFileParts(message)) {
-      const decoded = decodeDataUrl(file.url, maxAttachmentBytes);
-      const mediaType = file.mediaType ?? decoded.mediaType;
-      const filePath = attachmentPath(
-        {
-          ...(mediaType !== undefined ? { mediaType } : {}),
-          ...(file.filename !== undefined ? { filename: file.filename } : {}),
-        },
-        attachmentCount,
-        usedPaths,
-      );
-      attachmentCount += 1;
-      files.push({
-        path: filePath,
-        bytes: decoded.bytes,
-        ...(mediaType !== undefined ? { mediaType } : {}),
-      });
-      const paths = pathsByMessage.get(messageIndex) ?? [];
-      paths.push(filePath);
-      pathsByMessage.set(messageIndex, paths);
-    }
-  });
+  for (const attachment of collectAttachments(messages, maxAttachmentBytes)) {
+    files.push({
+      path: attachment.path,
+      bytes: attachment.bytes,
+      ...(attachment.mediaType !== undefined
+        ? { mediaType: attachment.mediaType }
+        : {}),
+    });
+    const paths = pathsByMessage.get(attachment.messageIndex) ?? [];
+    paths.push(attachment.path);
+    pathsByMessage.set(attachment.messageIndex, paths);
+  }
 
   const describe = (message: UIChatMessage, messageIndex: number): string => {
     const text = uiChatMessageText(message);

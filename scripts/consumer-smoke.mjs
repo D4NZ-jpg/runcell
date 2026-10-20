@@ -90,6 +90,16 @@ const uiResponse: Response = agent
   });
 void uiResponse;
 
+// Chat attachments: host code sees the same workspace paths as the run.
+import { uiChatMessageAttachments, type UIChatAttachment } from 'runcell';
+
+const attachments: UIChatAttachment[] = uiChatMessageAttachments(history, {
+  maxAttachmentBytes: 1024,
+});
+attachments[0]?.path satisfies string | undefined;
+attachments[0]?.filename satisfies string | undefined;
+attachments[0]?.bytes satisfies Uint8Array | undefined;
+
 // Failure usage discovery is part of the public surface.
 getRunUsage(new Error('x'))?.costMeasured satisfies boolean | undefined;
 
@@ -135,8 +145,26 @@ const TSCONFIG = JSON.stringify(
 );
 
 const RUNTIME_MJS = `
-import { createVirtualSandbox, restoreSandbox } from 'runcell';
+import {
+  createVirtualSandbox,
+  restoreSandbox,
+  uiChatMessageAttachments,
+} from 'runcell';
 import assert from 'node:assert';
+
+const photo = (text) => ({
+  type: 'file',
+  url: 'data:image/jpeg;base64,' + Buffer.from(text).toString('base64'),
+  mediaType: 'image/jpeg',
+  filename: 'image.jpg',
+});
+assert.deepEqual(
+  uiChatMessageAttachments([
+    { role: 'user', parts: [photo('a')] },
+    { role: 'user', parts: [photo('b')] },
+  ]).map(a => a.path),
+  ['attachments/image.jpg', 'attachments/image-2.jpg'],
+);
 
 const sb = await createVirtualSandbox();
 await sb.writeFile('src/app.ts', 'export const n = 41;\\n');

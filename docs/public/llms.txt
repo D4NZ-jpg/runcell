@@ -29,6 +29,9 @@
 
 - File parts in `messages` become workspace files under `attachments/`
   (data URLs only, 20 MB each by default via `maxAttachmentBytes`).
+- `uiChatMessageAttachments(messages)` returns those files with the same
+  `path` the prompt names, plus the original `filename`. Use it in tools to
+  map a path from the model back to its file.
 - PDFs: install the optional peers `pdfjs-dist` and `@napi-rs/canvas` to
   enable the built-in `readPdfPages` tool.
 
