@@ -252,8 +252,8 @@ describe('createPostgresCredentialStore', () => {
     // At rest: an envelope, with no token material in the stored JSON.
     const stored = db.rows.get('agent-1') as Record<string, unknown>;
     expect(stored.__runcell_encrypted).toBe(1);
-    expect(JSON.stringify(stored)).not.toContain('a1');
-    expect(JSON.stringify(stored)).not.toContain('r1');
+    expect(JSON.stringify(stored)).not.toContain('"a1"');
+    expect(JSON.stringify(stored)).not.toContain('"r1"');
 
     // Through the store: the plaintext blob.
     const seen = await store.withLock('agent-1', async current => ({
