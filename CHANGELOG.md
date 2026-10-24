@@ -4,6 +4,16 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.12.1 - 2026-10-24
+
+### Changed
+
+- Updated `@ai-sdk/harness` and the sandbox packages to 1.0.154, and
+  `@ai-sdk/provider-utils` to 5.0.62. The optional Vercel sandbox peer is now
+  1.0.154.
+- The Pi engine dependency now requires `@earendil-works/pi-coding-agent`
+  ^1.3.0.
+
 ## 1.12.0 - 2026-10-20
 
 ### Added
