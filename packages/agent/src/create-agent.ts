@@ -258,6 +258,9 @@ export function createAgent(
           : {}),
       });
     } catch (error) {
+      if (error instanceof InvalidOptionError) {
+        throw error;
+      }
       throw new InvalidOptionError(
         error instanceof Error ? error.message : String(error),
       );

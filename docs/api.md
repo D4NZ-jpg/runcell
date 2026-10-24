@@ -67,19 +67,19 @@ run(options: RunOptionsBase): Promise<RunResult<undefined>>;
 
 ### Run options
 
-| Option               | Type                                  | Description                                                                                                                                                                              |
-| -------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `prompt`             | `string`                              | The task prompt. Supply either `prompt` or `messages`.                                                                                                                                   |
-| `messages`           | `readonly UIChatMessage[]`            | A UI chat history (AI SDK `UIMessage` shape). Must end with a user message. Earlier turns replay as context. File parts on the last message become workspace files under `attachments/`. |
-| `maxAttachmentBytes` | `number`                              | Per-attachment size limit for `file` parts in `messages`. Defaults to 20 MB.                                                                                                             |
-| `schema`             | `AgentSchema`                         | Structured output contract ([Standard Schema](https://standardschema.dev)). Omit for a plain turn.                                                                                       |
-| `files`              | `FileInput[]`                         | Files seeded into the workspace before the run. Relative paths only.                                                                                                                     |
-| `sandbox`            | `Sandbox \| SandboxOption`            | A caller-owned handle that Runcell does not destroy, or an ephemeral mode option.                                                                                                        |
-| `thread`             | `Thread`                              | Conversation to continue. A successful run mutates it in place.                                                                                                                          |
-| `events`             | `AgentEvents`                         | Per-run lifecycle callbacks, invoked in addition to the agent-level ones.                                                                                                                |
-| `pi`                 | `{ thinkingLevel?: PiThinkingLevel }` | Per-run thinking-level override. The only accepted key is `thinkingLevel`. It wins for this run only.                                                                                    |
-| `sessionId`          | `string`                              | Resume a previous session by id.                                                                                                                                                         |
-| `signal`             | `AbortSignal`                         | Cancels the run.                                                                                                                                                                         |
+| Option               | Type                                  | Description                                                                                                                                                                                |
+| -------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `prompt`             | `string`                              | The task prompt. Supply either `prompt` or `messages`.                                                                                                                                     |
+| `messages`           | `readonly UIChatMessage[]`            | A UI chat history (AI SDK `UIMessage` shape). Must end with a user message. Earlier turns replay as context. File parts on every user message become workspace files under `attachments/`. |
+| `maxAttachmentBytes` | `number`                              | Per-attachment size limit for `file` parts in `messages`. Defaults to 20 MB.                                                                                                               |
+| `schema`             | `AgentSchema`                         | Structured output contract ([Standard Schema](https://standardschema.dev)). Omit for a plain turn.                                                                                         |
+| `files`              | `FileInput[]`                         | Files seeded into the workspace before the run. Relative paths only.                                                                                                                       |
+| `sandbox`            | `Sandbox \| SandboxOption`            | A caller-owned handle that Runcell does not destroy, or an ephemeral mode option.                                                                                                          |
+| `thread`             | `Thread`                              | Conversation to continue. A successful run mutates it in place.                                                                                                                            |
+| `events`             | `AgentEvents`                         | Per-run lifecycle callbacks, invoked in addition to the agent-level ones.                                                                                                                  |
+| `pi`                 | `{ thinkingLevel?: PiThinkingLevel }` | Per-run thinking-level override. The only accepted key is `thinkingLevel`. It wins for this run only.                                                                                      |
+| `sessionId`          | `string`                              | Resume a previous session by id.                                                                                                                                                           |
+| `signal`             | `AbortSignal`                         | Cancels the run.                                                                                                                                                                           |
 
 The per-run `pi` object accepts only `thinkingLevel`. Extensions stay
 agent-level. Invalid values make `run()` throw `InvalidOptionError` before the
@@ -446,6 +446,27 @@ type AgentSchema<TOutput = unknown> = StandardSchemaV1<unknown, TOutput>;
 type InferSchemaOutput<TSchema extends AgentSchema> =
   StandardSchemaV1.InferOutput<TSchema>;
 ```
+
+## Chat attachments
+
+### `uiChatMessageAttachments(messages, options?): UIChatAttachment[]`
+
+Returns the attachments that a run seeds for `messages`, in seeding order.
+Each `path` is the same workspace path that the prompt names. Use it in host
+code to find the file that a path from the model refers to.
+
+```ts
+interface UIChatAttachment {
+  path: string; // "attachments/image-2.jpg"
+  filename?: string; // original file part name, before sanitizing
+  mediaType?: string;
+  bytes: Uint8Array;
+}
+```
+
+`options.maxAttachmentBytes` defaults to 20 MB. Pass the same value as the
+run. The function throws the same `InvalidOptionError` as a run for a file
+part that is not a data URL or that is over the limit.
 
 ## Utility exports
 

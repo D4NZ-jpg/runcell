@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TurnError } from './errors.js';
+import { InvalidOptionError, TurnError } from './errors.js';
 import type { RunResult, RunUsage } from './types.js';
 import {
   createUIMessageChunkConverter,
@@ -7,7 +7,8 @@ import {
   uiChatMessageText,
   uiMessageChunksToResponse,
 } from './ui-message-stream.js';
-import type { UIMessageChunk } from './types.js';
+import type { UIChatMessage, UIMessageChunk } from './types.js';
+import { uiChatMessageAttachments } from './index.js';
 
 async function* toAsyncIterable(
   chunks: readonly UIMessageChunk[],
@@ -497,6 +498,185 @@ describe('uiChatMessagesToRunInput', () => {
       second.files.map(file => file.path),
     );
     expect(second.prompt).toContain('[attached: attachments/attachment-1.pdf]');
+  });
+});
+
+describe('uiChatMessageAttachments', () => {
+  const dataUrl = (mediaType: string, text: string): string =>
+    `data:${mediaType};base64,${Buffer.from(text).toString('base64')}`;
+
+  it('dedupes the same filename across turns in message order', () => {
+    const messages: UIChatMessage[] = [
+      {
+        role: 'user',
+        parts: [
+          { type: 'text', text: 'first photo' },
+          {
+            type: 'file',
+            url: dataUrl('image/jpeg', 'photo-1'),
+            mediaType: 'image/jpeg',
+            filename: 'image.jpg',
+          },
+        ],
+      },
+      { role: 'assistant', parts: [{ type: 'text', text: 'got it' }] },
+      {
+        role: 'user',
+        parts: [
+          { type: 'text', text: 'second photo' },
+          {
+            type: 'file',
+            url: dataUrl('image/jpeg', 'photo-2'),
+            mediaType: 'image/jpeg',
+            filename: 'image.jpg',
+          },
+        ],
+      },
+    ];
+
+    expect(uiChatMessageAttachments(messages)).toEqual([
+      {
+        path: 'attachments/image.jpg',
+        filename: 'image.jpg',
+        mediaType: 'image/jpeg',
+        bytes: Uint8Array.from(Buffer.from('photo-1')),
+      },
+      {
+        path: 'attachments/image-2.jpg',
+        filename: 'image.jpg',
+        mediaType: 'image/jpeg',
+        bytes: Uint8Array.from(Buffer.from('photo-2')),
+      },
+    ]);
+  });
+
+  it('keeps the original filename when sanitizing makes names collide', () => {
+    const attachments = uiChatMessageAttachments([
+      {
+        role: 'user',
+        parts: [
+          {
+            type: 'file',
+            url: dataUrl('image/png', 'a'),
+            filename: 'foto factura.png',
+          },
+          {
+            type: 'file',
+            url: dataUrl('image/png', 'b'),
+            filename: 'foto_factura.png',
+          },
+        ],
+      },
+    ]);
+    expect(
+      attachments.map(({ path, filename }) => ({ path, filename })),
+    ).toEqual([
+      { path: 'attachments/foto_factura.png', filename: 'foto factura.png' },
+      { path: 'attachments/foto_factura-2.png', filename: 'foto_factura.png' },
+    ]);
+  });
+
+  it('names an unnamed file part from its media type and omits filename', () => {
+    const attachments = uiChatMessageAttachments([
+      {
+        role: 'user',
+        parts: [
+          {
+            type: 'file',
+            url: dataUrl('text/plain', 'x'),
+            filename: 'notes.txt',
+          },
+          {
+            type: 'file',
+            url: dataUrl('image/png', 'y'),
+            mediaType: 'image/png',
+          },
+        ],
+      },
+    ]);
+    expect(attachments[1]?.path).toBe('attachments/attachment-2.png');
+    expect(attachments[1]).not.toHaveProperty('filename');
+  });
+
+  it('returns the paths the run prompt names, in the same order', () => {
+    const messages: UIChatMessage[] = [
+      {
+        role: 'user',
+        parts: [
+          { type: 'text', text: 'one' },
+          {
+            type: 'file',
+            url: dataUrl('image/jpeg', '1'),
+            filename: 'image.jpg',
+          },
+          { type: 'file', url: dataUrl('application/pdf', '2') },
+        ],
+      },
+      {
+        role: 'assistant',
+        parts: [
+          { type: 'text', text: 'ok' },
+          // Assistant file parts are not seeded.
+          { type: 'file', url: dataUrl('image/png', '3'), filename: 'x.png' },
+        ],
+      },
+      {
+        role: 'user',
+        parts: [
+          { type: 'text', text: 'two' },
+          {
+            type: 'file',
+            url: dataUrl('image/jpeg', '4'),
+            filename: 'image.jpg',
+          },
+        ],
+      },
+    ];
+
+    const attachments = uiChatMessageAttachments(messages);
+    const runInput = uiChatMessagesToRunInput(messages);
+    expect(attachments.map(attachment => attachment.path)).toEqual([
+      'attachments/image.jpg',
+      'attachments/attachment-2.pdf',
+      'attachments/image-2.jpg',
+    ]);
+    expect(runInput.files).toEqual(
+      attachments.map(({ path, bytes, mediaType }) => ({
+        path,
+        bytes,
+        ...(mediaType !== undefined ? { mediaType } : {}),
+      })),
+    );
+    expect(runInput.prompt).toContain(
+      '[attached: attachments/image.jpg, attachments/attachment-2.pdf]',
+    );
+    expect(runInput.prompt).toContain('- attachments/image-2.jpg');
+  });
+
+  it('rejects oversized attachments with the run error', () => {
+    const messages: UIChatMessage[] = [
+      {
+        role: 'user',
+        parts: [{ type: 'file', url: dataUrl('text/plain', 'too long') }],
+      },
+    ];
+    const options = { maxAttachmentBytes: 4 };
+    const runError = (() => {
+      try {
+        uiChatMessagesToRunInput(messages, options);
+      } catch (error) {
+        return error;
+      }
+      return undefined;
+    })();
+    expect(runError).toBeInstanceOf(InvalidOptionError);
+    expect(() => uiChatMessageAttachments(messages, options)).toThrow(runError);
+    expect(() => uiChatMessageAttachments(messages, options)).toThrow(
+      InvalidOptionError,
+    );
+    expect(() => uiChatMessageAttachments(messages, options)).toThrow(
+      'maxAttachmentBytes',
+    );
   });
 });
 

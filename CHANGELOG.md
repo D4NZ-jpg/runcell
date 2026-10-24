@@ -4,6 +4,23 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.12.0 - 2026-10-20
+
+### Added
+
+- `uiChatMessageAttachments(messages, { maxAttachmentBytes })` returns the
+  attachments a run seeds for a UI chat history. Each item has the workspace
+  `path` that the prompt names (for example `attachments/image-2.jpg`), the
+  original `filename`, the `mediaType`, and the `bytes`. Host code, such as
+  a tool, can use it to find the file that a path from the model refers to.
+  The run uses the same function, so the paths always match.
+
+### Changed
+
+- Invalid `file` parts in `messages` (not a data URL, or larger than
+  `maxAttachmentBytes`) now throw `InvalidOptionError` directly from the
+  message conversion. Runs already rejected with `InvalidOptionError`.
+
 ## 1.11.2 - 2026-10-14
 
 ### Changed

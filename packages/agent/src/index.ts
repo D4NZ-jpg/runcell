@@ -38,6 +38,9 @@ export type {
 
 export { normalizeCredentials } from './credentials.js';
 
+export { uiChatMessageAttachments } from './ui-message-stream.js';
+export type { UIChatAttachment } from './ui-message-stream.js';
+
 export { createSandboxProvider, resolveSandboxConfig } from './sandbox.js';
 
 export {

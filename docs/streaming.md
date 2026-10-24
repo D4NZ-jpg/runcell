@@ -88,6 +88,20 @@ decode in server memory, so keep an HTTP body limit in front of the
 endpoint. Whether the model can view an attachment depends on its input
 modalities: images require a vision model.
 
+Attachment paths are sanitized and deduplicated. For example, two photos
+named `image.jpg` from different turns become `attachments/image.jpg` and
+`attachments/image-2.jpg`. To map a path from the model back to its file in
+host code (for example in a tool), call `uiChatMessageAttachments(messages,
+{ maxAttachmentBytes })`. It returns `{ path, filename, mediaType, bytes }`
+for each attachment, with the same paths as the run:
+
+```ts
+import { uiChatMessageAttachments } from 'runcell';
+
+const attachments = uiChatMessageAttachments(messages);
+const image = attachments.find(attachment => attachment.path === input.path);
+```
+
 PDFs get a built-in path: when a PDF is seeded and the optional peers
 `pdfjs-dist` and `@napi-rs/canvas` are installed, runcell registers a
 `readPdfPages` tool that renders requested pages as images the model can

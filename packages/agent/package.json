@@ -1,6 +1,6 @@
 {
   "name": "runcell",
-  "version": "1.11.2",
+  "version": "1.12.0",
   "description": "TypeScript runtime for running agents in sandboxes with structured results, file outputs, and persistent threads.",
   "type": "module",
   "license": "MIT",
@@ -49,14 +49,14 @@
   },
   "devDependencies": {
     "@ai-sdk/sandbox-vercel": "1.0.148",
-    "@napi-rs/canvas": "^1.0.10",
+    "@napi-rs/canvas": "^1.0.11",
     "@types/node": "^26.6.5",
-    "ai": "7.0.137",
+    "ai": "7.0.143",
     "del-cli": "^8.0.1",
     "pdfjs-dist": "^6.4.299",
-    "tsup": "^8.5.1",
+    "tsup": "^9.0.0",
     "typescript": "^6.0.3",
-    "vitest": "^5.0.2"
+    "vitest": "^5.0.5"
   },
   "keywords": [
     "ai",
