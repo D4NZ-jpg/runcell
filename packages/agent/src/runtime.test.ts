@@ -996,6 +996,343 @@ describe('defaultRuntime', () => {
     expect(result.data).toEqual({ ok: true });
   });
 
+  describe('named model fallbacks', () => {
+    const models = [
+      {
+        model: 'anthropic/test',
+        credential: 'subscription',
+        credentials: {
+          mode: 'apiKeys' as const,
+          keys: { anthropic: 'oauth-key' },
+        },
+      },
+      {
+        model: 'amazon-bedrock/test',
+        credential: 'aws',
+        credentials: { mode: 'env' as const },
+      },
+    ] as const;
+
+    it('switches model/provider and credentials, notifying agent and run listeners', async () => {
+      const fallbacks: unknown[] = [];
+      const runFallbacks: unknown[] = [];
+      const errors: unknown[] = [];
+      const credentialFallbacks: unknown[] = [];
+      const state = installRuntimeMocks([
+        () => [
+          {
+            type: 'error',
+            error: new Error('OAuth refresh failed for anthropic'),
+          },
+        ],
+        agent => {
+          agent.submit({ ok: true });
+          return [{ type: 'text-delta', text: 'backup' }];
+        },
+      ]);
+      const runtime = await loadRuntime();
+      const result = await runtime.run(
+        createRuntimeInput(z.object({ ok: z.boolean() }), {
+          config: { models },
+          agentOptions: {
+            events: {
+              onFallback: info => fallbacks.push(info),
+              onCredentialFallback: info => credentialFallbacks.push(info),
+              onError: error => errors.push(error),
+            },
+          },
+          runOptions: {
+            events: { onFallback: info => runFallbacks.push(info) },
+          },
+        }),
+      );
+      expect(result.text).toBe('backup');
+      expect(state.piSettings).toHaveLength(2);
+      expect(state.piSettings[0]).toMatchObject({
+        model: 'anthropic/test',
+        auth: { customEnv: { ANTHROPIC_API_KEY: 'oauth-key' } },
+      });
+      expect(state.piSettings[1]).toMatchObject({
+        model: 'amazon-bedrock/test',
+      });
+      expect(state.piSettings[1]).not.toHaveProperty('piCredentials');
+      expect(fallbacks).toEqual([
+        expect.objectContaining({
+          from: { model: 'anthropic/test', credentials: 'subscription' },
+          to: { model: 'amazon-bedrock/test', credentials: 'aws' },
+        }),
+      ]);
+      expect(runFallbacks).toEqual(fallbacks);
+      expect(credentialFallbacks).toEqual([]);
+      expect(errors).toEqual([]);
+    });
+
+    it('exhausts a named credential chain before switching models', async () => {
+      const credentialFallbacks: unknown[] = [];
+      const fallbacks: unknown[] = [];
+      const state = installRuntimeMocks([
+        () => [{ type: 'error', error: new Error('401 Unauthorized') }],
+        () => [{ type: 'error', error: new Error('OAuth refresh failed') }],
+        agent => {
+          agent.submit({ ok: true });
+          return [];
+        },
+      ]);
+      const runtime = await loadRuntime();
+      await runtime.run(
+        createRuntimeInput(z.object({ ok: z.boolean() }), {
+          config: {
+            models: [
+              {
+                model: 'anthropic/test',
+                credential: 'subscription',
+                credentials: {
+                  mode: 'chain',
+                  sources: [
+                    { mode: 'apiKeys', keys: { anthropic: 'first' } },
+                    { mode: 'apiKeys', keys: { anthropic: 'second' } },
+                  ],
+                },
+              },
+              models[1],
+            ],
+          },
+          agentOptions: {
+            events: {
+              onCredentialFallback: info => credentialFallbacks.push(info),
+              onFallback: info => fallbacks.push(info),
+            },
+          },
+        }),
+      );
+      expect(
+        state.piSettings.map(settings => (settings as { model: string }).model),
+      ).toEqual(['anthropic/test', 'anthropic/test', 'amazon-bedrock/test']);
+      expect(credentialFallbacks).toHaveLength(1);
+      expect(fallbacks).toHaveLength(1);
+    });
+
+    it('supports the same model with a different named credential', async () => {
+      const fallbacks: unknown[] = [];
+      const state = installRuntimeMocks([
+        () => [{ type: 'error', error: new Error('401 Unauthorized') }],
+        agent => {
+          agent.submit({ ok: true });
+          return [];
+        },
+      ]);
+      const runtime = await loadRuntime();
+      await runtime.run(
+        createRuntimeInput(z.object({ ok: z.boolean() }), {
+          config: {
+            models: [
+              models[0],
+              {
+                model: 'anthropic/test',
+                credential: 'api',
+                credentials: {
+                  mode: 'apiKeys',
+                  keys: { anthropic: 'backup-key' },
+                },
+              },
+            ],
+          },
+          agentOptions: {
+            events: { onFallback: info => fallbacks.push(info) },
+          },
+        }),
+      );
+      expect(state.piSettings[1]).toMatchObject({
+        model: 'anthropic/test',
+        auth: { customEnv: { ANTHROPIC_API_KEY: 'backup-key' } },
+      });
+      expect(fallbacks).toHaveLength(1);
+    });
+
+    it('retries credential failures during session initialization', async () => {
+      const state = installRuntimeMocks([
+        agent => {
+          agent.submit({ ok: true });
+          return [];
+        },
+      ]);
+      state.createSessionError = new Error('OAuth refresh failed');
+      const runtime = await loadRuntime();
+      const result = await runtime.run(
+        createRuntimeInput(z.object({ ok: z.boolean() }), {
+          config: { models },
+          agentOptions: {
+            events: {
+              onFallback: () => {
+                state.createSessionError = undefined;
+              },
+            },
+          },
+        }),
+      );
+      expect(result.data).toEqual({ ok: true });
+      expect(state.piSettings).toHaveLength(2);
+    });
+
+    it.each([
+      'model overloaded (529)',
+      'rate limited (429)',
+      'server error (503)',
+      'Unknown model "typo"',
+    ])('does not fall back for %s', async message => {
+      const state = installRuntimeMocks([
+        () => [{ type: 'error', error: new Error(message) }],
+      ]);
+      const runtime = await loadRuntime();
+      await expect(
+        runtime.run(
+          createRuntimeInput(z.object({ ok: z.boolean() }), {
+            config: { models },
+          }),
+        ),
+      ).rejects.toThrow(message);
+      expect(state.piSettings).toHaveLength(1);
+    });
+
+    it.each([
+      {
+        type: 'tool-call',
+        toolName: 'bash',
+        toolCallId: 'c',
+        input: { command: 'touch x' },
+      },
+      { type: 'text-delta', text: 'already visible' },
+      { type: 'reasoning-delta', text: 'already visible' },
+    ])(
+      'does not replay after observable output or tools: $type',
+      async part => {
+        const fallbacks: unknown[] = [];
+        const errors: unknown[] = [];
+        const state = installRuntimeMocks([
+          () => [part, { type: 'error', error: new Error('401 Unauthorized') }],
+        ]);
+        const runtime = await loadRuntime();
+        await expect(
+          runtime.run(
+            createRuntimeInput(z.object({ ok: z.boolean() }), {
+              config: { models },
+              agentOptions: {
+                events: {
+                  onFallback: info => fallbacks.push(info),
+                  onError: error => errors.push(error),
+                },
+              },
+            }),
+          ),
+        ).rejects.toThrow('401');
+        expect(state.piSettings).toHaveLength(1);
+        expect(fallbacks).toEqual([]);
+        expect(errors).toHaveLength(1);
+      },
+    );
+
+    it('does not treat an auth-shaped caller cancellation as a credential failure', async () => {
+      const controller = new AbortController();
+      const state = installRuntimeMocks([
+        () => {
+          controller.abort(new Error('401 Unauthorized'));
+          return [{ type: 'error', error: new Error('401 Unauthorized') }];
+        },
+      ]);
+      const runtime = await loadRuntime();
+      await expect(
+        runtime.run(
+          createRuntimeInput(z.object({ ok: z.boolean() }), {
+            config: { models },
+            runOptions: { signal: controller.signal },
+          }),
+        ),
+      ).rejects.toThrow('401');
+      expect(state.piSettings).toHaveLength(1);
+    });
+
+    it('does not retry extension failures whose message mentions auth', async () => {
+      const state = installRuntimeMocks([
+        () => [
+          {
+            type: 'error',
+            error: Object.assign(new Error('401 Unauthorized extension'), {
+              name: 'PiExtensionError',
+            }),
+          },
+        ],
+      ]);
+      const runtime = await loadRuntime();
+      await expect(
+        runtime.run(
+          createRuntimeInput(z.object({ ok: z.boolean() }), {
+            config: { models },
+          }),
+        ),
+      ).rejects.toThrow('extension');
+      expect(state.piSettings).toHaveLength(1);
+    });
+
+    it('surfaces only the final provider error if all routes fail', async () => {
+      const errors: unknown[] = [];
+      const fallbacks: unknown[] = [];
+      installRuntimeMocks([
+        () => [{ type: 'error', error: new Error('OAuth refresh failed') }],
+        () => [
+          {
+            type: 'error',
+            error: new Error('No API key for provider: amazon-bedrock'),
+          },
+        ],
+      ]);
+      const runtime = await loadRuntime();
+      await expect(
+        runtime.run(
+          createRuntimeInput(z.object({ ok: z.boolean() }), {
+            config: { models },
+            agentOptions: {
+              events: {
+                onError: error => errors.push(error),
+                onFallback: info => fallbacks.push(info),
+              },
+            },
+          }),
+        ),
+      ).rejects.toThrow('amazon-bedrock');
+      expect(fallbacks).toHaveLength(1);
+      expect(errors).toHaveLength(1);
+    });
+
+    it('preserves fallback for stream consumers and throwing fallback listeners', async () => {
+      installRuntimeMocks([
+        () => [{ type: 'error', error: new Error('401 Unauthorized') }],
+        () => [{ type: 'text-delta', text: 'backup' }],
+      ]);
+      const runtime = await loadRuntime();
+      const { createAgent } = await import('./create-agent.js');
+      const agent = createAgent(
+        {
+          credentials: { primary: { type: 'env' }, aws: { type: 'env' } },
+          models: [
+            { model: 'anthropic/test', credentials: 'primary' },
+            { model: 'amazon-bedrock/test', credentials: 'aws' },
+          ],
+          events: {
+            onFallback: () => {
+              throw new Error('listener failed');
+            },
+          },
+        },
+        { runtime },
+      );
+      const stream = agent.stream({ prompt: 'hello' });
+      const chunks = [];
+      for await (const chunk of stream.toUIMessageStream()) chunks.push(chunk);
+      expect(chunks.filter(chunk => chunk.type === 'error')).toEqual([]);
+      expect((await stream.result).text).toBe('backup');
+    });
+  });
+
   describe('credentials chain', () => {
     const deadStore: CredentialStore = {
       withLock: async <T>(

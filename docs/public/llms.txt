@@ -23,7 +23,14 @@
   `credentials: { type: 'shared' }` with `@runcell/postgres-credentials`.
 - Fallback: pass an array (`credentials: [sourceA, sourceB]`) to try
   sources in order. The run moves to the next source only on a credential
-  error before any tool runs. `onCredentialFallback` reports each move.
+  error before any tool runs or output streams. Never retries caller cancellation.
+  `onCredentialFallback` reports each move.
+- Model/provider fallback (opt-in): use `models: [{ model, credentials: 'name' }, ...]`
+  with a named `credentials: { name: source, ... }` map, instead of `model`.
+  References are checked in TypeScript and at creation. Tries entries in order
+  on credential errors only, under the same safety limits. Exhausts any named
+  credential chain before moving models; `onFallback` reports model transitions.
+  The original single-model form remains supported; do not combine both forms.
 
 ## Files and attachments
 

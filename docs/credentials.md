@@ -187,21 +187,78 @@ provider `401`), runcell retries the whole run on the next source and fires
 `onCredentialFallback` for the hop. The retried failure does not reach
 `onError`. Only a failure on the last source does.
 
-Two limits apply:
+These limits apply:
 
 - **No fallback after a tool runs.** A retry of the run would repeat
   the tool's side effects, so a credential error after any tool call
   propagates instead. Credential errors happen on the first request to the
   provider, before any tool exists, so in practice this rarely blocks a
   fallback.
-- **Only credential errors fall back.** Model errors, tool errors, and
-  timeouts propagate immediately.
+- **No fallback after output or cancellation.** Once text or reasoning has
+  streamed, or the caller cancels, the failure propagates instead.
+- **Only credential errors fall back.** Model errors, tool errors, rate
+  limits, provider outages, and timeouts propagate immediately.
 
 Each source is a complete credential set: the chain picks one source per
 attempt, and does not mix providers across sources within a run. Runcell
 validates every source with the same rules as a single source, including the
 production guard on `'local'`. `onCredentialFallback` shows that a preferred
 source is failing. Treat repeated fallbacks as an alert.
+
+## Model and provider fallbacks
+
+To change models or providers after an authentication failure, use `models`
+with a named credential map instead of `model` with a single credential source:
+
+```ts
+const agent = createAgent({
+  credentials: {
+    subscription: { type: 'shared', key: 'prod', store },
+    aws: { type: 'env' },
+  },
+  models: [
+    { model: 'anthropic/claude-sonnet-4-5', credentials: 'subscription' },
+    { model: 'amazon-bedrock/<bedrock-model-id>', credentials: 'aws' },
+  ],
+  events: {
+    onFallback: ({ from, to, cause }) =>
+      log.warn('model fell back', { from, to, cause }),
+  },
+});
+```
+
+Replace `<bedrock-model-id>` with a model ID from Pi's Bedrock catalog and
+configure AWS authentication for the process (for example an AWS profile,
+IAM credentials, or a workload role). The `aws` name is only a reference to
+`{ type: 'env' }`; it does not configure AWS authentication itself.
+
+A run starts on the first model. On a credential error, it tries the next
+entry with that entry's model and credential source. The same safety limits
+as the credential chain apply: no retries after tools, streamed text or
+reasoning, or caller cancellation. Rate limits, outages, invalid model IDs,
+and other non-credential errors do not advance the list.
+
+`createAgent()` checks that `models` is non-empty, every credential reference
+exists, and every registered source passes credential validation, including
+unused sources. TypeScript also checks references and offers credential-name
+autocomplete. Exported `ModelAgentOptions<typeof credentials>` can type a
+configuration defined separately from the call. Model IDs themselves are
+resolved when their session starts, so verify every configured provider/model
+in your deployment before relying on it as a fallback.
+
+Named sources may contain credential chains. Runcell exhausts a model's
+chain before moving to the next model. `onCredentialFallback` reports hops
+within that chain; `onFallback` reports transitions between model entries:
+its `from` and `to` each contain `{ model, credentials }`, where `credentials`
+is the registered name. Retried failures do not reach `onError`.
+
+Each run starts from the first model again. If a thread switches routes,
+runcell replays its portable message history rather than reusing a live Pi
+session with the previous route's auth. Lossless journal resume remains
+available for the same model, credential name, and source within its chain.
+
+The original `model` + `credentials` form, including credential arrays,
+remains supported. Do not supply both `model` and `models`.
 
 ## Shared credential store
 

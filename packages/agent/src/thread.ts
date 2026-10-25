@@ -28,6 +28,8 @@ export interface ThreadContinuation {
   resume: unknown;
   /** Base64 of the gzipped engine journal. */
   journalGz: string;
+  /** Route that owns a live engine session; used to avoid resuming other auth. */
+  modelRoute?: { model: string; credentials: string; sourceIndex: number };
 }
 
 /**

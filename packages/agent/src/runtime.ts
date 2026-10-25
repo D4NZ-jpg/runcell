@@ -105,7 +105,12 @@ export interface RuntimeRunInput {
 }
 
 interface RunAttempt {
+  model: string;
+  credential: string;
+  routeIndex: number;
+  sourceIndex: number;
   credentials: ConcreteCredentialPlan;
+  outputEmitted: boolean;
   /** Set once any tool other than submitResult has executed. */
   toolExecuted: boolean;
   /**
@@ -127,7 +132,24 @@ interface SandboxContext {
 
 export const defaultRuntime: RuncellRuntime = {
   async run(input) {
-    const sources = credentialPlanSources(input.config.credentials);
+    const routes = input.config.models ?? [
+      {
+        model: input.config.model,
+        credential: 'primary',
+        credentials: input.config.credentials,
+      },
+    ];
+    const sources = routes.flatMap((route, routeIndex) =>
+      credentialPlanSources(route.credentials).map(
+        (credentials, sourceIndex) => ({
+          model: route.model,
+          credential: route.credential,
+          routeIndex,
+          sourceIndex,
+          credentials,
+        }),
+      ),
+    );
     const events = mergeEvents(
       input.agentOptions.events,
       input.runOptions.events,
@@ -135,8 +157,9 @@ export const defaultRuntime: RuncellRuntime = {
     for (const [index, source] of sources.entries()) {
       const next = sources[index + 1];
       const attempt: RunAttempt = {
-        credentials: source,
+        ...source,
         toolExecuted: false,
+        outputEmitted: false,
         hasNextSource: next !== undefined,
       };
       try {
@@ -147,14 +170,21 @@ export const defaultRuntime: RuncellRuntime = {
         // retrying after a tool ran would repeat its side effects.
         if (
           next !== undefined &&
-          !attempt.toolExecuted &&
-          isCredentialFailure(error)
+          canFallBack(error, attempt, input.runOptions.signal)
         ) {
-          safeEmit(events?.onCredentialFallback, {
-            from: attempt.credentials.mode,
-            to: next.mode,
-            cause: error,
-          });
+          if (source.routeIndex === next.routeIndex) {
+            safeEmit(events?.onCredentialFallback, {
+              from: attempt.credentials.mode,
+              to: next.credentials.mode,
+              cause: error,
+            });
+          } else {
+            safeEmit(events?.onFallback, {
+              from: { model: source.model, credentials: source.credential },
+              to: { model: next.model, credentials: next.credential },
+              cause: error,
+            });
+          }
           continue;
         }
         if (isInstanceOfSafe(error, ExtensionError)) {
@@ -168,9 +198,25 @@ export const defaultRuntime: RuncellRuntime = {
       }
     }
     // Unreachable: the loop returns or throws on the last source.
-    throw new Error('credentials chain exhausted without a result.');
+    throw new Error('fallback chain exhausted without a result.');
   },
 };
+
+function canFallBack(
+  error: unknown,
+  attempt: RunAttempt,
+  signal: AbortSignal | undefined,
+): boolean {
+  return (
+    attempt.hasNextSource &&
+    !signal?.aborted &&
+    !attempt.toolExecuted &&
+    !attempt.outputEmitted &&
+    !isInstanceOfSafe(error, ExtensionError) &&
+    !findPiExtensionError(error) &&
+    isCredentialFailure(error)
+  );
+}
 
 /**
  * Whether a failure means the credential source itself cannot authenticate:
@@ -323,7 +369,18 @@ async function runWithHarness({
 
   // A thread carries its own compressed journal, so it can resume the exact
   // conversation in any sandbox. Without one, fall back to neutral replay.
-  const continuation = readPiContinuation(threadInternals?.continuation);
+  const storedContinuation = threadInternals?.continuation;
+  // A parked Pi session retains its original model and auth. Only reuse it
+  // for the same named route; otherwise replay the portable thread messages.
+  const sameRoute =
+    (config.models === undefined &&
+      storedContinuation?.modelRoute === undefined) ||
+    (storedContinuation?.modelRoute?.model === runAttempt?.model &&
+      storedContinuation?.modelRoute?.credentials === runAttempt?.credential &&
+      storedContinuation?.modelRoute?.sourceIndex === runAttempt?.sourceIndex);
+  const continuation = sameRoute
+    ? readPiContinuation(storedContinuation)
+    : undefined;
   const resumeFrom = continuation?.resume;
   const threadContext =
     threadInternals && continuation === undefined
@@ -334,7 +391,7 @@ async function runWithHarness({
     id: 'runcell',
     harness: createPi(
       createPiSettings(
-        { ...config, credentials },
+        { ...config, model: runAttempt?.model ?? config.model, credentials },
         runOptions.pi?.thinkingLevel,
       ),
     ),
@@ -440,6 +497,9 @@ async function runWithHarness({
         });
 
         for await (const part of result.stream) {
+          if (runAttempt && part.type === 'reasoning-delta') {
+            runAttempt.outputEmitted = true;
+          }
           onStreamPart?.(part);
           await handleStreamPart({
             part,
@@ -449,6 +509,7 @@ async function runWithHarness({
             abortSignal: runOptions.signal,
             sessionId: session.sessionId,
             appendText(delta) {
+              if (runAttempt && delta) runAttempt.outputEmitted = true;
               text += delta;
               onTextDelta?.(delta);
             },
@@ -565,12 +626,10 @@ async function runWithHarness({
             getPiSessionUsageTotals(session),
           ),
         );
-    // A credential failure that the chain will retry on the next source is
-    // reported through onCredentialFallback instead of onError.
+    // Retried failures are reported by the fallback event, not onError.
     const willFallBack =
-      runAttempt?.hasNextSource === true &&
-      !runAttempt.toolExecuted &&
-      isCredentialFailure(failure);
+      runAttempt !== undefined &&
+      canFallBack(failure, runAttempt, runOptions.signal);
     if (!willFallBack) {
       safeEmit(events?.onError, failure);
     }
@@ -586,7 +645,20 @@ async function runWithHarness({
         const resume = await session.detach();
         const journalGz = await readJournal(sandboxContext, resume);
         if (journalGz) {
-          threadInternals.continuation = { engine: 'pi', resume, journalGz };
+          threadInternals.continuation = {
+            engine: 'pi',
+            resume,
+            journalGz,
+            ...(config.models && runAttempt
+              ? {
+                  modelRoute: {
+                    model: runAttempt.model,
+                    credentials: runAttempt.credential,
+                    sourceIndex: runAttempt.sourceIndex,
+                  },
+                }
+              : {}),
+          };
         }
       });
     } else {
@@ -741,6 +813,7 @@ function mergeEvents(
       agent.onCredentialFallback,
       run.onCredentialFallback,
     ),
+    onFallback: both(agent.onFallback, run.onFallback),
   };
 }
 

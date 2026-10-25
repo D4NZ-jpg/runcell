@@ -33,6 +33,36 @@ A configured `model` that is not present in Pi's catalog fails at session
 startup with `Unknown model "…"` and up to five likely catalog matches. Runcell
 does not fall back to the agent directory's configured default model.
 
+### Named credentials and ordered models
+
+The existing `AgentOptions` form above is unchanged. Alternatively, pass
+`ModelAgentOptions` with `models` and a named credential map:
+
+```ts
+createAgent({
+  credentials: {
+    subscription: { type: 'shared', key: 'prod', store },
+    api: { type: 'env' },
+  },
+  models: [
+    { model: 'anthropic/claude-sonnet-4-5', credentials: 'subscription' },
+    { model: 'openai/gpt-5.1', credentials: 'api' },
+  ],
+});
+```
+
+`models` is a non-empty ordered array of `ModelRoute` entries. Each entry's
+`credentials` must name an own key in the credential map. References are
+checked by TypeScript and at runtime. Map values accept `Credentials`,
+including chains; all registered sources are validated at creation.
+
+Use either `model` or `models`, never both. Runs advance only on credential
+errors before tools or output, and never after caller cancellation. Credential
+chains are exhausted before the next model is tried. `onFallback` receives a
+`ModelFallbackEvent` with `from`, `to` (each `{ model, credentials }`), and
+`cause`. See [Model and provider fallbacks](./credentials.md#model-and-provider-fallbacks)
+for the retry limits and thread behavior.
+
 ### `PiOptions`
 
 ```ts
@@ -382,7 +412,8 @@ through `onError` like other model errors.
 
 The optional callbacks are `onText`, `onToolCall`, `onToolResult`,
 `onFileChange`, `onRepair`, `onFinish`, `onError`, and
-`onCredentialFallback`. Callbacks registered at the agent and run levels both
+`onCredentialFallback`, plus `onFallback` for transitions between configured
+model routes. Callbacks registered at the agent and run levels both
 fire. See
 [Files, tools, and events](./files-tools-events.md).
 

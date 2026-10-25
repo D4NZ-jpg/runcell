@@ -88,6 +88,9 @@ export type {
 export type {
   Agent,
   AgentOptions,
+  ModelAgentOptions,
+  ModelRoute,
+  ModelFallbackEvent,
   AgentEvents,
   PiOptions,
   AgentSchema,

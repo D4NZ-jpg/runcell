@@ -1,5 +1,9 @@
 import type { ExtensionFactory, PiThinkingLevel } from '@local/harness-pi-raw';
-import { normalizeCredentials, type CredentialPlan } from './credentials.js';
+import {
+  normalizeCredentials,
+  type CredentialPlan,
+  type Credentials,
+} from './credentials.js';
 import { InvalidOptionError } from './errors.js';
 import { normalizeFiles } from './files.js';
 import { defaultRuntime, type RuncellRuntime } from './runtime.js';
@@ -17,6 +21,7 @@ import type {
   Agent,
   AgentOptions,
   AgentSchema,
+  ModelAgentOptions,
   RunOptionsBase,
   RunResult,
   UIChatMessage,
@@ -46,6 +51,11 @@ export interface ResolvedAgentConfig {
   model: string;
   systemPrompt: string | undefined;
   credentials: CredentialPlan;
+  models?: readonly {
+    model: string;
+    credential: string;
+    credentials: CredentialPlan;
+  }[];
   toolNames: string[];
   sandbox: SandboxConfig;
   maxRepairs: number;
@@ -83,10 +93,18 @@ function validateThinkingLevel(
  * Validate agent options eagerly and resolve them to a concrete config.
  */
 export function resolveAgentConfig(
-  options: AgentOptions,
+  options: AgentOptions | ModelAgentOptions,
   context: { nodeEnv?: string | undefined } = {},
 ): ResolvedAgentConfig {
-  if (typeof options.model !== 'string' || options.model.trim().length === 0) {
+  if (hasBothModelForms(options)) {
+    throw new InvalidOptionError('Use either "model" or "models", not both.');
+  }
+  const models =
+    options.models !== undefined
+      ? resolveModelRoutes(options, context)
+      : undefined;
+  const model = models?.[0]?.model ?? options.model;
+  if (typeof model !== 'string' || model.trim().length === 0) {
     throw new InvalidOptionError('createAgent requires a non-empty "model".');
   }
 
@@ -101,9 +119,12 @@ export function resolveAgentConfig(
 
   const sandbox = resolveSandboxConfig(options.sandbox);
 
-  const credentials = normalizeCredentials(options.credentials, {
-    nodeEnv: context.nodeEnv,
-  });
+  const credentials =
+    models?.[0]?.credentials ??
+    normalizeCredentials(
+      options.models === undefined ? options.credentials : undefined,
+      { nodeEnv: context.nodeEnv },
+    );
 
   const toolNames = Object.keys(options.tools ?? {});
   const reservedToolName = toolNames.find(name =>
@@ -128,15 +149,72 @@ export function resolveAgentConfig(
   );
 
   return {
-    model: options.model,
+    model,
     systemPrompt: options.systemPrompt,
     credentials,
+    ...(models ? { models } : {}),
     toolNames,
     sandbox,
     maxRepairs,
     extensions,
     thinkingLevel,
   };
+}
+
+function hasBothModelForms(options: {
+  model?: unknown;
+  models?: unknown;
+}): boolean {
+  return options.model !== undefined && options.models !== undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function resolveModelRoutes(
+  options: { models: unknown; credentials: unknown },
+  context: { nodeEnv?: string | undefined },
+): NonNullable<ResolvedAgentConfig['models']> {
+  if (!Array.isArray(options.models) || options.models.length === 0) {
+    throw new InvalidOptionError('"models" must be a non-empty array.');
+  }
+  const registry = options.credentials;
+  if (!isRecord(registry)) {
+    throw new InvalidOptionError(
+      '"credentials" must be a named credential map when using "models".',
+    );
+  }
+  const plans = new Map<string, CredentialPlan>();
+  for (const [name, source] of Object.entries(registry)) {
+    if (!name.trim() || source == null) {
+      throw new InvalidOptionError(
+        'Named credentials need a non-empty name and a credential source.',
+      );
+    }
+    plans.set(name, normalizeCredentials(source as Credentials, context));
+  }
+  const models: readonly unknown[] = options.models;
+  return Array.from(models).map((route, index) => {
+    if (
+      !isRecord(route) ||
+      typeof route['model'] !== 'string' ||
+      !route['model'].trim()
+    ) {
+      throw new InvalidOptionError(
+        `models[${index}].model must be a non-empty string.`,
+      );
+    }
+    const credential = route['credentials'];
+    const credentials =
+      typeof credential === 'string' ? plans.get(credential) : undefined;
+    if (typeof credential !== 'string' || !credentials) {
+      throw new InvalidOptionError(
+        `models[${index}].credentials references an unknown credential source: ${String(credential)}.`,
+      );
+    }
+    return { model: route['model'], credential, credentials };
+  });
 }
 
 /**
@@ -230,12 +308,24 @@ function isAgentSchema(value: unknown): value is AgentSchema {
 /**
  * Create an agent bound to a model, credentials, tools and event callbacks.
  */
+interface CreateAgentContext {
+  nodeEnv?: string | undefined;
+  runtime?: RuncellRuntime | undefined;
+}
+
+export function createAgent<
+  const TCredentials extends Record<string, Credentials>,
+>(
+  options: ModelAgentOptions<TCredentials>,
+  context?: CreateAgentContext,
+): Agent;
 export function createAgent(
   options: AgentOptions,
-  context: {
-    nodeEnv?: string | undefined;
-    runtime?: RuncellRuntime | undefined;
-  } = {},
+  context?: CreateAgentContext,
+): Agent;
+export function createAgent(
+  options: AgentOptions | ModelAgentOptions,
+  context: CreateAgentContext = {},
 ): Agent {
   const nodeEnv =
     context.nodeEnv ??
@@ -243,6 +333,20 @@ export function createAgent(
 
   const config = resolveAgentConfig(options, { nodeEnv });
   const runtime = context.runtime ?? defaultRuntime;
+  // Custom runtimes still receive the legacy options shape for the primary route.
+  const primaryCredential = options.models?.[0]?.credentials;
+  const agentOptions: AgentOptions =
+    options.models !== undefined
+      ? {
+          ...options,
+          model: config.model,
+          models: undefined,
+          credentials:
+            primaryCredential === undefined
+              ? undefined
+              : options.credentials[primaryCredential],
+        }
+      : options;
 
   // Fold a validated `messages` history into the concrete prompt the runtime
   // expects; `prompt`-shaped options pass through unchanged.
@@ -279,7 +383,7 @@ export function createAgent(
     Promise.resolve(runOptions).then(opts => {
       validateRunOptions(opts);
       return runtime.run({
-        agentOptions: options,
+        agentOptions,
         config,
         runOptions: normalizeRunInput(opts),
       });
@@ -292,7 +396,7 @@ export function createAgent(
       .then(opts => {
         validateRunOptions(opts);
         return runtime.run({
-          agentOptions: options,
+          agentOptions,
           config,
           runOptions: normalizeRunInput(opts),
           onTextDelta: text.push,

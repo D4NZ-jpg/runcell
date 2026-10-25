@@ -74,6 +74,19 @@ export interface CredentialFallbackEvent {
   cause: unknown;
 }
 
+/** A model/provider and the name of its credential source. */
+export interface ModelRoute<TCredential extends string = string> {
+  model: string;
+  credentials: TCredential;
+}
+
+/** Fired when a credential failure advances to the next configured model. */
+export interface ModelFallbackEvent {
+  from: ModelRoute;
+  to: ModelRoute;
+  cause: unknown;
+}
+
 /**
  * Streaming + lifecycle callbacks. All are optional and best-effort: a
  * throwing callback is swallowed and never affects the run.
@@ -87,6 +100,7 @@ export interface AgentEvents {
   onFinish?: (info: FinishEvent) => void;
   onError?: (error: unknown) => void;
   onCredentialFallback?: (info: CredentialFallbackEvent) => void;
+  onFallback?: (info: ModelFallbackEvent) => void;
 }
 
 /**
@@ -117,6 +131,8 @@ export interface PiOptions {
 export interface AgentOptions {
   /** Model identifier, e.g. `anthropic/claude-sonnet-4-5` or `openai/gpt-5.1`. */
   model: string;
+  /** Use ModelAgentOptions for an ordered model list instead. */
+  models?: never;
   /**
    * Persistent system prompt for this agent. Appended to the engine's
    * system prompt in the system role, re-applied on every turn, and preserved
@@ -138,6 +154,22 @@ export interface AgentOptions {
   maxRepairs?: number;
   /** Pi engine escape hatch: extensions and other Pi-specific options. */
   pi?: PiOptions;
+}
+
+/**
+ * Opt-in model fallback configuration. Credential names are inferred from the
+ * registry, not from the model list. Existing AgentOptions remain unchanged.
+ */
+export interface ModelAgentOptions<
+  TCredentials extends Record<string, Credentials> = Record<
+    string,
+    Credentials
+  >,
+> extends Omit<AgentOptions, 'model' | 'models' | 'credentials'> {
+  model?: never;
+  credentials: TCredentials;
+  /** Ordered routes, tried on credential failures before tools or output. */
+  models: readonly ModelRoute<Extract<keyof NoInfer<TCredentials>, string>>[];
 }
 
 /**

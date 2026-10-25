@@ -58,10 +58,10 @@ export type CredentialSource =
  * A single credential source, or a fallback chain of sources tried in
  * order. With a chain, a run starts on the first source; if it fails with a
  * credential error (revoked or unrefreshable login, missing key for the
- * provider, `401`) before any tool has executed, runcell retries the whole
- * run on the next source, firing `onCredentialFallback` for each hop.
- * Non-credential errors, and credential errors after a tool has executed
- * (retrying would repeat side effects), propagate immediately.
+ * provider, `401`) before any tool or output, runcell retries the whole run
+ * on the next source, firing `onCredentialFallback` for each hop.
+ * Non-credential errors, caller cancellation, and credential errors after
+ * tools or output propagate immediately.
  */
 export type Credentials = CredentialSource | readonly CredentialSource[];
 
@@ -131,6 +131,10 @@ export function normalizeCredentials(
   );
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
 function normalizeSource(
   value: CredentialSource,
   context: NormalizeCredentialsContext,
@@ -139,6 +143,12 @@ function normalizeSource(
 
   if (value === 'local') {
     return assertLocalAllowed(isProduction, false, {});
+  }
+
+  if (!isRecord(value)) {
+    throw new CredentialError(
+      'Expected a credential source with a valid "type".',
+    );
   }
 
   switch (value.type) {
@@ -155,6 +165,11 @@ function normalizeSource(
       return { mode: 'env' };
 
     case 'apiKeys': {
+      if (!isRecord(value.keys)) {
+        throw new CredentialError(
+          'apiKeys credentials require a provider key map.',
+        );
+      }
       const entries = Object.entries(value.keys);
       if (entries.length === 0) {
         throw new CredentialError(
@@ -185,8 +200,20 @@ function normalizeSource(
           'shared credentials require a non-empty key.',
         );
       }
+      if (
+        !isRecord(value.store) ||
+        typeof value.store.withLock !== 'function'
+      ) {
+        throw new CredentialError(
+          'shared credentials require a store with a withLock function.',
+        );
+      }
       return { mode: 'shared', key: value.key, store: value.store };
     }
+    default:
+      throw new CredentialError(
+        'Expected a credential source with a valid "type".',
+      );
   }
 }
 

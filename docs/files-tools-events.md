@@ -148,16 +148,17 @@ const agent = createAgent({
 });
 ```
 
-| Event                  | Fires when                                                                                                          |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `onText`               | a text delta streams from the model                                                                                 |
-| `onToolCall`           | the agent invokes one of your tools                                                                                 |
-| `onToolResult`         | one of your tools returns                                                                                           |
-| `onFileChange`         | the agent creates/modifies a workspace file                                                                         |
-| `onRepair`             | a repair turn starts (structured runs only)                                                                         |
-| `onFinish`             | a turn completes, with its finish reason                                                                            |
-| `onError`              | the run fails after the session starts. Runcell attaches usage before the callback. The same object rejects the run |
-| `onCredentialFallback` | a credentials chain moves to its next source after a credential error, with `from`, `to`, and `cause`               |
+| Event                  | Fires when                                                                                                                                     |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `onText`               | a text delta streams from the model                                                                                                            |
+| `onToolCall`           | the agent invokes one of your tools                                                                                                            |
+| `onToolResult`         | one of your tools returns                                                                                                                      |
+| `onFileChange`         | the agent creates/modifies a workspace file                                                                                                    |
+| `onRepair`             | a repair turn starts (structured runs only)                                                                                                    |
+| `onFinish`             | a turn completes, with its finish reason                                                                                                       |
+| `onError`              | the run fails after the session starts. Runcell attaches usage before the callback. The same object rejects the run                            |
+| `onCredentialFallback` | a credentials chain moves to its next source after a credential error, with `from`, `to`, and `cause`                                          |
+| `onFallback`           | a configured model route advances after a credential error; `from` and `to` each contain `{ model, credentials }`, plus the triggering `cause` |
 
 Runcell ignores callback exceptions. In particular, an exception from `onError`
 does not replace the enriched failure object used to reject the run.

@@ -53,6 +53,22 @@ import { z } from 'zod';
 
 const agent = createAgent({ model: 'm', credentials: 'local' });
 
+// Named routes preserve key inference through the published declarations.
+const routed = createAgent({
+  credentials: { subscription: { type: 'env' }, aws: { type: 'env' } },
+  models: [
+    { model: 'anthropic/m', credentials: 'subscription' },
+    { model: 'amazon-bedrock/m', credentials: 'aws' },
+  ],
+  events: { onFallback: ({ from, to }) => {
+    from.model satisfies string;
+    to.credentials satisfies string;
+  } },
+});
+routed.run({ prompt: 'hi' });
+// @ts-expect-error - model references must exist in the credential map.
+createAgent({ credentials: { subscription: { type: 'env' } }, models: [{ model: 'm', credentials: 'missing' }] });
+
 // Structured run: data is typed and validated.
 const structured = await agent.run({
   prompt: 'go',

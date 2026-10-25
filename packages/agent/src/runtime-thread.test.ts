@@ -179,6 +179,108 @@ function okScript(text: string): Script {
 }
 
 describe('thread continuation lifecycle', () => {
+  it('replays portable history instead of resuming a different model route', async () => {
+    installMocks();
+    const { defaultRuntime } = await import('./runtime.js');
+    const { createThread } = await import('./thread.js');
+    const thread = createThread();
+    const models = [
+      {
+        model: 'anthropic/test',
+        credential: 'oauth',
+        credentials: { mode: 'env' as const },
+      },
+      {
+        model: 'amazon-bedrock/test',
+        credential: 'aws',
+        credentials: { mode: 'env' as const },
+      },
+    ];
+    state.scripts = [
+      () => [{ type: 'error', error: new Error('401 Unauthorized') }],
+      okScript('backup answer'),
+      okScript('primary recovered'),
+    ];
+    await defaultRuntime.run({
+      ...makeInput('first', { thread }),
+      config: { ...config, models },
+    });
+    expect(thread.toJSON().continuation?.modelRoute).toMatchObject({
+      model: 'amazon-bedrock/test',
+      credentials: 'aws',
+    });
+    await defaultRuntime.run({
+      ...makeInput('second', { thread }),
+      config: { ...config, models },
+    });
+    const recovered = state.instances[2];
+    expect(recovered?.createSessionCalls[0]?.resumeFrom).toBeUndefined();
+    expect(recovered?.streamCalls[0]?.prompt).toContain('backup answer');
+    expect(thread.messages).toHaveLength(4);
+  });
+
+  it('retains lossless resume for the same model and credential route', async () => {
+    installMocks();
+    const { defaultRuntime } = await import('./runtime.js');
+    const { createThread } = await import('./thread.js');
+    const thread = createThread();
+    const models = [
+      {
+        model: 'anthropic/test',
+        credential: 'oauth',
+        credentials: { mode: 'env' as const },
+      },
+    ];
+    state.scripts = [okScript('one'), okScript('two')];
+    await defaultRuntime.run({
+      ...makeInput('first', { thread }),
+      config: { ...config, models },
+    });
+    await defaultRuntime.run({
+      ...makeInput('second', { thread }),
+      config: { ...config, models },
+    });
+    expect(state.instances[1]?.createSessionCalls[0]?.resumeFrom).toBeDefined();
+    expect(state.instances[1]?.streamCalls[0]?.prompt).toBe('second');
+  });
+
+  it('does not resume a different source within the same named credential chain', async () => {
+    installMocks();
+    const { defaultRuntime } = await import('./runtime.js');
+    const { createThread } = await import('./thread.js');
+    const thread = createThread();
+    const models = [
+      {
+        model: 'anthropic/test',
+        credential: 'auth',
+        credentials: {
+          mode: 'chain' as const,
+          sources: [
+            { mode: 'env' as const },
+            { mode: 'apiKeys' as const, keys: { anthropic: 'backup' } },
+          ],
+        },
+      },
+    ];
+    state.scripts = [
+      () => [{ type: 'error', error: new Error('401 Unauthorized') }],
+      okScript('backup'),
+      okScript('recovered'),
+    ];
+    await defaultRuntime.run({
+      ...makeInput('first', { thread }),
+      config: { ...config, models },
+    });
+    expect(thread.toJSON().continuation?.modelRoute?.sourceIndex).toBe(1);
+    await defaultRuntime.run({
+      ...makeInput('second', { thread }),
+      config: { ...config, models },
+    });
+    expect(
+      state.instances[2]?.createSessionCalls[0]?.resumeFrom,
+    ).toBeUndefined();
+    expect(state.instances[2]?.streamCalls[0]?.prompt).toContain('backup');
+  });
   it('captures a compressed journal on success and detaches (not destroys)', async () => {
     installMocks();
     const { defaultRuntime, readPiContinuation } = await import('./runtime.js');
