@@ -14,6 +14,7 @@ export {
   PI_SILENT_TURN_ABORT_REASON,
   PiExtensionError,
   getPiSessionUsageTotals,
+  getPiSessionModel,
 } from './pi-session';
 export type {
   PiCredentialStore,

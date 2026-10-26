@@ -133,6 +133,7 @@ function installMocks(): void {
     PI_SILENT_TURN_ABORT_REASON: Symbol.for('runcell.pi.silent-turn-abort'),
     createPi: (settings: unknown) => ({ settings }),
     getPiSessionUsageTotals: () => undefined,
+    getPiSessionModel: () => ({ id: 'test', provider: 'anthropic' }),
   }));
   vi.doMock('@earendil-works/pi-coding-agent', () => ({
     getAgentDir: () => '/agent-dir',
@@ -232,14 +233,35 @@ describe('thread continuation lifecycle', () => {
       },
     ];
     state.scripts = [okScript('one'), okScript('two')];
-    await defaultRuntime.run({
-      ...makeInput('first', { thread }),
+    const first = await defaultRuntime.run({
+      ...makeInput('first', {
+        thread,
+        context: { requestId: 'first-application-request' },
+      }),
       config: { ...config, models },
     });
-    await defaultRuntime.run({
-      ...makeInput('second', { thread }),
+    const second = await defaultRuntime.run({
+      ...makeInput('second', {
+        thread,
+        context: { requestId: 'second-application-request' },
+      }),
       config: { ...config, models },
     });
+    expect(first.execution?.runId).not.toBe(second.execution?.runId);
+    expect(first.execution?.attempts[0]?.attemptId).not.toBe(
+      second.execution?.attempts[0]?.attemptId,
+    );
+    expect(first.execution?.attempts).toHaveLength(1);
+    expect(second.execution?.attempts).toHaveLength(1);
+    expect(first.execution?.context).toEqual({
+      requestId: 'first-application-request',
+    });
+    expect(second.execution?.context).toEqual({
+      requestId: 'second-application-request',
+    });
+    expect(JSON.stringify(thread.toJSON())).not.toContain(
+      'application-request',
+    );
     expect(state.instances[1]?.createSessionCalls[0]?.resumeFrom).toBeDefined();
     expect(state.instances[1]?.streamCalls[0]?.prompt).toBe('second');
   });

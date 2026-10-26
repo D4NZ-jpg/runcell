@@ -137,6 +137,10 @@ callbacks at the agent level for every run or per run via
 const agent = createAgent({
   model,
   events: {
+    onRunStart: info => log('run started', info.runId, info.context),
+    onAttemptStart: info => log('attempt started', info.attemptId, info.model),
+    onAttemptEnd: info => log('attempt ended', info.outcome, info.usage),
+    onRunEnd: report => log('run ended', report.runId, report.outcome),
     onText: delta => process.stdout.write(delta),
     onToolCall: call => log('tool call', call.name, call.input),
     onToolResult: result => log('tool result', result.name),
@@ -150,6 +154,10 @@ const agent = createAgent({
 
 | Event                  | Fires when                                                                                                                                     |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `onRunStart`           | a validated run starts; includes `runId` and `startedAt`                                                                                       |
+| `onAttemptStart`       | a route/credential attempt starts; includes `runId`, `attemptId`, route, and credential-source mode                                            |
+| `onAttemptEnd`         | an attempt ends; includes its immutable execution record, usage, error, and fallback destination when applicable                               |
+| `onRunEnd`             | the run ends, including setup failures and cancellation; receives the immutable final execution report                                         |
 | `onText`               | a text delta streams from the model                                                                                                            |
 | `onToolCall`           | the agent invokes one of your tools                                                                                                            |
 | `onToolResult`         | one of your tools returns                                                                                                                      |
@@ -160,8 +168,33 @@ const agent = createAgent({
 | `onCredentialFallback` | a credentials chain moves to its next source after a credential error, with `from`, `to`, and `cause`                                          |
 | `onFallback`           | a configured model route advances after a credential error; `from` and `to` each contain `{ model, credentials }`, plus the triggering `cause` |
 
-Runcell ignores callback exceptions. In particular, an exception from `onError`
-does not replace the enriched failure object used to reject the run.
+`onRunStart` fires once, followed by one start/end pair for each attempted
+route/credential source, then one `onRunEnd`. Failed attempts are finalized
+before their fallback callback fires. `onFinish` retains its turn-level
+meaning, so repair turns can produce several finishes within one attempt.
+`onError` retains its existing post-session failure semantics; use `onRunEnd`
+to observe every dispatched run, including setup failures. The final report is
+available through `getRunExecution(error)` before `onError` fires.
+
+Tool, repair, turn-finish, and fallback events also include `runId` and
+`attemptId` from the built-in runtime. Text and file callback payloads are
+unchanged. Both agent-level and run-level listeners receive the same IDs.
+
+Supply optional application attributes through `run({ prompt, context })` or
+`stream({ prompt, context })`. Run/attempt hooks and correlated events include
+the same immutable `context` snapshot, so a shared agent's hooks can associate
+each run with its application request or operation. Context is per-run and is
+not inherited by later runs or stored in threads. It is not sent to the model
+or UI stream. See [Application correlation](./api.md#application-correlation)
+for its scalar-value contract and privacy limits.
+
+Runcell ignores callback exceptions and observes rejected callback promises.
+Callbacks are best-effort, not durable delivery: they are not awaited, and a
+process crash can prevent terminal events. For durable storage, await your own
+write using `result.execution` or `getRunExecution(error)` after the run.
+Your application owns any telemetry integration. Runcell adds no telemetry
+SDK, adapter, exporter, backend, or automatic prompt collection. See
+[Execution reports](./api.md#execution-reports).
 
 Events fire for `run()` and `stream()` alike. For streaming text to a client,
 prefer `agent.stream()`'s `textStream` over `onText`. See

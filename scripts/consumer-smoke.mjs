@@ -42,6 +42,10 @@ import {
   createVirtualSandbox,
   createThread,
   getRunUsage,
+  getRunExecution,
+  type RunExecution,
+  type RunContext,
+  type AttemptExecution,
   threadFromJSON,
   type Sandbox,
   type Thread,
@@ -51,7 +55,12 @@ import {
 } from 'runcell';
 import { z } from 'zod';
 
-const agent = createAgent({ model: 'm', credentials: 'local' });
+const agent = createAgent({ model: 'm', credentials: 'local', events: {
+  onRunStart: event => { event.runId satisfies string; event.context satisfies RunContext | undefined; },
+  onAttemptStart: event => { event.attemptId satisfies string; },
+  onAttemptEnd: event => { event satisfies AttemptExecution; },
+  onRunEnd: event => { event satisfies RunExecution; },
+} });
 
 // Named routes preserve key inference through the published declarations.
 const routed = createAgent({
@@ -77,10 +86,17 @@ const structured = await agent.run({
 structured.data.ok satisfies boolean;
 
 // Plain run: data is undefined, text is the output.
-const plain = await agent.run({ prompt: 'hi' });
+const context = { requestId: 'request-1', operation: 'summarize', sampled: true } satisfies RunContext;
+const plain = await agent.run({ prompt: 'hi', context });
+plain.execution?.context satisfies RunContext | undefined;
+// @ts-expect-error - application context must contain scalar values, not nested objects.
+agent.run({ prompt: 'hi', context: { request: { id: 'request-1' } } });
 plain.data satisfies undefined;
 plain.text satisfies string;
 plain.finishReason satisfies string;
+plain.execution?.runId satisfies string | undefined;
+plain.execution?.usage.status satisfies 'complete' | 'partial' | 'unknown' | undefined;
+getRunExecution(new Error('x')) satisfies RunExecution | undefined;
 
 // Streaming: text deltas plus a final result.
 const stream: StreamRun<undefined> = agent.stream({ prompt: 'hi' });
@@ -162,7 +178,10 @@ const TSCONFIG = JSON.stringify(
 
 const RUNTIME_MJS = `
 import {
+  createAgent,
   createVirtualSandbox,
+  getRunExecution,
+  getRunUsage,
   restoreSandbox,
   uiChatMessageAttachments,
 } from 'runcell';
@@ -196,6 +215,28 @@ await sb.destroy();
 const sb2 = await restoreSandbox(snap);
 assert.equal(await sb2.readTextFile('src/app.ts'), 'export const n = 41;\\n');
 await sb2.destroy();
+
+// An unknown model fails locally, before a provider request or network call.
+const reports = [];
+const agent = createAgent({
+  model: '__runcell_consumer_nonexistent_model__',
+  credentials: { type: 'apiKeys', keys: { anthropic: 'not-a-real-key' } },
+  events: { onRunEnd: report => reports.push(report) },
+});
+const context = { requestId: 'server-request-123', operation: 'consumer-smoke' };
+const failure = await agent.run({ prompt: 'private prompt', context }).catch(error => error);
+const execution = getRunExecution(failure);
+assert.ok(execution);
+assert.equal(execution.outcome, 'failed');
+assert.equal(execution.attempts.length, 1);
+assert.deepEqual(execution.context, context);
+assert.notEqual(execution.context, context);
+assert.equal(execution.attempts[0].context, execution.context);
+assert.ok(Object.isFrozen(execution.context));
+assert.equal(reports[0], execution);
+assert.equal(getRunUsage(failure).totalTokens, 0);
+assert.ok(!JSON.stringify(execution).includes('not-a-real-key'));
+assert.ok(!JSON.stringify(execution).includes('private prompt'));
 
 console.log('runtime OK');
 `;

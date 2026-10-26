@@ -1,0 +1,69 @@
+Runcell runtime roadmap
+
+Boundary
+- Runcell owns the mechanics and evidence of one run: execution lifecycle,
+  usage/cost accounting, provider/credential selection, safe fallback, and
+  structured errors.
+- Applications own tenant/user/operation attribution, billing, remote model
+  configuration, durable queues, distributed quotas, and secret provisioning
+  and access control. Support these integrations without owning their services.
+
+First milestone: each attempt is identifiable, explainable, and accounted for.
+Ship items 1 and 2 together so attempt records do not imply incomplete totals
+are complete. Discuss and agree on the API before changing runtime behavior.
+
+[x] 1. Add per-attempt execution records and structured errors.
+    - Stable run IDs and attempt IDs; distinguish them from session/thread IDs.
+    - Record configured route and resolved model/provider, credential reference
+      (never secret values), timing, outcome, fallback reason, and known usage.
+    - Define an attempt as one execution with one model route and one concrete
+      credential source. Tool/repair turns are within that attempt, not new
+      fallback attempts. Do not claim visibility into opaque SDK HTTP retries.
+    - Classify authentication, rate limit, provider unavailable, invalid request,
+      and cancellation failures; retain an unknown category and distinguish
+      provider failures from tool, extension, validation, and sandbox failures.
+    - Preserve HTTP status and retryAfter when the provider exposes them; retain
+      the original cause. Do not fabricate metadata from ambiguous messages.
+    - Cover setup failures and cancellation as well as post-session failures.
+    - Preserve existing callbacks, errors, and return fields; add lifecycle
+      surfaces rather than redefining onFinish (currently turn-oriented).
+    - Verify success, credential and model fallback, exhausted attempts,
+      cancellation, setup failures, repair turns, and thread resumes.
+
+[x] 2. Complete usage accounting across all attempts.
+    - Include failed and fallback attempts, not only the successful final one.
+    - Expose attempt usage separately from aggregate run usage.
+    - Distinguish unavailable or partial measurements from measured zero.
+    - Keep estimated API cost distinct from provider invoices and product billing.
+    - Prevent double counting across streaming, repairs, retries, and resumes.
+    - Verify aggregate totals equal known attempt totals, with completeness
+      reported separately when any attempt lacks measurements.
+
+First milestone verification: npm run check (496 passed, 2 optional Postgres
+integration tests skipped), npm run docs:build, and npm run test:consumer
+(Zod 3 and 4). Real SDK-wrapper coverage uses a fake model client; no live
+OAuth, Bedrock, or other provider requests were made.
+
+[x] 3. Prepare application-owned instrumentation.
+    - Optional per-run scalar context for operation, tenant, user, and request.
+    - Immutable context snapshots on existing correlated hooks and execution
+      reports, including failures and cancellation; no cross-run inheritance.
+    - Context stays out of prompts, thread history, provider headers, and UI
+      message streams. Applications choose which attributes to record/export.
+    - No telemetry SDK, OpenTelemetry adapter/example, exporter, backend, or
+      automatic prompt/content collection. Applications connect their own tools.
+    - Verified npm run check (527 passed, 2 optional Postgres integration tests
+      skipped), npm run docs:build, and npm run test:consumer (Zod 3 and 4).
+
+[ ] 4. Add safe availability retry and fallback policies.
+    - Explicitly selected 429 and provider-availability failures; bounded attempts
+      and elapsed time, with cancellation and retryAfter support.
+    - No tool replay or duplicated observable streamed output.
+    - Build on attempt records and complete usage accounting first.
+    - Preserve the current credential-only fallback default.
+
+[ ] 5. Publish application integration recipes.
+    - Central model profiles and configuration.
+    - Queue workers and distributed rate/concurrency limits.
+    - Tenant/user/operation attribution and product-usage recording.
+    - Keep durable infrastructure and business policy outside the runtime.

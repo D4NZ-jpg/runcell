@@ -15,6 +15,7 @@ import type {
 import {
   createPiSession,
   getPiSessionUsageTotals,
+  getPiSessionModel,
   PI_SILENT_TURN_ABORT_REASON,
   PiExtensionError,
 } from './pi-session';
@@ -85,6 +86,18 @@ describe('createPiSession', () => {
       piMock.customTools = options.customTools;
       return { session: piMock.session };
     });
+  });
+
+  it('exposes the actual resolved model and provider without guessing from the configured name', async () => {
+    piMock.models = [{ id: 'catalog-model', name: 'Friendly model', provider: 'catalog-provider' }];
+    const session = await createPiSession({
+      sessionId: 'session-model', sandboxSession: createSandboxSession(),
+      sessionWorkDir: '/sandbox/work', skills: [],
+      settings: { model: 'Friendly model' }, isResume: false,
+    });
+    expect(getPiSessionModel(session)).toEqual({ id: 'catalog-model', provider: 'catalog-provider' });
+    expect(getPiSessionModel({})).toBeUndefined();
+    await session.doDestroy();
   });
 
   it('disables model network access for adapter-created runtimes', async () => {

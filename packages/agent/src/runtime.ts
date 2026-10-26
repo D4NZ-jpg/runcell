@@ -21,6 +21,7 @@ import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import {
   createPi,
   getPiSessionUsageTotals,
+  getPiSessionModel,
   PI_SILENT_TURN_ABORT_REASON,
   type PiCredentialStore,
   type PiHarnessSettings,
@@ -44,6 +45,14 @@ import {
   TurnError,
 } from './errors.js';
 import { normalizeFiles, type NormalizedFile } from './files.js';
+import { snapshotRunContext } from './run-context.js';
+import {
+  emptyExecutionUsage,
+  executionError,
+  recordRunExecution,
+  runUsage,
+  totalExecutionUsage,
+} from './execution.js';
 import {
   createReadPdfPagesTool,
   isPdfFile,
@@ -77,6 +86,11 @@ import type {
   RunResult,
   RunUsage,
   ToolDefinition,
+  AttemptExecution,
+  AttemptStartEvent,
+  ExecutionError,
+  ExecutionUsage,
+  RunExecution,
 } from './types.js';
 
 // `createAgent` validates and normalizes before calling the runtime, so a
@@ -105,6 +119,12 @@ export interface RuntimeRunInput {
 }
 
 interface RunAttempt {
+  start: AttemptStartEvent;
+  usage: ExecutionUsage;
+  sessionId?: string;
+  resolvedModel?: { id: string; provider: string };
+  failureOrigin: ExecutionError['origin'];
+  postSessionFailure: boolean;
   model: string;
   credential: string;
   routeIndex: number;
@@ -154,47 +174,157 @@ export const defaultRuntime: RuncellRuntime = {
       input.agentOptions.events,
       input.runOptions.events,
     );
+    const context = snapshotRunContext(input.runOptions.context);
+    const start = Object.freeze({
+      ...(context !== undefined ? { context } : {}),
+      runId: randomUUID(),
+      startedAt: new Date().toISOString(),
+    });
+    const runClock = performance.now();
+    const attempts: AttemptExecution[] = [];
+    safeEmit(events?.onRunStart, start);
+    const finishRun = (
+      outcome: RunExecution['outcome'],
+      error?: ExecutionError,
+    ): RunExecution =>
+      Object.freeze({
+        ...start,
+        endedAt: new Date().toISOString(),
+        durationMs: Math.max(0, performance.now() - runClock),
+        outcome,
+        attempts: Object.freeze([...attempts]),
+        usage: Object.freeze(totalExecutionUsage(attempts)),
+        ...(error ? { error: Object.freeze(error) } : {}),
+      });
     for (const [index, source] of sources.entries()) {
       const next = sources[index + 1];
+      const attemptClock = performance.now();
       const attempt: RunAttempt = {
         ...source,
+        start: Object.freeze({
+          ...start,
+          startedAt: new Date().toISOString(),
+          attemptId: randomUUID(),
+          index,
+          model: source.model,
+          credentials: source.credential,
+          credentialSource: source.credentials.mode,
+          routeIndex: source.routeIndex,
+          sourceIndex: source.sourceIndex,
+        }),
+        usage: emptyExecutionUsage(),
+        failureOrigin: 'runtime',
+        postSessionFailure: false,
         toolExecuted: false,
         outputEmitted: false,
         hasNextSource: next !== undefined,
       };
+      safeEmit(events?.onAttemptStart, attempt.start);
+      const finishAttempt = (
+        outcome: AttemptExecution['outcome'],
+        error?: ExecutionError,
+        fallback = false,
+      ) => {
+        const record: AttemptExecution = Object.freeze({
+          ...attempt.start,
+          endedAt: new Date().toISOString(),
+          durationMs: Math.max(0, performance.now() - attemptClock),
+          outcome,
+          ...(attempt.sessionId ? { sessionId: attempt.sessionId } : {}),
+          ...(attempt.resolvedModel
+            ? { resolvedModel: Object.freeze({ ...attempt.resolvedModel }) }
+            : {}),
+          usage: Object.freeze({ ...attempt.usage }),
+          ...(error ? { error: Object.freeze(error) } : {}),
+          ...(fallback && next
+            ? {
+                fallback: Object.freeze({
+                  model: next.model,
+                  credentials: next.credential,
+                  sourceIndex: next.sourceIndex,
+                }),
+              }
+            : {}),
+        });
+        attempts.push(record);
+        safeEmit(events?.onAttemptEnd, record);
+      };
       try {
-        return await runWithHarness({ ...input, attempt });
+        input.runOptions.signal?.throwIfAborted();
+        const result = await runWithHarness({ ...input, attempt });
+        finishAttempt('succeeded');
+        const execution = finishRun('succeeded');
+        safeEmit(events?.onRunEnd, execution);
+        return { ...result, usage: runUsage(execution.usage), execution };
       } catch (error) {
-        // A credentials chain retries the run on the next source when the
-        // failure is a credential error and no tool has executed yet;
-        // retrying after a tool ran would repeat its side effects.
-        if (
+        const cancelled = input.runOptions.signal?.aborted === true;
+        const extensionError = findPiExtensionError(error);
+        const failure =
+          cancelled && !attempt.postSessionFailure
+            ? new TurnError(failureMessage(input.runOptions.signal?.reason), {
+                cause: input.runOptions.signal?.reason,
+              })
+            : extensionError && !isInstanceOfSafe(error, ExtensionError)
+              ? new ExtensionError(extensionError.message, { cause: error })
+              : (typeof error === 'object' && error !== null) ||
+                  typeof error === 'function'
+                ? error
+                : new TurnError(failureMessage(error), { cause: error });
+        const origin =
+          attempt.failureOrigin === 'runtime' &&
+          !attempt.toolExecuted &&
+          isCredentialFailure(failure)
+            ? 'credentials'
+            : attempt.failureOrigin;
+        const detail = executionError(failure, origin, cancelled);
+        const fallback =
           next !== undefined &&
-          canFallBack(error, attempt, input.runOptions.signal)
-        ) {
+          canFallBack(failure, attempt, input.runOptions.signal);
+        finishAttempt(cancelled ? 'cancelled' : 'failed', detail, fallback);
+        if (fallback) {
+          const identity = {
+            ...(start.context !== undefined ? { context: start.context } : {}),
+            runId: start.runId,
+            attemptId: attempt.start.attemptId,
+          };
           if (source.routeIndex === next.routeIndex) {
             safeEmit(events?.onCredentialFallback, {
+              ...identity,
               from: attempt.credentials.mode,
               to: next.credentials.mode,
-              cause: error,
+              cause: failure,
             });
           } else {
             safeEmit(events?.onFallback, {
+              ...identity,
               from: { model: source.model, credentials: source.credential },
               to: { model: next.model, credentials: next.credential },
-              cause: error,
+              cause: failure,
             });
           }
           continue;
         }
-        if (isInstanceOfSafe(error, ExtensionError)) {
-          throw error;
+        const execution = finishRun(cancelled ? 'cancelled' : 'failed', detail);
+        recordRunExecution(failure, execution);
+        if (
+          attempt.postSessionFailure &&
+          (isInstanceOfSafe(failure, TurnError) ||
+            isInstanceOfSafe(failure, IncompleteResultError))
+        ) {
+          try {
+            Object.defineProperty(failure, 'usage', {
+              value: runUsage(execution.usage),
+              configurable: true,
+              enumerable: true,
+            });
+          } catch {
+            // getRunUsage still exposes totals for frozen errors through the sidecar.
+          }
         }
-        const extensionError = findPiExtensionError(error);
-        if (extensionError) {
-          throw new ExtensionError(extensionError.message, { cause: error });
-        }
-        throw error;
+        if (attempt.postSessionFailure) safeEmit(events?.onError, failure);
+        safeEmit(events?.onRunEnd, execution);
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- Preserve object-valued setup failures.
+        throw failure;
       }
     }
     // Unreachable: the loop returns or throws on the last source.
@@ -304,7 +434,9 @@ async function runWithHarness({
     credentialPlanSources(config.credentials)[0] ??
       // credentialPlanSources never returns empty; satisfy the type.
       { mode: 'env' };
+  if (runAttempt) runAttempt.failureOrigin = 'validation';
   const files = normalizeFiles(runOptions.files ?? []);
+  if (runAttempt) runAttempt.failureOrigin = 'runtime';
   const changedFiles = new Map<string, ChangedFile>();
   let text = '';
   let finishReason: string;
@@ -317,7 +449,10 @@ async function runWithHarness({
   let activeTurnAbortController: AbortController | undefined;
 
   const schema = runOptions.schema;
-  const events = mergeEvents(agentOptions.events, runOptions.events);
+  const events = correlateEvents(
+    mergeEvents(agentOptions.events, runOptions.events),
+    runAttempt,
+  );
   const threadInternals = getThreadInternals(runOptions.thread);
   let succeeded = false;
 
@@ -359,7 +494,9 @@ async function runWithHarness({
     },
   });
 
+  if (runAttempt) runAttempt.failureOrigin = 'credentials';
   assertFileCredentialsPresent(credentials);
+  if (runAttempt) runAttempt.failureOrigin = 'runtime';
 
   const {
     provider: sandboxProvider,
@@ -387,14 +524,25 @@ async function runWithHarness({
       ? renderThreadContext(threadInternals.messages)
       : undefined;
 
+  const piHarness = createPi(
+    createPiSettings(
+      { ...config, model: runAttempt?.model ?? config.model, credentials },
+      runOptions.pi?.thinkingLevel,
+    ),
+  );
+  let adapterSession: Awaited<ReturnType<typeof piHarness.doStart>> | undefined;
   const harnessAgent = new HarnessAgent({
     id: 'runcell',
-    harness: createPi(
-      createPiSettings(
-        { ...config, model: runAttempt?.model ?? config.model, credentials },
-        runOptions.pi?.thinkingLevel,
-      ),
-    ),
+    harness: {
+      ...piHarness,
+      async doStart(options) {
+        // HarnessAgentSession wraps this handle and does not forward its symbols.
+        // Capture it at the public adapter boundary, never through SDK internals.
+        const adapter = await piHarness.doStart(options);
+        adapterSession = adapter;
+        return adapter;
+      },
+    },
     permissionMode: 'allow-all',
     instructions: schema
       ? 'When the task is complete, call submitResult with the structured result.'
@@ -402,6 +550,7 @@ async function runWithHarness({
     tools,
     sandboxConfig: {
       onSession: async ({ session, sessionWorkDir, abortSignal }) => {
+        if (runAttempt) runAttempt.failureOrigin = 'sandbox';
         sandboxContext = { session, workDir: sessionWorkDir };
         // Re-materialize the journal before Pi starts so a fresh sandbox resumes.
         if (continuation) {
@@ -418,6 +567,7 @@ async function runWithHarness({
           files,
           abortSignal,
         });
+        if (runAttempt) runAttempt.failureOrigin = 'runtime';
       },
     },
   });
@@ -431,6 +581,10 @@ async function runWithHarness({
     pinnedSessionId ??
     (continuation ? continuationSessionId(continuation) : undefined) ??
     randomUUID();
+  if (runAttempt) {
+    runAttempt.sessionId = sessionId;
+    runAttempt.failureOrigin = 'sandbox';
+  }
   const sandboxSession = await acquireSandboxSession(sandboxProvider, {
     sessionId,
     resume: resumeFrom !== undefined,
@@ -444,6 +598,7 @@ async function runWithHarness({
     }
   };
   let session: Awaited<ReturnType<typeof harnessAgent.createSession>>;
+  if (runAttempt) runAttempt.failureOrigin = 'runtime';
   try {
     session = await harnessAgent.createSession({
       sessionId,
@@ -462,13 +617,42 @@ async function runWithHarness({
   // aborts, pauses); Pi's session stats pair tokens and cost atomically, so
   // the interval delta survives every completion path. The stream-accumulated
   // usage remains the fallback when no totals are recorded.
-  const usageBaseline = getPiSessionUsageTotals(session);
+  const usageSource = adapterSession ?? session;
+  const usageBaseline = getPiSessionUsageTotals(usageSource);
+  if (runAttempt) runAttempt.resolvedModel = getPiSessionModel(usageSource);
+  let requestStarted = false;
+  let usageObserved = false;
+  let unmeasuredTurn = false;
+  let interrupted = false;
+  const finishUsage = (): RunUsage => {
+    const totals = getPiSessionUsageTotals(usageSource);
+    const counts = finalizeRunUsage(usage, usageBaseline, totals);
+    const observed =
+      usageObserved ||
+      (totals !== undefined &&
+        (!interrupted || counts.totalTokens > 0 || counts.costUsd > 0));
+    const status = !requestStarted
+      ? 'complete'
+      : !interrupted && observed && (totals !== undefined || !unmeasuredTurn)
+        ? 'complete'
+        : observed
+          ? 'partial'
+          : 'unknown';
+    if (runAttempt)
+      runAttempt.usage = {
+        ...counts,
+        costMeasured: counts.costMeasured && status !== 'unknown',
+        status,
+      };
+    return counts;
+  };
 
   try {
     const maxAttempts = schema ? config.maxRepairs : 0;
     for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
       finishReason = 'stop';
       const turnFinishState = { emitted: false };
+      let turnUsageObserved = false;
 
       if (attempt > 0) {
         safeEmit(events?.onRepair, {
@@ -487,6 +671,8 @@ async function runWithHarness({
       let streamThrown: unknown;
       let didStreamThrow = false;
       try {
+        requestStarted = true;
+        if (runAttempt) runAttempt.failureOrigin = 'runtime';
         const result = await harnessAgent.stream({
           session,
           prompt:
@@ -518,9 +704,20 @@ async function runWithHarness({
               turnFinishState.emitted = true;
             },
             addUsage(turnUsage) {
+              const totalUsage =
+                'totalUsage' in part ? asRecord(part.totalUsage) : undefined;
+              turnUsageObserved ||=
+                typeof totalUsage?.['inputTokens'] === 'number' &&
+                Number.isSafeInteger(totalUsage['inputTokens']) &&
+                totalUsage['inputTokens'] >= 0 &&
+                typeof totalUsage['outputTokens'] === 'number' &&
+                Number.isSafeInteger(totalUsage['outputTokens']) &&
+                totalUsage['outputTokens'] >= 0;
+              usageObserved ||= turnUsageObserved;
               accumulateRunUsage(usage, turnUsage);
             },
             setStreamError(cause) {
+              if (runAttempt) runAttempt.failureOrigin = 'provider';
               streamError ??= { cause };
             },
             markToolExecuted() {
@@ -539,6 +736,9 @@ async function runWithHarness({
           activeTurnAbortController = undefined;
         }
       }
+
+      unmeasuredTurn ||= !turnUsageObserved;
+      interrupted ||= didStreamThrow || streamError !== undefined;
 
       // A submission takes precedence over trailing abort, timeout, or
       // transport failures. submitResult.execute already validated and
@@ -563,14 +763,11 @@ async function runWithHarness({
           files: [...changedFiles.values()],
           finishReason,
           sessionId: session.sessionId,
-          usage: finalizeRunUsage(
-            usage,
-            usageBaseline,
-            getPiSessionUsageTotals(session),
-          ),
+          usage: finishUsage(),
         };
       }
 
+      runOptions.signal?.throwIfAborted();
       if (didStreamThrow) {
         throw streamThrown;
       }
@@ -593,11 +790,7 @@ async function runWithHarness({
           files: [...changedFiles.values()],
           finishReason,
           sessionId: session.sessionId,
-          usage: finalizeRunUsage(
-            usage,
-            usageBaseline,
-            getPiSessionUsageTotals(session),
-          ),
+          usage: finishUsage(),
         };
       }
     }
@@ -616,23 +809,15 @@ async function runWithHarness({
     const extensionError = callerAborted
       ? undefined
       : findPiExtensionError(runError);
+    interrupted ||=
+      callerAborted || !isInstanceOfSafe(error, IncompleteResultError);
     const failure = extensionError
       ? new ExtensionError(extensionError.message, { cause: runError })
-      : toRunFailure(
-          runError,
-          finalizeRunUsage(
-            usage,
-            usageBaseline,
-            getPiSessionUsageTotals(session),
-          ),
-        );
-    // Retried failures are reported by the fallback event, not onError.
-    const willFallBack =
-      runAttempt !== undefined &&
-      canFallBack(failure, runAttempt, runOptions.signal);
-    if (!willFallBack) {
-      safeEmit(events?.onError, failure);
-    }
+      : toRunFailure(runError, finishUsage());
+    if (extensionError) finishUsage();
+    // Final errors are emitted by the outer loop once their execution report exists.
+    if (runAttempt) runAttempt.postSessionFailure = true;
+    else safeEmit(events?.onError, failure);
     throw failure;
   } finally {
     if (succeeded && threadInternals) {
@@ -782,6 +967,32 @@ async function bestEffort(fn: () => Promise<unknown>): Promise<void> {
   }
 }
 
+function correlateEvents(
+  events: AgentEvents | undefined,
+  attempt: RunAttempt | undefined,
+): AgentEvents | undefined {
+  if (!events || !attempt) return events;
+  const identity = {
+    ...(attempt.start.context !== undefined
+      ? { context: attempt.start.context }
+      : {}),
+    runId: attempt.start.runId,
+    attemptId: attempt.start.attemptId,
+  };
+  const wrap =
+    <T extends object>(listener: ((event: T) => void) | undefined) =>
+    (event: T) => {
+      safeEmit(listener, { ...event, ...identity });
+    };
+  return {
+    ...events,
+    onToolCall: wrap(events.onToolCall),
+    onToolResult: wrap(events.onToolResult),
+    onRepair: wrap(events.onRepair),
+    onFinish: wrap(events.onFinish),
+  };
+}
+
 /** Combine agent-level and per-run callbacks; each side stays best-effort. */
 function mergeEvents(
   agent: AgentEvents | undefined,
@@ -802,6 +1013,10 @@ function mergeEvents(
       safeEmit(b, ...args);
     };
   return {
+    onRunStart: both(agent.onRunStart, run.onRunStart),
+    onAttemptStart: both(agent.onAttemptStart, run.onAttemptStart),
+    onAttemptEnd: both(agent.onAttemptEnd, run.onAttemptEnd),
+    onRunEnd: both(agent.onRunEnd, run.onRunEnd),
     onText: both(agent.onText, run.onText),
     onToolCall: both(agent.onToolCall, run.onToolCall),
     onToolResult: both(agent.onToolResult, run.onToolResult),
@@ -1255,7 +1470,9 @@ function accumulateRunUsage(target: RunUsage, delta: RunUsage): void {
 }
 
 function asCount(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value
+    : 0;
 }
 
 /**

@@ -36,13 +36,25 @@ export interface ChangedFile {
   bytes: Uint8Array;
 }
 
-export interface ToolCallEvent {
+/** Explicit server-side application metadata. Do not include secrets or content. */
+export type RunContext = Readonly<
+  Record<string, string | number | boolean | null>
+>;
+
+/** Correlation metadata supplied by the built-in runtime. */
+export interface ExecutionContext {
+  runId?: string;
+  attemptId?: string;
+  readonly context?: RunContext;
+}
+
+export interface ToolCallEvent extends ExecutionContext {
   id: string;
   name: string;
   input: unknown;
 }
 
-export interface ToolResultEvent {
+export interface ToolResultEvent extends ExecutionContext {
   id: string;
   name: string;
   /**
@@ -52,12 +64,12 @@ export interface ToolResultEvent {
   output: unknown;
 }
 
-export interface RepairEvent {
+export interface RepairEvent extends ExecutionContext {
   attempt: number;
   reason: string;
 }
 
-export interface FinishEvent {
+export interface FinishEvent extends ExecutionContext {
   sessionId: string;
   finishReason: string;
 }
@@ -68,7 +80,7 @@ export interface FinishEvent {
  * `'env'`); `cause` is the error that triggered the hop. This is the signal
  * that a preferred credential source is dying.
  */
-export interface CredentialFallbackEvent {
+export interface CredentialFallbackEvent extends ExecutionContext {
   from: string;
   to: string;
   cause: unknown;
@@ -81,7 +93,7 @@ export interface ModelRoute<TCredential extends string = string> {
 }
 
 /** Fired when a credential failure advances to the next configured model. */
-export interface ModelFallbackEvent {
+export interface ModelFallbackEvent extends ExecutionContext {
   from: ModelRoute;
   to: ModelRoute;
   cause: unknown;
@@ -92,6 +104,11 @@ export interface ModelFallbackEvent {
  * throwing callback is swallowed and never affects the run.
  */
 export interface AgentEvents {
+  onRunStart?: (event: RunStartEvent) => void;
+  onAttemptStart?: (event: AttemptStartEvent) => void;
+  onAttemptEnd?: (event: AttemptExecution) => void;
+  /** Exactly one final report per started run, including failure/cancellation. */
+  onRunEnd?: (event: RunExecution) => void;
   onText?: (text: string) => void;
   onToolCall?: (call: ToolCallEvent) => void;
   onToolResult?: (result: ToolResultEvent) => void;
@@ -230,6 +247,11 @@ export interface RunOptionsBase {
   thread?: Thread;
   /** Per-run lifecycle callbacks, invoked in addition to the agent-level ones. */
   events?: AgentEvents;
+  /**
+   * Application request/operation metadata, snapshotted at dispatch. Flat,
+   * finite JSON scalar values only; never sent to the model or UI stream.
+   */
+  context?: RunContext;
   /** Resume a previous session by id. */
   sessionId?: string;
   /** Abort signal to cancel the run. */
@@ -256,9 +278,9 @@ export interface RunOptions<
 
 /**
  * Token usage and estimated cost for a single {@link Agent.run} call,
- * accumulated across every model turn in the run (including repair turns).
- * Available on successful results and measurable failures after a session
- * starts.
+ * accumulated across every attempt and model turn (including repair turns).
+ * Available on successful results and through getRunUsage on recorded failures.
+ * The execution report describes whether these measurements are complete.
  */
 export interface RunUsage {
   /** Non-cached input (prompt) tokens billed at the input rate. */
@@ -284,10 +306,80 @@ export interface RunUsage {
    * Whether `costUsd` is a real measurement. `false` when the run consumed
    * tokens but no cost could be attributed — in practice, when the catalog
    * has no (nonzero) pricing for the model — so a `costUsd` of `0` should
-   * be treated as “unpriced”, not “free”. Always `true` when `costUsd > 0`
-   * or the run consumed no tokens.
+   * be treated as “unpriced”, not “free”. Also `false` when an attempt's
+   * usage is unknown. Check execution.usage.status separately: priced known
+   * tokens do not establish that all consumed tokens were reported.
    */
   costMeasured: boolean;
+}
+
+/** What the runtime knows, not a guarantee about the provider's invoice. */
+export interface ExecutionUsage extends RunUsage {
+  /** Partial/unknown measurements are lower bounds, not measured zero. */
+  status: 'complete' | 'partial' | 'unknown';
+}
+
+export interface ExecutionError {
+  kind:
+    | 'authentication'
+    | 'rate_limit'
+    | 'provider_unavailable'
+    | 'invalid_request'
+    | 'cancelled'
+    | 'unknown';
+  origin:
+    | 'provider'
+    | 'credentials'
+    | 'sandbox'
+    | 'tool'
+    | 'extension'
+    | 'validation'
+    | 'runtime'
+    | 'unknown';
+  statusCode?: number;
+  retryAfterMs?: number;
+}
+
+export interface RunStartEvent {
+  readonly runId: string;
+  readonly context?: RunContext;
+  /** ISO 8601 wall-clock time; durations use a monotonic clock. */
+  readonly startedAt: string;
+}
+
+export interface AttemptStartEvent extends RunStartEvent {
+  readonly attemptId: string;
+  /** Zero-based execution order within this run. */
+  readonly index: number;
+  readonly model: string;
+  readonly credentials: string;
+  readonly credentialSource: string;
+  readonly routeIndex: number;
+  readonly sourceIndex: number;
+}
+
+/** One route plus one concrete credential source, including all tool/repair turns. */
+export interface AttemptExecution extends AttemptStartEvent {
+  readonly endedAt: string;
+  readonly durationMs: number;
+  readonly outcome: 'succeeded' | 'failed' | 'cancelled';
+  readonly sessionId?: string;
+  /** Absent if setup failed before model resolution. */
+  readonly resolvedModel?: { readonly id: string; readonly provider: string };
+  readonly usage: Readonly<ExecutionUsage>;
+  readonly error?: Readonly<ExecutionError>;
+  /** Present only when this failure actually advances the fallback chain. */
+  readonly fallback?: Readonly<ModelRoute & { sourceIndex: number }>;
+}
+
+/** Server-side execution metadata plus explicit application context; no model payloads are added. */
+export interface RunExecution extends RunStartEvent {
+  readonly endedAt: string;
+  readonly durationMs: number;
+  readonly outcome: 'succeeded' | 'failed' | 'cancelled';
+  readonly attempts: readonly AttemptExecution[];
+  readonly usage: Readonly<ExecutionUsage>;
+  readonly error?: Readonly<ExecutionError>;
 }
 
 /**
@@ -307,8 +399,10 @@ export interface RunResult<TData> {
   finishReason: string;
   /** The session id (for resuming). */
   sessionId: string;
-  /** Token usage and estimated cost for this run. */
+  /** Known usage across all attempts; execution.usage.status describes completeness. */
   usage: RunUsage;
+  /** Always supplied by the built-in runtime; optional for custom runtimes. */
+  execution?: RunExecution;
 }
 
 /**

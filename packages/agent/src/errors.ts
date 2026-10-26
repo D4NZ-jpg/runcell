@@ -1,4 +1,5 @@
 import type { RunUsage } from './types.js';
+import { getRunExecution, runUsage } from './execution.js';
 
 interface RunFailureOptions {
   cause?: unknown;
@@ -10,6 +11,7 @@ interface RunFailureOptions {
  * has the complete runtime-produced shape.
  */
 export function getRunUsage(value: unknown): RunUsage | undefined {
+  const execution = getRunExecution(value);
   if (
     (typeof value !== 'object' || value === null) &&
     typeof value !== 'function'
@@ -18,7 +20,9 @@ export function getRunUsage(value: unknown): RunUsage | undefined {
   }
 
   try {
-    const usage = (value as { usage?: unknown }).usage;
+    const usage = execution
+      ? runUsage(execution.usage)
+      : (value as { usage?: unknown }).usage;
     if (typeof usage !== 'object' || usage === null || Array.isArray(usage)) {
       return undefined;
     }

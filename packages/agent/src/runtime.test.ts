@@ -20,6 +20,10 @@ import type {
   FinishEvent,
   RepairEvent,
   RunOptions,
+  RunExecution,
+  AttemptExecution,
+  AttemptStartEvent,
+  RunStartEvent,
   ToolCallEvent,
   ToolDefinition,
   ToolResultEvent,
@@ -33,6 +37,590 @@ describe('defaultRuntime', () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  describe('execution reports', () => {
+    const schema = z.object({ ok: z.boolean() });
+    const measured = (inputTokens = 10) => ({
+      type: 'finish',
+      finishReason: 'stop',
+      totalUsage: { inputTokens, outputTokens: 2 },
+      providerMetadata: { pi: { costUsd: 0.01 } },
+    });
+    const modelRoutes = [
+      {
+        model: 'anthropic/test',
+        credential: 'subscription',
+        credentials: { mode: 'apiKeys', keys: { anthropic: 'secret-primary' } },
+      },
+      {
+        model: 'amazon-bedrock/test',
+        credential: 'aws',
+        credentials: { mode: 'env' },
+      },
+    ] as const satisfies NonNullable<ResolvedAgentConfig['models']>;
+
+    it('emits immutable, correlated lifecycle records at agent and run levels', async () => {
+      const starts: RunStartEvent[] = [];
+      const attemptStarts: AttemptStartEvent[] = [];
+      const attempts: AttemptExecution[] = [];
+      const finishes: FinishEvent[] = [];
+      const reports: RunExecution[] = [];
+      const order: string[] = [];
+      installRuntimeMocks([
+        agent => {
+          agent.submit({ ok: true });
+          return [measured()];
+        },
+      ]);
+      const runtime = await loadRuntime();
+      const result = await runtime.run(
+        createRuntimeInput(schema, {
+          agentOptions: {
+            events: {
+              onRunStart: event => {
+                starts.push(event);
+                order.push('run.start');
+              },
+              onAttemptStart: event => {
+                attemptStarts.push(event);
+                order.push('attempt.start');
+              },
+              onAttemptEnd: event => {
+                attempts.push(event);
+                order.push('attempt.end');
+              },
+              onFinish: event => finishes.push(event),
+              onRunEnd: event => {
+                reports.push(event);
+                order.push('run.end');
+              },
+            },
+          },
+          runOptions: { events: { onRunEnd: event => reports.push(event) } },
+        }),
+      );
+      expect(order).toEqual([
+        'run.start',
+        'attempt.start',
+        'attempt.end',
+        'run.end',
+      ]);
+      expect(reports).toEqual([result.execution, result.execution]);
+      expect(result.execution).toMatchObject({
+        outcome: 'succeeded',
+        usage: { status: 'complete', totalTokens: 12 },
+      });
+      expect(result.execution?.runId).not.toBe(result.sessionId);
+      expect(attempts).toEqual(result.execution?.attempts);
+      expect(attemptStarts[0]).toMatchObject({
+        runId: starts[0]?.runId,
+        attemptId: attempts[0]?.attemptId,
+      });
+      expect(finishes[0]).toMatchObject({
+        runId: starts[0]?.runId,
+        attemptId: attempts[0]?.attemptId,
+      });
+      expect(attempts[0]?.resolvedModel).toEqual({
+        id: 'test',
+        provider: 'anthropic',
+      });
+      expect(attempts[0]?.durationMs).toBeGreaterThanOrEqual(0);
+      expect(Object.isFrozen(result.execution)).toBe(true);
+      expect(Object.isFrozen(result.execution?.attempts)).toBe(true);
+      expect(Object.isFrozen(attempts[0]?.usage)).toBe(true);
+    });
+
+    it('includes failed-attempt usage when a different model succeeds', async () => {
+      const hops: unknown[] = [];
+      const errors: unknown[] = [];
+      const state = installRuntimeMocks([
+        agent => {
+          state.sessionUsageTotals.set(getTestSession(agent), {
+            inputTokens: 4,
+            outputTokens: 1,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            costUsd: 0.005,
+          });
+          return [
+            {
+              type: 'error',
+              error: Object.assign(new Error('401 secret-provider-response'), {
+                statusCode: 401,
+              }),
+            },
+          ];
+        },
+        agent => {
+          agent.submit({ ok: true });
+          return [measured()];
+        },
+      ]);
+      const runtime = await loadRuntime();
+      const result = await runtime.run(
+        createRuntimeInput(schema, {
+          config: { models: modelRoutes },
+          agentOptions: {
+            events: {
+              onFallback: event => hops.push(event),
+              onError: error => errors.push(error),
+            },
+          },
+        }),
+      );
+      expect(result.usage).toMatchObject({
+        inputTokens: 14,
+        outputTokens: 3,
+        totalTokens: 17,
+        costUsd: 0.015,
+      });
+      expect(result.execution?.usage.status).toBe('partial');
+      expect(result.execution?.attempts).toMatchObject([
+        {
+          model: 'anthropic/test',
+          credentials: 'subscription',
+          outcome: 'failed',
+          error: { kind: 'authentication', statusCode: 401 },
+          usage: { status: 'partial', totalTokens: 5 },
+          fallback: { model: 'amazon-bedrock/test', credentials: 'aws' },
+        },
+        {
+          model: 'amazon-bedrock/test',
+          credentials: 'aws',
+          outcome: 'succeeded',
+          usage: { status: 'complete', totalTokens: 12 },
+        },
+      ]);
+      expect(
+        new Set(result.execution?.attempts.map(attempt => attempt.attemptId))
+          .size,
+      ).toBe(2);
+      expect(hops).toMatchObject([
+        {
+          runId: result.execution?.runId,
+          attemptId: result.execution?.attempts[0]?.attemptId,
+        },
+      ]);
+      expect(errors).toEqual([]);
+      expect(JSON.stringify(result.execution)).not.toContain('secret-primary');
+      expect(JSON.stringify(result.execution)).not.toContain(
+        'secret-provider-response',
+      );
+      expect(JSON.stringify(result.execution)).not.toContain('do it');
+    });
+
+    it('exposes aggregate usage and the same failure report inside onError', async () => {
+      const observations: unknown[] = [];
+      const state = installRuntimeMocks(
+        [1, 2].map(inputTokens => agent => {
+          state.sessionUsageTotals.set(getTestSession(agent), {
+            inputTokens,
+            outputTokens: 1,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            costUsd: 0.01,
+          });
+          return [{ type: 'error', error: new Error('401 Unauthorized') }];
+        }),
+      );
+      const { getRunExecution } = await import('./execution.js');
+      const { getRunUsage } = await import('./errors.js');
+      const runtime = await loadRuntime();
+      const failure = await runtime
+        .run(
+          createRuntimeInput(schema, {
+            config: { models: modelRoutes },
+            agentOptions: {
+              events: {
+                onError: error => observations.push(getRunExecution(error)),
+                onRunEnd: report => observations.push(report),
+              },
+            },
+          }),
+        )
+        .catch((error: unknown) => error);
+      const execution = getRunExecution(failure);
+      expect(execution).toMatchObject({
+        outcome: 'failed',
+        usage: { totalTokens: 5, costUsd: 0.02, status: 'partial' },
+      });
+      expect(execution?.attempts).toHaveLength(2);
+      expect(execution?.attempts[1]?.fallback).toBeUndefined();
+      expect(observations).toEqual([execution, execution]);
+      expect(getRunUsage(failure)?.totalTokens).toBe(5);
+      expect((failure as { usage: unknown }).usage).toEqual(
+        getRunUsage(failure),
+      );
+    });
+
+    it('keeps infrastructure errors intact and accounts for failure before a request', async () => {
+      const reports: RunExecution[] = [];
+      const failure = Object.freeze(new Error('initialization failed'));
+      const state = installRuntimeMocks();
+      state.createSessionError = failure;
+      const runtime = await loadRuntime();
+      const { getRunExecution } = await import('./execution.js');
+      await expect(
+        runtime.run(
+          createRuntimeInput(schema, {
+            agentOptions: {
+              events: { onRunEnd: report => reports.push(report) },
+            },
+          }),
+        ),
+      ).rejects.toBe(failure);
+      expect(getRunExecution(failure)).toBe(reports[0]);
+      expect(reports[0]).toMatchObject({
+        outcome: 'failed',
+        usage: { status: 'complete', totalTokens: 0 },
+        error: { kind: 'unknown', origin: 'runtime' },
+      });
+      expect(reports[0]?.attempts).toHaveLength(1);
+      expect(reports[0]?.attempts[0]?.resolvedModel).toBeUndefined();
+    });
+
+    it('wraps primitive setup failures so they also have an inspectable report', async () => {
+      const state = installRuntimeMocks();
+      state.createSessionError = 'plain failure';
+      const runtime = await loadRuntime();
+      const failure = await runtime
+        .run(createRuntimeInput(schema))
+        .catch((error: unknown) => error);
+      const { getRunExecution } = await import('./execution.js');
+      expect(failure).toMatchObject({ cause: 'plain failure' });
+      expect(getRunExecution(failure)?.outcome).toBe('failed');
+    });
+
+    it('finalizes pre-cancelled runs without opening a session or falling back', async () => {
+      const state = installRuntimeMocks();
+      const runtime = await loadRuntime();
+      const reason = new Error('cancelled by caller');
+      const signal = AbortSignal.abort(reason);
+      const failure = await runtime
+        .run(
+          createRuntimeInput(schema, {
+            config: { models: modelRoutes },
+            runOptions: { signal },
+          }),
+        )
+        .catch((error: unknown) => error);
+      const { getRunExecution } = await import('./execution.js');
+      expect(getRunExecution(failure)).toMatchObject({
+        outcome: 'cancelled',
+        attempts: [{ outcome: 'cancelled' }],
+        error: { kind: 'cancelled' },
+        usage: { status: 'complete', totalTokens: 0 },
+      });
+      expect(state.instances).toHaveLength(0);
+      const secondFailure = await runtime
+        .run(createRuntimeInput(schema, { runOptions: { signal } }))
+        .catch((error: unknown) => error);
+      expect(secondFailure).not.toBe(failure);
+      expect(getRunExecution(secondFailure)?.runId).not.toBe(
+        getRunExecution(failure)?.runId,
+      );
+      expect(failure).toMatchObject({ cause: reason });
+    });
+
+    it('accounts for usage on cancellation during a stream', async () => {
+      const controller = new AbortController();
+      const state = installRuntimeMocks([
+        agent => {
+          state.sessionUsageTotals.set(getTestSession(agent), {
+            inputTokens: 3,
+            outputTokens: 1,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            costUsd: 0.01,
+          });
+          controller.abort('user stopped');
+          return [{ type: 'error', error: new Error('503') }];
+        },
+      ]);
+      const runtime = await loadRuntime();
+      const failure = await runtime
+        .run(
+          createRuntimeInput(schema, {
+            config: { models: modelRoutes },
+            runOptions: { signal: controller.signal },
+          }),
+        )
+        .catch((error: unknown) => error);
+      const { getRunExecution } = await import('./execution.js');
+      expect(getRunExecution(failure)).toMatchObject({
+        outcome: 'cancelled',
+        usage: { totalTokens: 4, status: 'partial' },
+        error: { kind: 'cancelled' },
+      });
+      expect(getRunExecution(failure)?.attempts).toHaveLength(1);
+    });
+
+    it.each([429, 503])(
+      'reports HTTP %s without enabling availability fallback',
+      async statusCode => {
+        const cause = Object.assign(new Error('request failed'), {
+          statusCode,
+          responseHeaders: { 'retry-after': '3' },
+        });
+        installRuntimeMocks([() => [{ type: 'error', error: cause }]]);
+        const runtime = await loadRuntime();
+        const failure = await runtime
+          .run(createRuntimeInput(schema, { config: { models: modelRoutes } }))
+          .catch((error: unknown) => error);
+        const { getRunExecution } = await import('./execution.js');
+        expect(getRunExecution(failure)?.attempts).toHaveLength(1);
+        expect(getRunExecution(failure)?.error).toMatchObject({
+          statusCode,
+          retryAfterMs: 3000,
+          origin: 'provider',
+        });
+        expect((failure as Error).cause).toBe(cause);
+      },
+    );
+
+    it('distinguishes measured zero from unknown usage', async () => {
+      const state = installRuntimeMocks([
+        agent => {
+          state.sessionUsageTotals.set(getTestSession(agent), {
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            costUsd: 0,
+          });
+          agent.submit({ ok: true });
+          return [];
+        },
+        agent => {
+          agent.submit({ ok: true });
+          return [];
+        },
+      ]);
+      const runtime = await loadRuntime();
+      const measuredZero = await runtime.run(createRuntimeInput(schema));
+      const unmeasured = await runtime.run(createRuntimeInput(schema));
+      expect(measuredZero.execution?.usage).toMatchObject({
+        totalTokens: 0,
+        status: 'complete',
+        costMeasured: true,
+      });
+      expect(unmeasured.execution?.usage).toMatchObject({
+        totalTokens: 0,
+        status: 'unknown',
+        costMeasured: false,
+      });
+      expect(measuredZero.execution?.runId).not.toBe(
+        unmeasured.execution?.runId,
+      );
+      expect(measuredZero.sessionId).toBe(unmeasured.sessionId);
+    });
+
+    it('keeps repair turns inside one attempt and detects missing turn measurements', async () => {
+      installRuntimeMocks([
+        () => [measured()],
+        agent => {
+          agent.submit({ ok: true });
+          return [];
+        },
+      ]);
+      const runtime = await loadRuntime();
+      const result = await runtime.run(createRuntimeInput(schema));
+      expect(result.execution?.attempts).toHaveLength(1);
+      expect(result.execution?.usage).toMatchObject({
+        status: 'partial',
+        totalTokens: 12,
+      });
+    });
+
+    it('keeps credential hops and model hops distinct in the report', async () => {
+      const hops: string[] = [];
+      installRuntimeMocks([
+        () => [{ type: 'error', error: new Error('401') }],
+        () => [{ type: 'error', error: new Error('401') }],
+        agent => {
+          agent.submit({ ok: true });
+          return [measured()];
+        },
+      ]);
+      const runtime = await loadRuntime();
+      const models = [
+        {
+          ...modelRoutes[0],
+          credentials: {
+            mode: 'chain' as const,
+            sources: [
+              { mode: 'env' as const },
+              { mode: 'apiKeys' as const, keys: { anthropic: 'backup' } },
+            ],
+          },
+        },
+        modelRoutes[1],
+      ];
+      const result = await runtime.run(
+        createRuntimeInput(schema, {
+          config: { models },
+          agentOptions: {
+            events: {
+              onCredentialFallback: () => hops.push('credentials'),
+              onFallback: () => hops.push('model'),
+            },
+          },
+        }),
+      );
+      expect(hops).toEqual(['credentials', 'model']);
+      expect(
+        result.execution?.attempts.map(({ index, routeIndex, sourceIndex }) => [
+          index,
+          routeIndex,
+          sourceIndex,
+        ]),
+      ).toEqual([
+        [0, 0, 0],
+        [1, 0, 1],
+        [2, 1, 0],
+      ]);
+    });
+
+    it('keeps concurrent same-session runs and usage isolated', async () => {
+      installRuntimeMocks(
+        [10, 20].map(tokens => agent => {
+          agent.submit({ ok: true });
+          return [measured(tokens)];
+        }),
+      );
+      const runtime = await loadRuntime();
+      const [a, b] = await Promise.all([
+        runtime.run(createRuntimeInput(schema)),
+        runtime.run(createRuntimeInput(schema)),
+      ]);
+      expect(a.sessionId).toBe(b.sessionId);
+      expect(a.execution?.runId).not.toBe(b.execution?.runId);
+      expect(a.execution?.attempts[0]?.attemptId).not.toBe(
+        b.execution?.attempts[0]?.attemptId,
+      );
+      expect(
+        [a.usage.totalTokens, b.usage.totalTokens].sort((x, y) => x - y),
+      ).toEqual([12, 22]);
+    });
+
+    it('returns the report from stream.result without exposing it on the UI wire', async () => {
+      const reports: RunExecution[] = [];
+      installRuntimeMocks([
+        () => [{ type: 'text-delta', text: 'hello' }, measured()],
+      ]);
+      const { createAgent } = await import('./create-agent.js');
+      const agent = createAgent({
+        model: 'anthropic/test',
+        events: { onRunEnd: report => reports.push(report) },
+      });
+      const stream = agent.stream({ prompt: 'private prompt' });
+      const body = await stream.toUIMessageStreamResponse().text();
+      const result = await stream.result;
+      expect(reports).toEqual([result.execution]);
+      expect(result.execution?.usage.status).toBe('complete');
+      expect(body).toContain('hello');
+      expect(body).not.toContain(result.execution?.runId);
+      expect(body).not.toContain('private prompt');
+      expect(body).not.toContain('credentialSource');
+    });
+
+    it('makes streaming failures inspectable while retaining masked UI errors', async () => {
+      installRuntimeMocks([
+        () => [
+          {
+            type: 'error',
+            error: Object.assign(new Error('secret response'), {
+              statusCode: 503,
+            }),
+          },
+        ],
+      ]);
+      const { createAgent } = await import('./create-agent.js');
+      const { getRunExecution } = await import('./execution.js');
+      const agent = createAgent({ model: 'anthropic/test' });
+      const stream = agent.stream({ prompt: 'private prompt' });
+      const failure = await stream.result.catch((error: unknown) => error);
+      expect(getRunExecution(failure)?.error?.kind).toBe(
+        'provider_unavailable',
+      );
+      const body = await stream.toUIMessageStreamResponse().text();
+      expect(body).toContain('An error occurred.');
+      expect(body).not.toContain('secret response');
+      expect(body).not.toContain('execution');
+    });
+
+    it('can have complete usage even when structured-result validation fails', async () => {
+      installRuntimeMocks([() => [measured()], () => [measured()]]);
+      const runtime = await loadRuntime();
+      const failure = await runtime
+        .run(createRuntimeInput(schema))
+        .catch((error: unknown) => error);
+      const { getRunExecution } = await import('./execution.js');
+      expect(getRunExecution(failure)).toMatchObject({
+        outcome: 'failed',
+        error: { origin: 'validation' },
+        usage: { status: 'complete', totalTokens: 24 },
+      });
+      expect(getRunExecution(failure)?.attempts).toHaveLength(1);
+    });
+
+    it('reports cancellation even when an aborted plain-text stream closes without an error', async () => {
+      const controller = new AbortController();
+      installRuntimeMocks([
+        () => {
+          controller.abort(new Error('stopped'));
+          return [];
+        },
+      ]);
+      const runtime = await loadRuntime();
+      const failure = await runtime
+        .run(
+          createRuntimeInput(schema, {
+            runOptions: { schema: undefined, signal: controller.signal },
+          }),
+        )
+        .catch((error: unknown) => error);
+      const { getRunExecution } = await import('./execution.js');
+      expect(getRunExecution(failure)).toMatchObject({
+        outcome: 'cancelled',
+        error: { kind: 'cancelled' },
+      });
+    });
+
+    it('does not let throwing or rejecting lifecycle hooks change the outcome', async () => {
+      installRuntimeMocks([
+        agent => {
+          agent.submit({ ok: true });
+          return [measured()];
+        },
+      ]);
+      const runtime = await loadRuntime();
+      const result = await runtime.run(
+        createRuntimeInput(schema, {
+          agentOptions: {
+            events: {
+              onRunStart() {
+                throw new Error('listener failed');
+              },
+              // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Exercise best-effort async listeners.
+              onAttemptStart: async () => {
+                await Promise.resolve();
+                throw new Error('listener rejected');
+              },
+              onAttemptEnd: event => {
+                Object.assign(event.usage, { totalTokens: 999 });
+              },
+              onRunEnd() {
+                throw new Error('listener failed');
+              },
+            },
+          },
+        }),
+      );
+      expect(result.execution?.outcome).toBe('succeeded');
+      expect(result.usage.totalTokens).toBe(12);
+    });
   });
 
   it('creates the harness, seeds files and returns submitted data', async () => {
@@ -58,7 +646,7 @@ describe('defaultRuntime', () => {
       }),
     );
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       data: { ok: true },
       text: 'done',
       files: [],
@@ -71,7 +659,7 @@ describe('defaultRuntime', () => {
         cacheWriteTokens: 0,
         totalTokens: 0,
         costUsd: 0,
-        costMeasured: true,
+        costMeasured: false,
       },
     });
     expect(state.sandboxSettings).toEqual([{}]);
@@ -190,7 +778,7 @@ describe('defaultRuntime', () => {
     expect(turnSignal?.aborted).toBe(true);
     expect(turnSignal?.reason).toBe(Symbol.for('runcell.pi.silent-turn-abort'));
     expect(consumedAfterSubmission).toBe(false);
-    expect(finishes).toEqual([
+    expect(finishes).toMatchObject([
       { sessionId: 'test-session', finishReason: 'stop' },
     ]);
     expect(state.instances[0]?.session?.destroyCount).toBe(1);
@@ -222,7 +810,7 @@ describe('defaultRuntime', () => {
 
     expect(result.data).toEqual({ ok: true });
     expect(result.finishReason).toBe('tool-calls');
-    expect(finishes).toEqual([
+    expect(finishes).toMatchObject([
       { sessionId: 'test-session', finishReason: 'tool-calls' },
     ]);
     expect(errors).toEqual([]);
@@ -1723,6 +2311,7 @@ describe('defaultRuntime', () => {
     const result = await runtime.run(
       createRuntimeInput(schema, {
         agentOptions: { events },
+        runOptions: { context: { requestId: 'tool-application-request' } },
       }),
     );
 
@@ -1731,14 +2320,19 @@ describe('defaultRuntime', () => {
       { path: 'out.txt', change: 'create', bytes: outputBytes },
     ]);
     expect(textEvents).toEqual(['hello']);
-    expect(toolCalls).toEqual([
+    expect(toolCalls).toMatchObject([
       { id: 'call-1', name: 'lookup', input: { id: 'abc' } },
     ]);
-    expect(toolResults).toEqual([
+    expect(toolResults).toMatchObject([
       { id: 'call-1', name: 'lookup', output: { value: 42 } },
     ]);
+    expect(toolCalls[0]?.context).toEqual({
+      requestId: 'tool-application-request',
+    });
+    expect(toolResults[0]?.context).toEqual(result.execution?.context);
+    expect(finishes[0]?.context).toEqual(result.execution?.context);
     expect(fileChanges).toEqual(result.files);
-    expect(finishes).toEqual([
+    expect(finishes).toMatchObject([
       { sessionId: 'test-session', finishReason: 'stop' },
     ]);
   });
@@ -2485,7 +3079,7 @@ describe('defaultRuntime', () => {
       'do it',
       'Call submitResult now with a valid structured result for the previous task.',
     ]);
-    expect(repairs).toEqual([
+    expect(repairs).toMatchObject([
       { attempt: 1, reason: 'missing or invalid structured result' },
     ]);
   });
@@ -2715,7 +3309,7 @@ describe('defaultRuntime', () => {
 
     expect(result.data).toEqual({ ok: true });
     expect(result.finishReason).toBe('stop');
-    expect(finishes).toEqual([
+    expect(finishes).toMatchObject([
       { sessionId: 'test-session', finishReason: 'length' },
       { sessionId: 'test-session', finishReason: 'stop' },
     ]);
@@ -2797,7 +3391,7 @@ describe('defaultRuntime', () => {
       cacheWriteTokens: 0,
       totalTokens: 0,
       costUsd: 0,
-      costMeasured: true,
+      costMeasured: false,
     });
     expect(errors).toEqual([failure]);
     expect(state.instances[0]?.session?.destroyCount).toBe(1);
@@ -2992,6 +3586,9 @@ function installRuntimeMocks(scripts: StreamScript[] = []): TestState {
     },
     getPiSessionUsageTotals(session: TestHarnessSession) {
       return state.sessionUsageTotals.get(session);
+    },
+    getPiSessionModel() {
+      return { id: 'test', provider: 'anthropic' };
     },
   }));
 

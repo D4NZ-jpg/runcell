@@ -246,20 +246,28 @@ describe('createPostgresCredentialStore', () => {
       pool: db.pool,
       encryptionKey: 'correct horse battery staple',
     });
-
-    await store.withLock('agent-1', async () => ({ result: 0, next: blobA }));
+    // Unlike two-character tokens, these cannot coincide with random base64.
+    const access = 'plaintext-access-token-for-encryption-test';
+    const refresh = 'plaintext-refresh-token-for-encryption-test';
+    const plaintext: AuthBlob = {
+      anthropic: { type: 'oauth', access, refresh, expires: 1 },
+    };
+    await store.withLock('agent-1', async () => ({
+      result: 0,
+      next: plaintext,
+    }));
 
     // At rest: an envelope, with no token material in the stored JSON.
     const stored = db.rows.get('agent-1') as Record<string, unknown>;
     expect(stored.__runcell_encrypted).toBe(1);
-    expect(JSON.stringify(stored)).not.toContain('a1');
-    expect(JSON.stringify(stored)).not.toContain('r1');
+    expect(JSON.stringify(stored)).not.toContain(access);
+    expect(JSON.stringify(stored)).not.toContain(refresh);
 
     // Through the store: the plaintext blob.
     const seen = await store.withLock('agent-1', async current => ({
       result: current,
     }));
-    expect(seen).toEqual(blobA);
+    expect(seen).toEqual(plaintext);
   });
 
   it('fails clearly with the wrong encryption key', async () => {

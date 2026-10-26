@@ -6,6 +6,7 @@ import {
 } from './credentials.js';
 import { InvalidOptionError } from './errors.js';
 import { normalizeFiles } from './files.js';
+import { snapshotRunContext } from './run-context.js';
 import { defaultRuntime, type RuncellRuntime } from './runtime.js';
 import { resolveSandboxConfig, type SandboxConfig } from './sandbox.js';
 import { getSandboxInternals } from './sandbox-handle.js';
@@ -285,6 +286,7 @@ export function validateRunOptions(
     );
   }
   validateThinkingLevel(options.pi?.thinkingLevel, 'run "pi.thinkingLevel"');
+  snapshotRunContext(options.context);
 }
 
 /** Runtime guard for JS callers; deliberately not a type guard so the

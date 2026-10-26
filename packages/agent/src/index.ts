@@ -1,4 +1,5 @@
 export { createAgent } from './create-agent.js';
+export { getRunExecution } from './execution.js';
 
 export {
   isToolContent,
@@ -99,6 +100,14 @@ export type {
   RunOptionsBase,
   RunResult,
   RunUsage,
+  ExecutionContext,
+  RunContext,
+  ExecutionUsage,
+  ExecutionError,
+  RunStartEvent,
+  AttemptStartEvent,
+  AttemptExecution,
+  RunExecution,
   StreamRun,
   UIChatMessage,
   UIMessageChunk,

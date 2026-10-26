@@ -130,7 +130,18 @@ interface PiSessionUsageSource {
   readonly [PI_SESSION_USAGE_TOTALS]: () => PiSessionUsageTotals;
 }
 
-type PiHarnessSession = HarnessV1Session & PiSessionUsageSource;
+const PI_SESSION_MODEL = Symbol('runcell.pi.session-model');
+interface PiSessionModelSource {
+  readonly [PI_SESSION_MODEL]: { readonly id: string; readonly provider: string } | undefined;
+}
+
+/** Actual catalog model selected for this session, not a parsed configured ID. */
+export function getPiSessionModel(source: object): PiSessionModelSource[typeof PI_SESSION_MODEL] {
+  const model = (source as Partial<PiSessionModelSource>)[PI_SESSION_MODEL];
+  return model ? { ...model } : undefined;
+}
+
+type PiHarnessSession = HarnessV1Session & PiSessionUsageSource & PiSessionModelSource;
 
 /**
  * Read cumulative usage recorded for this exact Pi session instance. Callers
@@ -1299,6 +1310,7 @@ export async function createPiSession(
   const sessionImpl: PiHarnessSession = {
     sessionId: input.sessionId,
     [PI_SESSION_USAGE_TOTALS]: () => ({ ...sessionUsageTotals }),
+    [PI_SESSION_MODEL]: resolvedModel ? { id: resolvedModel.id, provider: resolvedModel.provider } : undefined,
     isResume: input.isResume,
     // The model Pi actually resolves to (the configured id, or its default when
     // unset) — `gen_ai.request.model`.

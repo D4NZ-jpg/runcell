@@ -107,6 +107,7 @@ run(options: RunOptionsBase): Promise<RunResult<undefined>>;
 | `sandbox`            | `Sandbox \| SandboxOption`            | A caller-owned handle that Runcell does not destroy, or an ephemeral mode option.                                                                                                          |
 | `thread`             | `Thread`                              | Conversation to continue. A successful run mutates it in place.                                                                                                                            |
 | `events`             | `AgentEvents`                         | Per-run lifecycle callbacks, invoked in addition to the agent-level ones.                                                                                                                  |
+| `context`            | `RunContext`                          | Optional server-side request/operation attributes included in hooks and execution reports, never automatically sent to the model or UI stream.                                             |
 | `pi`                 | `{ thinkingLevel?: PiThinkingLevel }` | Per-run thinking-level override. The only accepted key is `thinkingLevel`. It wins for this run only.                                                                                      |
 | `sessionId`          | `string`                              | Resume a previous session by id.                                                                                                                                                           |
 | `signal`             | `AbortSignal`                         | Cancels the run.                                                                                                                                                                           |
@@ -120,6 +121,43 @@ cancels the active model turn and returns that submission. A trailing stream
 timeout or transport error does not discard an already accepted result. Runcell
 keeps the text and file changes that it observed before the submission.
 
+### Application correlation
+
+Pass optional application metadata per run, not on the shared agent:
+
+```ts
+const result = await agent.run({
+  prompt,
+  context: {
+    requestId: 'req-123',
+    operation: 'summarize-feedback',
+    tenantId: 'tenant-456',
+  },
+});
+console.log(result.execution?.context);
+```
+
+`RunContext` is an exported readonly map of strings, finite numbers, booleans,
+or `null`. Only enumerable string-keyed attributes of a plain object are
+copied. Nested objects, arrays, `undefined` values, accessors, and custom
+instances are rejected with `InvalidOptionError` before execution. Attribute
+names are application-defined and have no runtime effect.
+
+The built-in runtime copies and freezes context at dispatch. That snapshot is
+shared by run/attempt hooks, correlated tool/repair/finish/fallback events,
+and success/failure execution reports. Changing the caller's object afterward
+does not alter the report. Concurrent runs and later runs do not inherit it.
+Text and file callback payloads remain unchanged.
+
+Context is not included in prompts, thread history, provider headers, or UI
+message streams. It is not redacted: use opaque IDs and do not put secrets or
+personal content in it. If you serialize the full result yourself, its execution
+report includes the context you supplied.
+
+Use the existing callbacks to connect your own logger, tracing library, or
+metrics sink. Runcell does not install a telemetry SDK, create tracing spans,
+propagate distributed tracing headers, or provide an OpenTelemetry adapter.
+
 ### `RunResult<TData>`
 
 | Field          | Type            | Description                                                            |
@@ -129,14 +167,19 @@ keeps the text and file changes that it observed before the submission.
 | `files`        | `ChangedFile[]` | Files created/modified during this run (`{ path, change, bytes }`).    |
 | `finishReason` | `string`        | Why the final turn stopped, e.g. `"stop"`.                             |
 | `sessionId`    | `string`        | Identifier of the underlying run session.                              |
-| `usage`        | `RunUsage`      | Token usage and estimated cost for this run.                           |
+| `usage`        | `RunUsage`      | Known token usage and estimated cost across all attempts.              |
+| `execution`    | `RunExecution?` | Final execution report. Always supplied by the built-in runtime.       |
 
 ### `RunUsage`
 
-Token usage and estimated cost for one run, accumulated across every model
-turn in the run (including repair turns). Successful runs expose it as
-`result.usage`. On failures after a session starts, use `getRunUsage(error)` to
-get it safely.
+Known token usage and estimated cost for one run, accumulated across all
+attempts, including failed attempts and repair turns. Successful runs expose
+it as `result.usage`; use `getRunUsage(error)` on failure.
+
+Check `result.execution.usage.status` or `getRunExecution(error)?.usage.status`
+to distinguish complete measurements from partial or unknown usage. Partial
+and unknown counts are lower bounds, not evidence that an unreported request
+consumed zero tokens.
 
 | Field              | Type      | Description                                          |
 | ------------------ | --------- | ---------------------------------------------------- |
@@ -153,8 +196,10 @@ model catalog, including tiered pricing. It is always the as-if-API price: runs 
 subscription (OAuth) credentials report what the same tokens would have cost
 through the provider's API. Models the catalog does not price report `0`
 with `costMeasured: false`, so a zero can be told apart from genuinely free
-usage: when `costMeasured` is `false`, treat `costUsd` as “unpriced”, not
-“free”.
+usage: when `costMeasured` is `false`, treat `costUsd` as unpriced or
+incompletely measured, not free. `costMeasured` describes whether known costs
+could be attributed; the execution report's usage status separately describes
+coverage. Catalog cost is an estimate, not an invoice or a product-billing record.
 
 ```ts
 const result = await agent.run({ prompt: 'Summarize feedback.txt.' });
@@ -165,6 +210,65 @@ console.log(result.usage);
 //   totalTokens: 11134, costUsd: 0.0214,
 // }
 ```
+
+### Execution reports
+
+The built-in runtime attaches an immutable `RunExecution` to every successful
+result. On failure, `getRunExecution(error)` returns the same report supplied
+to `onRunEnd`, without mutating foreign or frozen errors.
+
+```ts
+import { getRunExecution } from 'runcell';
+
+try {
+  const result = await agent.run({ prompt });
+  console.log(result.execution?.runId, result.execution?.attempts);
+} catch (error) {
+  const execution = getRunExecution(error);
+  console.log(execution?.outcome, execution?.error, execution?.usage);
+}
+```
+
+A report includes `runId`, ISO `startedAt`/`endedAt`, monotonic `durationMs`,
+`outcome` (`succeeded`, `failed`, or `cancelled`), `attempts`, aggregate `usage`,
+and structured `error` details on failure. Optional application `context` is
+included when supplied to the run.
+
+Each attempt includes:
+
+- `runId`, `attemptId`, and zero-based `index`.
+- Configured `model`, named `credentials` (`primary` for the legacy API),
+  `credentialSource` mode, `routeIndex`, and `sourceIndex` within its chain.
+- Actual `resolvedModel: { id, provider }` and `sessionId` when available.
+- Timing, outcome, usage, and error details.
+- `fallback: { model, credentials, sourceIndex }` only when the failure advances
+  to another attempt. The error's kind explains the transition.
+
+An attempt executes one model route with one concrete credential source.
+Tool and repair turns remain inside that attempt. SDK-internal HTTP retries
+are not separate attempts. Run and attempt IDs are fresh even when a session
+or thread resumes.
+
+`execution.usage` and each attempt's `usage` include the `RunUsage` fields plus
+`status: 'complete' | 'partial' | 'unknown'`. Complete means the runtime has
+measurements covering its observed execution, not that it can reconcile a
+provider invoice or inspect hidden SDK retries. An interrupted request may
+have unreported usage; its known counts remain partial or unknown. Setup
+failures before a model request have measured zero model usage.
+
+Runtime-generated report fields exclude prompt text, model output, tool
+payloads, credential values, and raw error messages. Explicit application
+`context` is included unchanged. Names and model IDs are included too, so do
+not put secrets in context or credential names. Reports stay server-side;
+UI message streams do not include them automatically.
+
+The runtime begins recording after run-option validation and input
+normalization. Invalid arguments rejected before dispatch have no report.
+Custom runtimes may omit `execution`, which is why the public result field
+is optional. `getRunExecution` returns `undefined` for unrelated values.
+Reports are associated with thrown-object identity. If custom infrastructure
+reuses one setup error object across runs, retain each `onRunEnd` report:
+a later lookup on that reused object returns its most recent execution.
 
 ## `agent.stream(options): StreamRun`
 
@@ -410,11 +514,11 @@ through `onError` like other model errors.
 
 ## Events (`AgentEvents`)
 
-The optional callbacks are `onText`, `onToolCall`, `onToolResult`,
-`onFileChange`, `onRepair`, `onFinish`, `onError`, and
-`onCredentialFallback`, plus `onFallback` for transitions between configured
-model routes. Callbacks registered at the agent and run levels both
-fire. See
+Run-level hooks are `onRunStart`, `onAttemptStart`, `onAttemptEnd`, and
+`onRunEnd`. Existing callbacks remain `onText`, `onToolCall`, `onToolResult`,
+`onFileChange`, `onRepair`, `onFinish`, `onError`, `onCredentialFallback`,
+and `onFallback`. `onFinish` still describes a turn, not the entire run.
+Callbacks registered at the agent and run levels both fire. See
 [Files, tools, and events](./files-tools-events.md).
 
 ## Files
@@ -440,19 +544,30 @@ All runcell errors extend `RuncellError`:
 | `NotImplementedError`   | Code called a capability that runcell declares but does not implement.                                                                          |
 
 ```ts
-import { getRunUsage } from 'runcell';
+import { getRunUsage, getRunExecution } from 'runcell';
 
 try {
   await agent.run({ prompt, schema });
 } catch (error) {
   const usage = getRunUsage(error);
+  const execution = getRunExecution(error);
   if (usage) console.log(usage.totalTokens, usage.costUsd);
+  console.log(execution?.error, execution?.usage.status);
 }
 ```
 
-`getRunUsage(value)` validates every token bucket, the total, cost, and
-measurement flag before it returns `RunUsage`. For malformed or absent usage,
-it returns `undefined`.
+`getRunUsage(value)` returns aggregate usage from a recorded execution when
+available. Otherwise it validates a value's `usage` fields before returning
+`RunUsage`. For malformed or absent usage, it returns `undefined`.
+
+`getRunExecution(value)` exposes structured errors with `kind`:
+`authentication`, `rate_limit`, `provider_unavailable`, `invalid_request`,
+`cancelled`, or `unknown`. `origin` distinguishes provider, credential,
+sandbox, tool, extension, validation, runtime, and unknown failures. HTTP `statusCode`
+and `retryAfterMs` are present only when structured evidence is available.
+Recognizable error text can identify a category, but does not manufacture HTTP
+metadata. Original causes remain on thrown errors, not in the report. These
+categories are descriptive: rate limits and outages do not enable new retries.
 
 Failures after session startup reject with one of Runcell's own error
 classes. Runtime-created `TurnError` and `IncompleteResultError` carry the
@@ -467,8 +582,14 @@ recovered exactly via `error.cause`. Runcell gives the same final error to
 `TurnError` and `IncompleteResultError` have optional `usage`: runtime-created
 failures after session startup carry it, while manually constructed instances
 do not receive misleading zero defaults. Option, credential, extension
-initialization, and session initialization failures happen outside the
-measurable run lifecycle and do not carry usage.
+initialization, and session initialization failures do not necessarily carry a
+`usage` property. Once dispatch starts, `getRunExecution` and `getRunUsage`
+still expose their execution report and known usage. Object-valued setup
+failures keep their identity; primitive setup failures are wrapped in a
+`TurnError` with the original value as `cause`. Cancellation uses a fresh
+`TurnError` with the caller's abort reason as `cause`, including before session
+startup. Invalid options rejected before
+dispatch have no execution report.
 
 ## Schema typing helpers
 

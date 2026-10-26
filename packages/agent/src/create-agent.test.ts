@@ -196,6 +196,27 @@ describe('createAgent', () => {
     expect(runtime.calls).toHaveLength(0);
   });
 
+  it.each([
+    null,
+    [],
+    { nested: {} },
+    { value: undefined },
+    { value: Number.NaN },
+  ])(
+    'rejects invalid application context before dispatch: %j',
+    async context => {
+      const runtime = createRuntimeMock();
+      const agent = createAgent({ model: 'm' }, { runtime });
+      await expect(
+        agent.run({ prompt: 'go', context: context as never }),
+      ).rejects.toBeInstanceOf(InvalidOptionError);
+      await expect(
+        agent.stream({ prompt: 'go', context: context as never }).result,
+      ).rejects.toBeInstanceOf(InvalidOptionError);
+      expect(runtime.calls).toHaveLength(0);
+    },
+  );
+
   it('rejects an invalid per-run pi thinking level', async () => {
     const runtime = createRuntimeMock();
     const agent = createAgent(
