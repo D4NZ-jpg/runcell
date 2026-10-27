@@ -4,6 +4,27 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.13.0 - 2026-10-27
+
+### Added
+
+- Vercel sandboxes accept an `image` option for Managed Images, such as
+  `image: 'vercel/sandbox/node:24'`. Legacy `runtime` settings still work.
+  Do not pass both options. The adapter keeps its previous `node24` runtime
+  default when neither option is set.
+
+### Changed
+
+- Updated `@ai-sdk/harness` and the sandbox packages to 1.0.161, and
+  `@ai-sdk/provider-utils` to 5.0.67. The optional Vercel sandbox peer is now
+  1.0.161. The repository tests against Vercel Sandbox SDK 3.9.0.
+- The Pi engine dependency now requires `@earendil-works/pi-coding-agent`
+  ^1.4.0.
+- Workspace and example typechecks use TypeScript 7.0.2. ESLint and declaration
+  builds retain the TypeScript 6 API. This does not change consumer compiler
+  requirements or support for Zod 3 and Zod 4.
+- Dependabot groups `ai` with `@ai-sdk/*` to keep SDK updates together.
+
 ## 1.12.1 - 2026-10-24
 
 ### Changed
