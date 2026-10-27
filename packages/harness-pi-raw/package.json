@@ -36,7 +36,7 @@
     }
   },
   "dependencies": {
-    "@ai-sdk/harness": "1.0.161",
+    "@ai-sdk/harness": "1.0.163",
     "@ai-sdk/provider-utils": "5.0.67",
     "@earendil-works/pi-coding-agent": "^1.4.0",
     "typebox": "^1.4.3",
