@@ -308,53 +308,56 @@ describe('host sandbox provider', () => {
 });
 
 describe('vercel sandbox provider', () => {
-  it('loads the optional provider only when a session starts', async () => {
-    const mockSession = { id: 'vercel-session' };
-    const createVercelNetworkSandboxSession = vi
-      .fn()
-      .mockResolvedValue(mockSession);
-    const resumeVercelNetworkSandboxSession = vi
-      .fn()
-      .mockResolvedValue(mockSession);
-    const loaded = vi.fn();
-    vi.doMock('@ai-sdk/sandbox-vercel', () => {
-      loaded();
-      return {
-        createVercelNetworkSandboxSession,
-        resumeVercelNetworkSandboxSession,
-      };
-    });
+  it.each([{ runtime: 'node24' }, { image: 'vercel/sandbox/node:24' }])(
+    'loads the optional provider lazily with %j',
+    async environment => {
+      const mockSession = { id: 'vercel-session' };
+      const createVercelNetworkSandboxSession = vi
+        .fn()
+        .mockResolvedValue(mockSession);
+      const resumeVercelNetworkSandboxSession = vi
+        .fn()
+        .mockResolvedValue(mockSession);
+      const loaded = vi.fn();
+      vi.doMock('@ai-sdk/sandbox-vercel', () => {
+        loaded();
+        return {
+          createVercelNetworkSandboxSession,
+          resumeVercelNetworkSandboxSession,
+        };
+      });
 
-    const provider = createSandboxProvider({
-      type: 'vercel',
-      runtime: 'node24',
-      ports: [3000],
-      timeout: 60_000,
-      name: 'legacy-template-name',
-      teamId: 'team_1',
-    });
+      const provider = createSandboxProvider({
+        type: 'vercel',
+        ...environment,
+        ports: [3000],
+        timeout: 60_000,
+        name: 'legacy-template-name',
+        teamId: 'team_1',
+      });
 
-    expect(loaded).not.toHaveBeenCalled();
-    await expect(
-      provider.createSession({ sessionId: 'test-session' }),
-    ).resolves.toBe(mockSession);
-    // `name` named the legacy bootstrap template; it must not become the
-    // live sandbox name, which follows the legacy session naming instead.
-    expect(createVercelNetworkSandboxSession).toHaveBeenCalledWith({
-      runtime: 'node24',
-      ports: [3000],
-      timeout: 60_000,
-      teamId: 'team_1',
-      sandboxId: 'ai-sdk-harness-session-test-session',
-    });
+      expect(loaded).not.toHaveBeenCalled();
+      await expect(
+        provider.createSession({ sessionId: 'test-session' }),
+      ).resolves.toBe(mockSession);
+      // `name` named the legacy bootstrap template; it must not become the
+      // live sandbox name, which follows the legacy session naming instead.
+      expect(createVercelNetworkSandboxSession).toHaveBeenCalledWith({
+        ...environment,
+        ports: [3000],
+        timeout: 60_000,
+        teamId: 'team_1',
+        sandboxId: 'ai-sdk-harness-session-test-session',
+      });
 
-    await expect(
-      provider.resumeSession?.({ sessionId: 'test-session' }),
-    ).resolves.toBe(mockSession);
-    // Resume forwards only the lookup settings.
-    expect(resumeVercelNetworkSandboxSession).toHaveBeenCalledWith({
-      teamId: 'team_1',
-      sandboxId: 'ai-sdk-harness-session-test-session',
-    });
-  });
+      await expect(
+        provider.resumeSession?.({ sessionId: 'test-session' }),
+      ).resolves.toBe(mockSession);
+      // Resume forwards only the lookup settings.
+      expect(resumeVercelNetworkSandboxSession).toHaveBeenCalledWith({
+        teamId: 'team_1',
+        sandboxId: 'ai-sdk-harness-session-test-session',
+      });
+    },
+  );
 });

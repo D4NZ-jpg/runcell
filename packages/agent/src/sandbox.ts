@@ -115,6 +115,7 @@ export interface HostSandboxOption {
 
 export interface VercelSandboxOption {
   type: 'vercel';
+  image?: string;
   runtime?: string;
   ports?: readonly number[];
   timeout?: number;

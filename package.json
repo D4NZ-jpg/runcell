@@ -12,7 +12,7 @@
   ],
   "scripts": {
     "build": "npm run build -w @local/harness-pi-raw && npm run build -w runcell && npm run build -w @runcell/postgres-credentials",
-    "typecheck": "npm run typecheck --workspaces --if-present && tsc -p examples/tsconfig.json --noEmit",
+    "typecheck": "npm run typecheck --workspaces --if-present && node node_modules/@typescript/native/bin/tsc -p examples/tsconfig.json --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
@@ -43,10 +43,11 @@
     "release:pg": "npm run check && npm publish -w @runcell/postgres-credentials"
   },
   "devDependencies": {
-    "@commitlint/cli": "^21.2.3",
+    "@commitlint/cli": "^21.2.4",
     "@commitlint/config-conventional": "^21.2.3",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.6.5",
+    "@typescript/native": "npm:typescript@^7.0.2",
     "eslint": "^10.13.0",
     "eslint-config-prettier": "^10.1.8",
     "husky": "^9.1.7",
@@ -54,7 +55,7 @@
     "prettier": "^3.9.10",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.71.2",
+    "typescript-eslint": "^8.72.0",
     "vitepress": "^1.6.4",
     "zod": "3.25.76"
   },

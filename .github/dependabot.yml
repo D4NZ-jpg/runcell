@@ -20,6 +20,7 @@ updates:
       ai-sdk:
         patterns:
           - '@ai-sdk/*'
+          - ai
         update-types:
           - minor
           - patch

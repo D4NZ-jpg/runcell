@@ -221,9 +221,14 @@ npm install @ai-sdk/sandbox-vercel
 ```ts
 await agent.run({
   prompt,
-  sandbox: { type: 'vercel', runtime: 'node24', ports: [3000] },
+  sandbox: { type: 'vercel', image: 'vercel/sandbox/node:24', ports: [3000] },
 });
 ```
+
+With Vercel Sandbox 3, `image` selects an Ubuntu-based Managed Image. Legacy
+`runtime: 'node24'` settings still work; do not pass both `image` and `runtime`.
+When neither is set, the current AI SDK adapter supplies `runtime: 'node24'`,
+which preserves the previous environment.
 
 ### Custom
 
