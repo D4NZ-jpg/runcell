@@ -30,8 +30,8 @@
   "scripts": {
     "build": "npm run clean && tsup --tsconfig tsconfig.build.json",
     "clean": "del-cli dist *.tsbuildinfo",
-    "type-check": "tsc --noEmit",
-    "typecheck": "tsc --noEmit",
+    "type-check": "npm run typecheck",
+    "typecheck": "node ../../node_modules/@typescript/native/bin/tsc --noEmit",
     "test": "vitest --config vitest.node.config.js --run"
   },
   "exports": {

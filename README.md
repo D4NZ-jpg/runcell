@@ -237,5 +237,11 @@ npm run check      # build, format, lint, typecheck, tests
 RUNCELL_LIVE=1 RUNCELL_LIVE_CREDENTIALS=local npm run test:live
 ```
 
+`npm run typecheck` uses the native TypeScript 7 compiler installed as
+`@typescript/native`. ESLint and tsup's declaration bundler still use the
+TypeScript 6 API through `typescript`; keep both development dependencies.
+The scripts invoke the native compiler explicitly so `tsc` binary resolution
+cannot silently select TypeScript 6.
+
 Monorepo layout: the public package is in `packages/agent/` (published as
 `runcell`). The `examples/` compile against it.
