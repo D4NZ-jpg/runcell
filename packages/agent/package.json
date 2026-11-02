@@ -49,8 +49,8 @@
   },
   "devDependencies": {
     "@ai-sdk/sandbox-vercel": "1.0.161",
-    "@napi-rs/canvas": "^1.0.13",
-    "@types/node": "^26.6.5",
+    "@napi-rs/canvas": "^1.1.0",
+    "@types/node": "^26.6.6",
     "ai": "7.0.150",
     "del-cli": "^8.0.1",
     "pdfjs-dist": "^6.4.299",
