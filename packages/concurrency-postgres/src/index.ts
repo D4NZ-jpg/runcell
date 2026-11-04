@@ -219,12 +219,29 @@ export function createPostgresConcurrencyLimiter<W extends string = 'default'>(
     }
     schemaReady ??= (async () => {
       const client = await db.connect();
+      let discard: Error | undefined;
       try {
+        // `CREATE ... IF NOT EXISTS` is not safe when several workers run it
+        // at the same time on a fresh database. A transaction-scoped
+        // advisory lock serializes the workers and ends at commit, so it
+        // also works behind transaction-mode poolers.
+        await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+          `runcell-concurrency-schema:${prefix}`,
+        ]);
         for (const statement of postgresConcurrencySchemaSql(prefix)) {
           await client.query(statement);
         }
+        await client.query('COMMIT');
+      } catch (error) {
+        try {
+          await client.query('ROLLBACK');
+        } catch (rollbackError) {
+          discard = asError(rollbackError);
+        }
+        throw error;
       } finally {
-        client.release();
+        client.release(discard);
       }
     })().catch((error: unknown) => {
       schemaReady = undefined;
