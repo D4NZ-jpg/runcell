@@ -44,7 +44,7 @@
     }
   },
   "peerDependencies": {
-    "runcell": "^1.13.0"
+    "runcell": "^1.14.0"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.15",
