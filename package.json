@@ -11,7 +11,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @local/harness-pi-raw && npm run build -w runcell && npm run build -w @runcell/postgres-credentials",
+    "build": "npm run build -w @local/harness-pi-raw && npm run build -w runcell && npm run build -w @runcell/postgres-credentials && npm run build -w @runcell/postgres-admission",
     "typecheck": "npm run typecheck --workspaces --if-present && node node_modules/@typescript/native/bin/tsc -p examples/tsconfig.json --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -40,7 +40,9 @@
     "release:dry": "npm run build && npm publish -w runcell --dry-run",
     "release": "npm run check && npm publish -w runcell",
     "release:pg:dry": "npm run build && npm publish -w @runcell/postgres-credentials --dry-run",
-    "release:pg": "npm run check && npm publish -w @runcell/postgres-credentials"
+    "release:pg": "npm run check && npm publish -w @runcell/postgres-credentials",
+    "release:pg-admission:dry": "npm run build && npm publish -w @runcell/postgres-admission --dry-run",
+    "release:pg-admission": "npm run check && npm publish -w @runcell/postgres-admission"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.4",
