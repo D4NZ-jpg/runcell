@@ -82,7 +82,7 @@ run(options: RunOptionsBase): Promise<RunResult<undefined>>;
 | `sessionId`          | `string`                              | Resume a previous session by id.                                                                                                                                                           |
 | `signal`             | `AbortSignal`                         | Cancels the run.                                                                                                                                                                           |
 | `timeoutMs`          | `number`                              | Total run budget in milliseconds. The run aborts when it is spent. Waiting for a concurrency slot consumes it; children stay within their parent's remaining budget.                       |
-| `concurrency`        | `RunConcurrencyOptions`               | Per-run `{ workload?, metadata?, limiter? }`. Requires a limiter on the run, the agent, or the parent run. See [Concurrency limits](./concurrency.md).                                     |
+| `concurrency`        | `RunConcurrencyOptions`               | Per-run `{ workload?, metadata? }`. `workload` is typed by the agent's limiter. Requires a limiter on the agent or the parent run. See [Concurrency limits](./concurrency.md).             |
 
 The per-run `pi` object accepts only `thinkingLevel`. Extensions stay
 agent-level. Invalid values make `run()` throw `InvalidOptionError` before the
@@ -474,8 +474,10 @@ part that is not a data URL or that is over the limit.
 
 ## Concurrency limits
 
-`createConcurrencyLimiter(options): InMemoryConcurrencyLimiter` creates an
-in-process limiter (`maxConcurrent`, optional `maxQueued`, `workloads`,
+`createConcurrencyLimiter(options): InMemoryConcurrencyLimiter<W>` creates an
+in-process limiter, where `W` is the union of its workload names; agents
+created with it are `Agent<W>`, so workload names are checked at compile
+time (`maxConcurrent`, optional `maxQueued`, `workloads`,
 `defaultWorkload`, `name`, `leaseTtlMs`). `limiter.stats()` returns active
 and queued counts. `ConcurrencyLimiter` is the contract for custom
 limiters; `runcell/concurrency` exports the shared allocation algorithm and

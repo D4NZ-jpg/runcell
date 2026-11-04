@@ -18,7 +18,9 @@ import {
   ConcurrencyTimeoutError,
 } from './errors.js';
 
-export interface ConcurrencyLimiterOptions extends ConcurrencyLimits {
+export interface ConcurrencyLimiterOptions<
+  W extends string = string,
+> extends ConcurrencyLimits<W> {
   /** Name used in events and errors. Defaults to `'default'`. */
   name?: string;
   /**
@@ -28,11 +30,17 @@ export interface ConcurrencyLimiterOptions extends ConcurrencyLimits {
   leaseTtlMs?: number;
 }
 
-/** A built-in limiter: the contract plus its resolved limits and live counts. */
-export interface InMemoryConcurrencyLimiter extends ConcurrencyLimiter {
-  readonly limits: ResolvedConcurrencyLimits;
-  validateWorkload(workload: string | undefined): void;
-  stats(): Promise<ConcurrencyStats>;
+/**
+ * A built-in limiter: the contract plus its resolved limits and live counts.
+ * `W` is the union of its workload names.
+ */
+export interface InMemoryConcurrencyLimiter<
+  W extends string = string,
+> extends ConcurrencyLimiter<W> {
+  readonly workloads: readonly W[];
+  readonly limits: ResolvedConcurrencyLimits<W>;
+  validateWorkload(workload: W | undefined): void;
+  stats(): Promise<ConcurrencyStats<W>>;
 }
 
 interface Slot {
@@ -41,11 +49,11 @@ interface Slot {
   expiresAt: number;
 }
 
-interface Waiter {
+interface Waiter<W extends string> {
   id: string;
   workload: string;
   seq: number;
-  settle(result: { lease: ConcurrencyLease } | { error: Error }): void;
+  settle(result: { lease: ConcurrencyLease<W> } | { error: Error }): void;
 }
 
 /**
@@ -62,10 +70,11 @@ interface Waiter {
  * const agent = createAgent({ model, concurrency: { limiter } });
  * ```
  */
-export function createConcurrencyLimiter(
-  options: ConcurrencyLimiterOptions,
-): InMemoryConcurrencyLimiter {
+export function createConcurrencyLimiter<W extends string = 'default'>(
+  options: ConcurrencyLimiterOptions<W>,
+): InMemoryConcurrencyLimiter<W> {
   const limits = resolveConcurrencyLimits(options);
+  const workloadNames = Object.keys(limits.workloads) as W[];
   const name = options.name ?? 'default';
   if (typeof name !== 'string' || name.length === 0) {
     throw new ConcurrencyConfigError('"name" must be a non-empty string.');
@@ -81,7 +90,7 @@ export function createConcurrencyLimiter(
   }
 
   const slots = new Map<string, Slot>();
-  const waiters = new Map<string, Waiter>();
+  const waiters = new Map<string, Waiter<W>>();
   let expiryTimer: ReturnType<typeof setTimeout> | undefined;
   let seq = 0;
 
@@ -93,9 +102,10 @@ export function createConcurrencyLimiter(
     }
   };
 
-  const toLease = (slot: Slot): ConcurrencyLease => ({
+  const toLease = (slot: Slot): ConcurrencyLease<W> => ({
     id: slot.id,
-    workload: slot.workload,
+    // Slots are only created for resolved workload names.
+    workload: slot.workload as W,
     ttlMs: Math.max(1, slot.expiresAt - Date.now()),
   });
 
@@ -153,6 +163,7 @@ export function createConcurrencyLimiter(
 
   return {
     name,
+    workloads: workloadNames,
     limits,
 
     validateWorkload(workload) {
@@ -163,8 +174,8 @@ export function createConcurrencyLimiter(
       }
     },
 
-    acquire(request: ConcurrencyRequest) {
-      return new Promise<ConcurrencyLease>((resolve, reject) => {
+    acquire(request: ConcurrencyRequest<W>) {
+      return new Promise<ConcurrencyLease<W>>((resolve, reject) => {
         let workload: ReturnType<typeof resolveWorkload>;
         try {
           workload = resolveWorkload(limits, request.workload);
@@ -185,7 +196,7 @@ export function createConcurrencyLimiter(
             armExpiryTimer();
           }
         };
-        const waiter: Waiter = {
+        const waiter: Waiter<W> = {
           id: randomUUID(),
           workload: workload.name,
           seq: (seq += 1),
@@ -263,9 +274,11 @@ export function createConcurrencyLimiter(
 
     stats() {
       purgeExpired(Date.now());
-      const workloads: ConcurrencyStats['workloads'] = {};
+      const workloads = {} as ConcurrencyStats<W>['workloads'];
       const entry = (workload: string) =>
-        (workloads[workload] ??= { active: 0, queued: 0 });
+        ((workloads as Record<string, { active: number; queued: number }>)[
+          workload
+        ] ??= { active: 0, queued: 0 });
       for (const workload of Object.keys(limits.workloads)) {
         entry(workload);
       }

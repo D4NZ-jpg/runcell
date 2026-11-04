@@ -12,6 +12,7 @@ import {
   ConcurrencyQueueFullError,
   ConcurrencyTimeoutError,
   type ConcurrencyLease,
+  type ConcurrencyLimiter,
   type ConcurrencyLimits,
   type ConcurrencyRequest,
 } from 'runcell';
@@ -68,11 +69,11 @@ afterAll(async () => {
 
 const freshPrefix = () => `cc_${(prefixCounter += 1)}`;
 
-function limiter(
-  limits: ConcurrencyLimits,
-  extra: Partial<PostgresConcurrencyLimiterOptions> = {},
+function limiter<W extends string = 'default'>(
+  limits: ConcurrencyLimits<W>,
+  extra: Partial<PostgresConcurrencyLimiterOptions<W>> = {},
 ) {
-  return createPostgresConcurrencyLimiter({
+  return createPostgresConcurrencyLimiter<W>({
     db: pglitePool(pg),
     name: 'shared',
     pollIntervalMs: 10,
@@ -83,10 +84,11 @@ function limiter(
 }
 
 let requestCounter = 0;
-function request(
-  workload: string | undefined,
-  extra: Partial<ConcurrencyRequest> = {},
-): ConcurrencyRequest {
+// `W` comes from the limiter the request is passed to.
+function request<W extends string>(
+  workload: NoInfer<W> | undefined,
+  extra: Partial<ConcurrencyRequest<W>> = {},
+): ConcurrencyRequest<W> {
   requestCounter += 1;
   return {
     workload,
@@ -101,7 +103,7 @@ function request(
   };
 }
 
-const sharedModel: ConcurrencyLimits = {
+const sharedModel: ConcurrencyLimits<'interactive' | 'background'> = {
   maxConcurrent: 8,
   maxQueued: 200,
   workloads: {
@@ -161,7 +163,8 @@ describe('createPostgresConcurrencyLimiter', () => {
     const tablePrefix = freshPrefix();
     const a = limiter(sharedModel, { tablePrefix });
     const b = limiter(sharedModel, { tablePrefix });
-    const backlog: Promise<ConcurrencyLease>[] = [];
+    const backlog: Promise<ConcurrencyLease<'interactive' | 'background'>>[] =
+      [];
     for (let i = 0; i < 10; i += 1) {
       backlog.push((i % 2 ? a : b).acquire(request('background')));
     }
@@ -177,7 +180,7 @@ describe('createPostgresConcurrencyLimiter', () => {
     expect(Date.now() - startedAt).toBeLessThan(2_000);
     const stats = await a.stats();
     expect(stats.active).toBe(8);
-    expect(stats.workloads.background?.active).toBe(6);
+    expect(stats.workloads.background.active).toBe(6);
 
     for (const lease of interactive) await a.release(lease);
     for (const lease of await Promise.all(backlog.slice(0, 6))) {
@@ -195,7 +198,7 @@ describe('createPostgresConcurrencyLimiter', () => {
     );
     const holder = await worker.acquire(request('lo'));
     const order: string[] = [];
-    const track = (label: string, workload: string) =>
+    const track = (label: string, workload: 'lo' | 'hi') =>
       worker.acquire(request(workload)).then(async lease => {
         order.push(label);
         await worker.release(lease);
@@ -330,9 +333,11 @@ describe('createPostgresConcurrencyLimiter', () => {
 
   it('rejects unknown workloads and invalid options', async () => {
     const worker = limiter(sharedModel, { tablePrefix: freshPrefix() });
-    await expect(worker.acquire(request('batch'))).rejects.toBeInstanceOf(
-      ConcurrencyConfigError,
-    );
+    // Untyped callers (plain JavaScript) are still checked at runtime.
+    const untyped = worker as ConcurrencyLimiter;
+    await expect(
+      untyped.acquire(request<string>('batch')),
+    ).rejects.toBeInstanceOf(ConcurrencyConfigError);
     expect(() => {
       worker.validateWorkload(undefined);
     }).toThrow(/no default workload/);

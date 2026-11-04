@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { ConcurrencyLease, ConcurrencyRequest } from './concurrency.js';
+import type {
+  ConcurrencyLease,
+  ConcurrencyLimiter,
+  ConcurrencyRequest,
+} from './concurrency.js';
 import { concurrencyConformanceCases } from './concurrency-conformance.js';
 import { createConcurrencyLimiter } from './concurrency-limiter.js';
 import {
@@ -18,10 +22,11 @@ describe('in-memory limiter conformance', () => {
 });
 
 let counter = 0;
-function request(
-  workload: string | undefined,
-  extra: Partial<ConcurrencyRequest> = {},
-): ConcurrencyRequest {
+// `W` comes from the limiter the request is passed to.
+function request<W extends string>(
+  workload: NoInfer<W> | undefined,
+  extra: Partial<ConcurrencyRequest<W>> = {},
+): ConcurrencyRequest<W> {
   counter += 1;
   return {
     workload,
@@ -47,12 +52,14 @@ describe('createConcurrencyLimiter', () => {
         background: { maxConcurrent: 6, maxWaitMs: 300_000 },
       },
     });
-    const background: Promise<ConcurrencyLease>[] = [];
+    const background: Promise<
+      ConcurrencyLease<'background' | 'interactive'>
+    >[] = [];
     for (let i = 0; i < 12; i += 1) {
       background.push(limiter.acquire(request('background')));
     }
     await Promise.resolve();
-    expect((await limiter.stats()).workloads['background']).toEqual({
+    expect((await limiter.stats()).workloads.background).toEqual({
       active: 6,
       queued: 6,
     });
@@ -63,11 +70,11 @@ describe('createConcurrencyLimiter', () => {
     ]);
     const stats = await limiter.stats();
     expect(stats.active).toBe(8);
-    expect(stats.workloads['interactive']?.active).toBe(2);
+    expect(stats.workloads.interactive.active).toBe(2);
 
     for (const lease of interactive) await limiter.release(lease);
     // Background stays at its ceiling; the freed reserved slots stay idle.
-    expect((await limiter.stats()).workloads['background']).toEqual({
+    expect((await limiter.stats()).workloads.background).toEqual({
       active: 6,
       queued: 6,
     });
@@ -106,7 +113,9 @@ describe('createConcurrencyLimiter', () => {
       maxConcurrent: 2,
       workloads: { a: {}, b: {} },
     });
-    await expect(limiter.acquire(request('c'))).rejects.toMatchObject({
+    // Untyped callers (plain JavaScript) are still checked at runtime.
+    const untyped = limiter as ConcurrencyLimiter;
+    await expect(untyped.acquire(request<string>('c'))).rejects.toMatchObject({
       name: 'ConcurrencyConfigError',
       limiter: 'claude',
     });

@@ -230,7 +230,8 @@ function isPlainRecord(value: unknown): boolean {
   return value != null && typeof value === 'object' && !Array.isArray(value);
 }
 
-const CONCURRENCY_KEYS = new Set(['limiter', 'workload', 'metadata']);
+const AGENT_CONCURRENCY_KEYS = ['limiter', 'workload', 'metadata'];
+const RUN_CONCURRENCY_KEYS = ['workload', 'metadata'];
 
 /** Shape checks shared by agent-level and run-level `concurrency`. */
 function validateConcurrencySelection(value: unknown, label: string): void {
@@ -238,14 +239,18 @@ function validateConcurrencySelection(value: unknown, label: string): void {
     throw new InvalidOptionError(`${label} must be an object.`);
   }
   const options = value as Record<string, unknown>;
-  const unknownKey = Object.keys(options).find(
-    key => !CONCURRENCY_KEYS.has(key),
-  );
+  const isRun = label.startsWith('run');
+  const allowed = isRun ? RUN_CONCURRENCY_KEYS : AGENT_CONCURRENCY_KEYS;
+  const unknownKey = Object.keys(options).find(key => !allowed.includes(key));
   if (unknownKey !== undefined) {
+    const hint =
+      unknownKey === 'limiter'
+        ? 'To use a different limiter, create an agent configured with it.'
+        : 'Set limits and wait times on the limiter; set the run budget ' +
+          'with "timeoutMs".';
     throw new InvalidOptionError(
-      `${label} does not accept "${unknownKey}". Supported keys: limiter, ` +
-        'workload, metadata. Set limits and wait times on the limiter; set ' +
-        'the run budget with "timeoutMs".',
+      `${label} does not accept "${unknownKey}". Supported keys: ` +
+        `${allowed.join(', ')}. ${hint}`,
     );
   }
   const limiter = options['limiter'];
@@ -325,14 +330,16 @@ function isAgentSchema(value: unknown): value is AgentSchema {
 
 /**
  * Create an agent bound to a model, credentials, tools and event callbacks.
+ * With `concurrency`, the limiter's workload names type the agent's and its
+ * runs' `workload` options.
  */
-export function createAgent(
-  options: AgentOptions,
+export function createAgent<W extends string = never>(
+  options: AgentOptions<W>,
   context: {
     nodeEnv?: string | undefined;
     runtime?: RuncellRuntime | undefined;
   } = {},
-): Agent {
+): Agent<W> {
   const nodeEnv =
     context.nodeEnv ??
     (typeof process !== 'undefined' ? process.env['NODE_ENV'] : undefined);
@@ -420,7 +427,7 @@ export function createAgent(
     };
   };
 
-  return { run, stream } as Agent;
+  return { run, stream } as Agent<W>;
 }
 
 /**

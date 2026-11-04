@@ -16,7 +16,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   any tool runs. Children inherit the limiter, workload, metadata,
   cancellation, and budget, and get no exemption.
 - Limiters support workloads with ceilings, strict reservations,
-  priorities, a bounded queue, and wait limits, plus `stats()`.
+  priorities, a bounded queue, and wait limits, plus `stats()`. Workload
+  names are inferred from the limiter, so agents (`Agent<W>`) and runs only
+  accept configured workload names at compile time.
   `runcell/concurrency` exports the allocation algorithm and
   `concurrencyConformanceCases` for custom limiters.
 - Typed `ConcurrencyTimeoutError`, `ConcurrencyQueueFullError`,

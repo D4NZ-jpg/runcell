@@ -149,8 +149,9 @@ function fakeProvider(
 function trackedLimiter(capacity: number) {
   const state = { active: 0, peak: 0 };
   const inner = createConcurrencyLimiter({ maxConcurrent: capacity });
-  const limiter: ConcurrencyLimiter = {
+  const limiter: ConcurrencyLimiter<'default'> = {
     name: inner.name,
+    workloads: inner.workloads,
     async acquire(request) {
       const lease = await inner.acquire(request);
       state.active += 1;

@@ -125,7 +125,7 @@ export interface PiOptions {
 /**
  * Options for {@link createAgent}.
  */
-export interface AgentOptions {
+export interface AgentOptions<W extends string = string> {
   /** Model identifier, e.g. `anthropic/claude-sonnet-4-5` or `openai/gpt-5.1`. */
   model: string;
   /**
@@ -155,7 +155,7 @@ export interface AgentOptions {
    * and agents started from this agent's tools) holds a slot only while the
    * request is active. See https://runcell.run/concurrency
    */
-  concurrency?: ConcurrencyOptions;
+  concurrency?: ConcurrencyOptions<W>;
 }
 
 /**
@@ -181,7 +181,7 @@ export interface UIChatMessage {
  * Options shared by every {@link Agent.run} call. Without a `schema` (see
  * {@link RunOptions}) the run is a plain turn whose output is the model's text.
  */
-export interface RunOptionsBase {
+export interface RunOptionsBase<W extends string = string> {
   /**
    * The task prompt. Provide either `prompt` or `messages`, not both.
    */
@@ -230,7 +230,7 @@ export interface RunOptionsBase {
    * Per-run concurrency selection: a workload, metadata, or a different
    * limiter. Requires a limiter on the run, the agent, or the parent run.
    */
-  concurrency?: RunConcurrencyOptions;
+  concurrency?: RunConcurrencyOptions<W>;
   /**
    * Per-run Pi engine overrides, merged over the agent-level `pi` options.
    * `extensions` intentionally stays agent-level: extensions are loaded once
@@ -246,7 +246,8 @@ export interface RunOptionsBase {
  */
 export interface RunOptions<
   TSchema extends AgentSchema,
-> extends RunOptionsBase {
+  W extends string = string,
+> extends RunOptionsBase<W> {
   /** Schema the agent must satisfy via the hidden `submitResult` tool. */
   schema: TSchema;
 }
@@ -395,19 +396,21 @@ export type UIMessageChunk =
   | { type: 'error'; errorText: string };
 
 /**
- * An agent bound to a model, credentials, tools and event callbacks.
+ * An agent bound to a model, credentials, tools and event callbacks. `W` is
+ * the union of workload names of its concurrency limiter (`never` without
+ * one), so `run({ concurrency: { workload } })` only accepts those names.
  */
-export interface Agent {
+export interface Agent<W extends string = string> {
   /** Run with a structured output contract; `result.data` is validated. */
   run<TSchema extends AgentSchema>(
-    options: RunOptions<TSchema>,
+    options: RunOptions<TSchema, W>,
   ): Promise<RunResult<InferSchemaOutput<TSchema>>>;
   /** Run a plain turn; `result.text` is the output and `result.data` is undefined. */
-  run(options: RunOptionsBase): Promise<RunResult<undefined>>;
+  run(options: RunOptionsBase<W>): Promise<RunResult<undefined>>;
   /** Stream a run with a structured output contract. */
   stream<TSchema extends AgentSchema>(
-    options: RunOptions<TSchema>,
+    options: RunOptions<TSchema, W>,
   ): StreamRun<InferSchemaOutput<TSchema>>;
   /** Stream a plain turn; `result.data` is undefined. */
-  stream(options: RunOptionsBase): StreamRun<undefined>;
+  stream(options: RunOptionsBase<W>): StreamRun<undefined>;
 }

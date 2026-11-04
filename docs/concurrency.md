@@ -104,8 +104,42 @@ Rules:
 
 Invalid settings throw `ConcurrencyConfigError` when you create the
 limiter. If a limiter has several workloads and no default, agents must
-select one; an unknown workload is rejected when the agent is created or
-the run starts.
+select one; that check happens when the agent is created.
+
+### Typed workload names
+
+Workload names are types, not free-form strings. The limiter infers them
+from the `workloads` keys, and the agent infers them from its limiter, so
+a typo fails to compile:
+
+```ts
+const claude = createConcurrencyLimiter({
+  maxConcurrent: 8,
+  workloads: { interactive: { reserved: 2 }, background: {} },
+});
+// InMemoryConcurrencyLimiter<'interactive' | 'background'>
+
+const agent = createAgent({
+  model: 'anthropic/claude-sonnet-4-5',
+  concurrency: { limiter: claude, workload: 'background' },
+});
+// Agent<'interactive' | 'background'>
+
+agent.run({ prompt, concurrency: { workload: 'interactive' } }); // ok
+agent.run({ prompt, concurrency: { workload: 'batch' } }); // type error
+```
+
+`defaultWorkload`, the agent's `workload`, each run's `workload`, and
+`limiter.stats().workloads` are all typed the same way. A limiter without
+`workloads` has the single workload `'default'`. An agent without a
+limiter is `Agent<never>`: its runs cannot select a workload.
+
+A run selects a workload of its agent's limiter; it cannot switch
+limiters. To use a different limiter, create an agent configured with it.
+The same checks still run at runtime for JavaScript callers and for
+workload names built from strings. Event and error fields
+(`event.workload`, `error.workload`) stay `string`, because one stream
+can carry events from several limiters.
 
 ## Nested runs
 

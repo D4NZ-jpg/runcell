@@ -29,7 +29,9 @@ const agent = createAgent({
 });
 ```
 
-Workers that create a limiter with the same `name` share its slots. The
+Workers that create a limiter with the same `name` share its slots.
+Workload names are typed exactly as with `createConcurrencyLimiter`: the
+agent's and runs' `workload` options only accept configured names. The
 `db` pool is typed structurally, so any pg-compatible pool works and `pg`
 is not a dependency of this package.
 

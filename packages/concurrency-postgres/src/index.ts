@@ -37,7 +37,9 @@ export interface PostgresPool {
   connect(): Promise<PostgresClient>;
 }
 
-export interface PostgresConcurrencyLimiterOptions extends ConcurrencyLimits {
+export interface PostgresConcurrencyLimiterOptions<
+  W extends string = string,
+> extends ConcurrencyLimits<W> {
   /** A `pg.Pool` (or structurally compatible pool). */
   db: PostgresPool;
   /**
@@ -81,11 +83,17 @@ export interface PostgresConcurrencyLimiterOptions extends ConcurrencyLimits {
   onConflict?: 'reject' | 'replace';
 }
 
-/** A PostgreSQL limiter: the contract plus its resolved limits and live counts. */
-export interface PostgresConcurrencyLimiter extends ConcurrencyLimiter {
-  readonly limits: ResolvedConcurrencyLimits;
-  validateWorkload(workload: string | undefined): void;
-  stats(): Promise<ConcurrencyStats>;
+/**
+ * A PostgreSQL limiter: the contract plus its resolved limits and live
+ * counts. `W` is the union of its workload names.
+ */
+export interface PostgresConcurrencyLimiter<
+  W extends string = string,
+> extends ConcurrencyLimiter<W> {
+  readonly workloads: readonly W[];
+  readonly limits: ResolvedConcurrencyLimits<W>;
+  validateWorkload(workload: W | undefined): void;
+  stats(): Promise<ConcurrencyStats<W>>;
 }
 
 interface Tables {
@@ -172,10 +180,11 @@ const WAIT_MS = `(extract(epoch from (now() - enqueued_at)) * 1000)::float8`;
  * used, so transaction-mode poolers (PgBouncer) work. A database error
  * rejects the operation; RunCell then fails the run closed.
  */
-export function createPostgresConcurrencyLimiter(
-  options: PostgresConcurrencyLimiterOptions,
-): PostgresConcurrencyLimiter {
+export function createPostgresConcurrencyLimiter<W extends string = 'default'>(
+  options: PostgresConcurrencyLimiterOptions<W>,
+): PostgresConcurrencyLimiter<W> {
   const limits = resolveConcurrencyLimits(options);
+  const workloadNames = Object.keys(limits.workloads) as W[];
   const name = options.name;
   if (typeof name !== 'string' || name.length === 0) {
     throw new ConcurrencyConfigError('"name" must be a non-empty string.');
@@ -355,9 +364,10 @@ export function createPostgresConcurrencyLimiter(
     workload: string,
     ttlMs: number,
     roundTripMs: number,
-  ): ConcurrencyLease => ({
+  ): ConcurrencyLease<W> => ({
     id,
-    workload,
+    // Entries are only created for resolved workload names.
+    workload: workload as W,
     ttlMs: Math.max(1, Math.floor(ttlMs - roundTripMs)),
   });
 
@@ -383,8 +393,8 @@ export function createPostgresConcurrencyLimiter(
       : error;
 
   const acquire = async (
-    request: ConcurrencyRequest,
-  ): Promise<ConcurrencyLease> => {
+    request: ConcurrencyRequest<W>,
+  ): Promise<ConcurrencyLease<W>> => {
     let target: ReturnType<typeof resolveWorkload>;
     try {
       target = resolveWorkload(limits, request.workload);
@@ -517,6 +527,7 @@ export function createPostgresConcurrencyLimiter(
 
   return {
     name,
+    workloads: workloadNames,
     limits,
 
     validateWorkload(workload) {
@@ -576,13 +587,18 @@ export function createPostgresConcurrencyLimiter(
         );
         return result.rows;
       });
-      const stats: ConcurrencyStats = { active: 0, queued: 0, workloads: {} };
-      for (const workload of Object.keys(limits.workloads)) {
-        stats.workloads[workload] = { active: 0, queued: 0 };
+      const byWorkload: Record<string, { active: number; queued: number }> = {};
+      for (const workload of workloadNames) {
+        byWorkload[workload] = { active: 0, queued: 0 };
       }
+      const stats: ConcurrencyStats<W> = {
+        active: 0,
+        queued: 0,
+        workloads: byWorkload,
+      };
       for (const row of rows) {
         const n = Number(row.n);
-        const entry = (stats.workloads[String(row.workload)] ??= {
+        const entry = (byWorkload[String(row.workload)] ??= {
           active: 0,
           queued: 0,
         });

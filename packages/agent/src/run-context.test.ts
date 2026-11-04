@@ -148,7 +148,11 @@ describe('concurrency option validation', () => {
       /no default workload/,
     );
     expect(() =>
-      createAgent({ model: 'm', concurrency: { limiter, workload: 'z' } }),
+      createAgent({
+        model: 'm',
+        // @ts-expect-error - 'z' is not one of the limiter's workloads.
+        concurrency: { limiter, workload: 'z' },
+      }),
     ).toThrow(/Unknown workload "z"/);
   });
 

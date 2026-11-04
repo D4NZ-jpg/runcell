@@ -112,11 +112,11 @@ export function createRunContext({
 
 /**
  * Selection precedence:
- * - limiter: the run's, else the agent's, else the parent's. Children are
- *   never exempt: an agent without `concurrency` inherits its parent's.
+ * - limiter: the agent's, else the parent's. Children are never exempt: an
+ *   agent without `concurrency` inherits its parent's.
  * - workload: the run's, else the parent's when the limiter is the same
  *   (so a child agent's own default cannot move work to another workload),
- *   else the agent's when the limiter is the agent's.
+ *   else the agent's.
  * - metadata: agent, then inherited, then run (later wins).
  */
 function resolveRunConcurrency(
@@ -124,21 +124,18 @@ function resolveRunConcurrency(
   run: RunConcurrencyOptions | undefined,
   parent: RunConcurrencyContext | undefined,
 ): RunConcurrencyContext | undefined {
-  const limiter = run?.limiter ?? agent?.limiter ?? parent?.limiter;
+  const limiter = agent?.limiter ?? parent?.limiter;
   if (!limiter) {
     if (run !== undefined) {
       throw new InvalidOptionError(
-        'run "concurrency" needs a limiter: pass "concurrency.limiter" on ' +
-          'the run or the agent.',
+        'run "concurrency" needs a limiter: set "concurrency.limiter" on ' +
+          'the agent.',
       );
     }
     return undefined;
   }
   const inherited = parent?.limiter === limiter ? parent : undefined;
-  const workload =
-    run?.workload ??
-    inherited?.workload ??
-    (agent?.limiter === limiter ? agent.workload : undefined);
+  const workload = run?.workload ?? inherited?.workload ?? agent?.workload;
   limiter.validateWorkload?.(workload);
   return {
     limiter,

@@ -27,8 +27,11 @@ export interface ConcurrencyWorkload {
   maxWaitMs?: number;
 }
 
-/** Capacity settings shared by the built-in limiters. */
-export interface ConcurrencyLimits {
+/**
+ * Capacity settings shared by the built-in limiters. `W` is the union of
+ * workload names, inferred from the `workloads` keys.
+ */
+export interface ConcurrencyLimits<W extends string = string> {
   /** Maximum provider requests in flight at once. Positive integer. */
   maxConcurrent: number;
   /**
@@ -40,31 +43,34 @@ export interface ConcurrencyLimits {
    * Named workloads sharing the capacity. Omit for a single `default`
    * workload that may use every slot.
    */
-  workloads?: Readonly<Record<string, ConcurrencyWorkload>>;
+  workloads?: Readonly<Record<W, ConcurrencyWorkload>>;
   /**
    * Workload for requests that select none. Defaults to `default` when that
    * workload exists, or to the only workload. Otherwise agents and runs must
    * select a workload.
    */
-  defaultWorkload?: string;
+  defaultWorkload?: NoInfer<W>;
 }
 
 /** Active and queued slot counts, overall and by workload. */
-export interface ConcurrencyStats {
+export interface ConcurrencyStats<W extends string = string> {
   active: number;
   queued: number;
-  workloads: Record<string, { active: number; queued: number }>;
+  workloads: Record<W, { active: number; queued: number }>;
 }
 
-/** Agent-level concurrency limit. Opt-in. */
-export interface ConcurrencyOptions {
+/**
+ * Agent-level concurrency limit. Opt-in. `W` is inferred from the limiter,
+ * so `workload` only accepts that limiter's workload names.
+ */
+export interface ConcurrencyOptions<W extends string = string> {
   /** The shared capacity, e.g. `createConcurrencyLimiter({ maxConcurrent: 8 })`. */
-  limiter: ConcurrencyLimiter;
+  limiter: ConcurrencyLimiter<W>;
   /**
    * Workload for this agent's runs. A run started from another run's tool
    * keeps its parent's workload when both use the same limiter.
    */
-  workload?: string;
+  workload?: NoInfer<W>;
   /**
    * Application-defined data passed to the limiter with every request (for
    * custom limiters). Never put prompts or credentials here.
@@ -72,12 +78,13 @@ export interface ConcurrencyOptions {
   metadata?: Readonly<Record<string, unknown>>;
 }
 
-/** Per-run concurrency selection. Overrides agent-level and inherited values. */
-export interface RunConcurrencyOptions {
-  /** Use a different limiter for this run. */
-  limiter?: ConcurrencyLimiter;
-  /** Workload for this run. */
-  workload?: string;
+/**
+ * Per-run concurrency selection. Overrides agent-level and inherited values.
+ * To use a different limiter, create an agent configured with it.
+ */
+export interface RunConcurrencyOptions<W extends string = string> {
+  /** Workload for this run: one of the agent limiter's workload names. */
+  workload?: W;
   /** Metadata merged over agent-level and inherited metadata. */
   metadata?: Readonly<Record<string, unknown>>;
 }
@@ -147,9 +154,9 @@ export type ConcurrencyEvent =
     });
 
 /** One request for a slot. */
-export interface ConcurrencyRequest {
+export interface ConcurrencyRequest<W extends string = string> {
   /** Workload selected by the run, or `undefined` for the limiter's default. */
-  workload: string | undefined;
+  workload: W | undefined;
   /** The RunCell run issuing the provider request. */
   runId: string;
   /** Unique id of this provider request. */
@@ -174,14 +181,14 @@ export interface ConcurrencyRequest {
 }
 
 /** A granted slot. */
-export interface ConcurrencyLease {
+export interface ConcurrencyLease<W extends string = string> {
   /**
    * Unique identity of this grant. Never reused, so stale `renew` or
    * `release` calls cannot affect a later lease.
    */
   readonly id: string;
   /** The workload the slot was granted to. */
-  readonly workload: string | undefined;
+  readonly workload: W | undefined;
   /**
    * Validity remaining, in milliseconds, when the limiter produced the
    * lease. RunCell measures expiry on its own clock from when it received the
@@ -206,27 +213,33 @@ export interface ConcurrencyLease {
  * conditions; any other rejection is treated as a limiter failure and the
  * run fails closed. Check conformance with `runcell/concurrency`.
  */
-export interface ConcurrencyLimiter {
+export interface ConcurrencyLimiter<W extends string = string> {
   /** Name used in events and errors. */
   readonly name: string;
+  /**
+   * The workload names this limiter serves. Built-in limiters always set
+   * it; it is how agents infer which `workload` values are valid. Omit it
+   * in a custom limiter that accepts arbitrary workload names.
+   */
+  readonly workloads?: readonly W[];
   /** Wait for a slot until one is free or `signal` aborts. */
-  acquire(request: ConcurrencyRequest): Promise<ConcurrencyLease>;
+  acquire(request: ConcurrencyRequest<W>): Promise<ConcurrencyLease<W>>;
   /**
    * Extend a held lease. Resolve with the extended lease, or `undefined`
    * when the lease is no longer held. Reject only for transient failures;
    * RunCell retries until the lease expires.
    */
   renew(
-    lease: ConcurrencyLease,
+    lease: ConcurrencyLease<W>,
     options: { signal: AbortSignal },
-  ): Promise<ConcurrencyLease | undefined>;
+  ): Promise<ConcurrencyLease<W> | undefined>;
   /** Give the slot back. Idempotent; ignores unknown or stale leases. */
-  release(lease: ConcurrencyLease): Promise<void>;
+  release(lease: ConcurrencyLease<W>): Promise<void>;
   /**
    * Throw `ConcurrencyConfigError` for a workload this limiter cannot serve.
    * Called before a run starts any work.
    */
-  validateWorkload?(workload: string | undefined): void;
+  validateWorkload?(workload: W | undefined): void;
   /** Current slot counts, when the limiter can report them. */
-  stats?(): Promise<ConcurrencyStats>;
+  stats?(): Promise<ConcurrencyStats<W>>;
 }

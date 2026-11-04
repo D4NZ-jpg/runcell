@@ -14,11 +14,11 @@ export interface ResolvedWorkload {
   maxWaitMs: number | undefined;
 }
 
-export interface ResolvedConcurrencyLimits {
+export interface ResolvedConcurrencyLimits<W extends string = string> {
   maxConcurrent: number;
   maxQueued: number | undefined;
-  defaultWorkload: string | undefined;
-  workloads: Readonly<Record<string, ResolvedWorkload>>;
+  defaultWorkload: W | undefined;
+  workloads: Readonly<Record<W, ResolvedWorkload>>;
 }
 
 /** The workload of a limiter configured without `workloads`. */
@@ -72,9 +72,9 @@ function nonNegativeInt(
  * ceiling, reservations that add up to more than `maxConcurrent`, and an
  * unknown `defaultWorkload`.
  */
-export function resolveConcurrencyLimits(
-  limits: ConcurrencyLimits,
-): ResolvedConcurrencyLimits {
+export function resolveConcurrencyLimits<W extends string>(
+  limits: ConcurrencyLimits<W>,
+): ResolvedConcurrencyLimits<W> {
   if (!isRecord(limits)) {
     fail('Concurrency limiter options must be an object.');
   }
@@ -168,7 +168,13 @@ export function resolveConcurrencyLimits(
     defaultWorkload = entries[0]?.[0];
   }
 
-  return { maxConcurrent, maxQueued, defaultWorkload, workloads };
+  // Validated above: the keys are exactly the configured workload names.
+  return {
+    maxConcurrent,
+    maxQueued,
+    defaultWorkload: defaultWorkload as W | undefined,
+    workloads: workloads as Record<W, ResolvedWorkload>,
+  };
 }
 
 /**
