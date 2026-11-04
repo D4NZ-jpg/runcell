@@ -163,10 +163,10 @@ interface ConcurrencyErrorOptions extends ConcurrencyErrorDetails {
 }
 
 /**
- * Base class for concurrency-limit failures. The provider request was never
- * sent, or (for {@link ConcurrencyLeaseLostError}) was aborted, which
- * distinguishes these from provider failures ({@link TurnError}).
- * Runtime-created failures carry the run's `usage`.
+ * Base class for concurrency-limit failures. RunCell did not send the
+ * provider request, or aborted it ({@link ConcurrencyLeaseLostError}). This
+ * makes these errors different from provider failures ({@link TurnError}).
+ * Failures that the runtime creates carry the run's `usage`.
  */
 export class ConcurrencyError extends RuncellError {
   declare readonly usage?: RunUsage;
@@ -197,9 +197,9 @@ export class ConcurrencyError extends RuncellError {
 }
 
 /**
- * No slot was free before the deadline: the workload's `maxWaitMs` or the
- * run's remaining `timeoutMs`, whichever came first. The provider was not
- * called.
+ * No slot was free before the deadline. The deadline is the workload's
+ * `maxWaitMs` or the end of the run's `timeoutMs`, whichever came first.
+ * RunCell did not call the provider.
  */
 export class ConcurrencyTimeoutError extends ConcurrencyError {
   constructor(message: string, options?: ConcurrencyErrorOptions) {
@@ -208,7 +208,10 @@ export class ConcurrencyTimeoutError extends ConcurrencyError {
   }
 }
 
-/** The limiter's queue already holds `maxQueued` waiting requests. The provider was not called. */
+/**
+ * The limiter's queue already holds `maxQueued` waiting requests. RunCell
+ * did not call the provider.
+ */
 export class ConcurrencyQueueFullError extends ConcurrencyError {
   constructor(message: string, options?: ConcurrencyErrorOptions) {
     super(message, options);
@@ -217,9 +220,9 @@ export class ConcurrencyQueueFullError extends ConcurrencyError {
 }
 
 /**
- * The limiter failed, for example because its database is unreachable.
- * RunCell fails closed: the provider was not called. The limiter's error is
- * the `cause`.
+ * The limiter failed, for example because RunCell cannot reach its
+ * database. RunCell fails closed and does not call the provider. The
+ * limiter's error is the `cause`.
  */
 export class ConcurrencyLimiterError extends ConcurrencyError {
   constructor(message: string, options?: ConcurrencyErrorOptions) {
@@ -229,8 +232,8 @@ export class ConcurrencyLimiterError extends ConcurrencyError {
 }
 
 /**
- * A held slot could not be renewed before its lease expired. RunCell aborted
- * the provider request that held it and stopped the run.
+ * RunCell could not renew a held slot before its lease expired. RunCell
+ * aborted the provider request that held the slot and stopped the run.
  */
 export class ConcurrencyLeaseLostError extends ConcurrencyError {
   constructor(message: string, options?: ConcurrencyErrorOptions) {
@@ -240,9 +243,9 @@ export class ConcurrencyLeaseLostError extends ConcurrencyError {
 }
 
 /**
- * The limiter configuration is invalid, a run selected an unknown workload,
- * or the limiter's settings conflict with those other workers use for the
- * same shared limiter.
+ * The limiter configuration is invalid, or a run selected an unknown
+ * workload. This error also occurs when the limiter's settings conflict
+ * with the settings of other workers that share the limiter.
  */
 export class ConcurrencyConfigError extends ConcurrencyError {
   constructor(message: string, options?: ConcurrencyErrorOptions) {

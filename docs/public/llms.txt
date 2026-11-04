@@ -37,14 +37,15 @@
 
 ## Concurrency limits
 
-- Opt-in: `concurrency: { limiter: createConcurrencyLimiter({ maxConcurrent: 4 }) }`,
-  or `createPostgresConcurrencyLimiter({ db, name, maxConcurrent })` from
-  `@runcell/postgres-concurrency` for several workers. A slot covers one
-  provider request and is released before tools run, so nested agents never
-  deadlock and get no exemption.
-- Per run: `concurrency: { workload }` selects a workload; `timeoutMs` sets
-  the run budget that waiting consumes.
-- Failures are typed: `ConcurrencyTimeoutError`, `ConcurrencyQueueFullError`,
+- Opt-in: `concurrency: { limiter: createConcurrencyLimiter({ maxConcurrent: 4 }) }`.
+  For several workers, use `createPostgresConcurrencyLimiter({ db, name, maxConcurrent })`
+  from `@runcell/postgres-concurrency`.
+- A slot covers one provider request. RunCell releases it before tools
+  run, so nested agents never deadlock. Children get no exemption.
+- Per run: `concurrency: { workload }` selects a workload. Workload names
+  are types, so a typo fails to compile. `timeoutMs` sets the run budget,
+  and waiting for a slot counts against it.
+- Failure types: `ConcurrencyTimeoutError`, `ConcurrencyQueueFullError`,
   `ConcurrencyLimiterError` (fails closed), `ConcurrencyLeaseLostError`,
   `ConcurrencyConfigError`.
 

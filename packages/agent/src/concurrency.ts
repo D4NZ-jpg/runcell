@@ -2,11 +2,11 @@
  * Public concurrency-limit contracts.
  *
  * A slot covers one active provider request, including response streaming.
- * RunCell takes a slot before every provider request (initial turns, turns
- * after tools, repairs, retries, compaction, child agents) and gives it back
- * when the response ends, before any tool runs. RunCell owns the slot
- * lifecycle; a {@link ConcurrencyLimiter} owns allocation, queue order, and
- * storage.
+ * RunCell takes a slot before every provider request: initial turns, turns
+ * after tools, repairs, retries, compaction, and child agents. It gives the
+ * slot back when the response ends, before any tool runs. RunCell owns the
+ * slot lifecycle. A {@link ConcurrencyLimiter} owns allocation, queue order,
+ * and storage.
  */
 
 /** Settings for one workload of a limiter. */
@@ -18,7 +18,7 @@ export interface ConcurrencyWorkload {
    * `maxConcurrent`. They stay idle rather than being lent. Default 0.
    */
   reserved?: number;
-  /** Higher values are served first among workloads with room. Default 0. */
+  /** The limiter serves higher values first among workloads with room. Default 0. */
   priority?: number;
   /**
    * Longest a request may wait for a slot, in milliseconds. The run's
@@ -60,8 +60,8 @@ export interface ConcurrencyStats<W extends string = string> {
 }
 
 /**
- * Agent-level concurrency limit. Opt-in. `W` is inferred from the limiter,
- * so `workload` only accepts that limiter's workload names.
+ * Agent-level concurrency limit. Opt-in. TypeScript gets `W` from the
+ * limiter, so `workload` accepts only that limiter's workload names.
  */
 export interface ConcurrencyOptions<W extends string = string> {
   /** The shared capacity, e.g. `createConcurrencyLimiter({ maxConcurrent: 8 })`. */
@@ -102,13 +102,13 @@ interface ConcurrencyEventBase {
   parentRunId: string | undefined;
   /** Unique id of the provider request. */
   requestId: string;
-  /** Epoch milliseconds when the event was emitted. */
+  /** Epoch milliseconds when RunCell emitted the event. */
   timestamp: number;
 }
 
 /**
  * Structured slot lifecycle event, delivered to `events.onConcurrency`.
- * Events identify the limiter, workload, run lineage, and request; they
+ * Events identify the limiter, workload, run lineage, and request. They
  * never contain prompts or credentials.
  */
 export type ConcurrencyEvent =
@@ -168,14 +168,14 @@ export interface ConcurrencyRequest<W extends string = string> {
   /** Application-defined metadata. */
   metadata: Readonly<Record<string, unknown>>;
   /**
-   * Remaining run budget in milliseconds when `acquire` was called, or
-   * `undefined` when the run has no `timeoutMs`. Limiters should combine it
-   * with the workload's own wait limit.
+   * Remaining run budget in milliseconds at the call to `acquire`, or
+   * `undefined` when the run has no `timeoutMs`. A limiter must apply the
+   * earlier of this value and the workload's own wait limit.
    */
   timeoutMs: number | undefined;
   /**
-   * Aborted when the run is cancelled or its budget runs out. `acquire` must
-   * stop waiting, leave no slot behind, and reject promptly.
+   * Aborts on run cancellation or at the end of the run's budget. Then
+   * `acquire` must stop waiting, leave no slot behind, and reject promptly.
    */
   signal: AbortSignal;
 }
@@ -187,13 +187,13 @@ export interface ConcurrencyLease<W extends string = string> {
    * `release` calls cannot affect a later lease.
    */
   readonly id: string;
-  /** The workload the slot was granted to. */
+  /** The workload that holds the slot. */
   readonly workload: W | undefined;
   /**
-   * Validity remaining, in milliseconds, when the limiter produced the
-   * lease. RunCell measures expiry on its own clock from when it received the
-   * lease (acquire) or sent the renewal (renew), so remote limiters should
-   * subtract their round-trip time.
+   * Validity remaining, in milliseconds, when the limiter made the lease.
+   * RunCell measures expiry on its own clock. It starts when RunCell gets
+   * the lease from `acquire`, or when it sends the `renew` call. Thus, a
+   * remote limiter must subtract its round-trip time.
    */
   readonly ttlMs: number;
   /** Suggested delay before renewing, in milliseconds. Defaults to `ttlMs / 2`. */
@@ -202,42 +202,47 @@ export interface ConcurrencyLease<W extends string = string> {
 
 /**
  * The limiter contract. Implement it to back concurrency limits with your
- * own coordinator; the built-in `createConcurrencyLimiter` and
+ * own coordinator. The built-in `createConcurrencyLimiter` and
  * `@runcell/postgres-concurrency` cover the common cases.
  *
- * An implementation must provide atomic allocation (no two callers get the
- * same slot, across every worker sharing it), expiring leases, idempotent
- * `renew` and `release`, never-reused lease ids, and cancellation-safe
- * `acquire`. Reject with `ConcurrencyQueueFullError`,
- * `ConcurrencyTimeoutError`, or `ConcurrencyConfigError` for those
- * conditions; any other rejection is treated as a limiter failure and the
- * run fails closed. Check conformance with `runcell/concurrency`.
+ * An implementation must:
+ * - allocate atomically, so that no two callers get the same slot across
+ *   all workers that share the limiter
+ * - give leases that expire
+ * - make `renew` and `release` idempotent
+ * - never use a lease id again
+ * - make `acquire` safe to cancel
+ *
+ * For those conditions, reject with `ConcurrencyQueueFullError`,
+ * `ConcurrencyTimeoutError`, or `ConcurrencyConfigError`. RunCell treats
+ * any other rejection as a limiter failure, and the run fails closed. Use
+ * `runcell/concurrency` to examine conformance.
  */
 export interface ConcurrencyLimiter<W extends string = string> {
   /** Name used in events and errors. */
   readonly name: string;
   /**
    * The workload names this limiter serves. Built-in limiters always set
-   * it; it is how agents infer which `workload` values are valid. Omit it
-   * in a custom limiter that accepts arbitrary workload names.
+   * it. Agents use it to get the valid `workload` values. Omit it in a
+   * custom limiter that accepts any workload name.
    */
   readonly workloads?: readonly W[];
   /** Wait for a slot until one is free or `signal` aborts. */
   acquire(request: ConcurrencyRequest<W>): Promise<ConcurrencyLease<W>>;
   /**
    * Extend a held lease. Resolve with the extended lease, or `undefined`
-   * when the lease is no longer held. Reject only for transient failures;
-   * RunCell retries until the lease expires.
+   * when the limiter no longer holds the lease. Reject only for transient
+   * failures. RunCell tries again until the lease expires.
    */
   renew(
     lease: ConcurrencyLease<W>,
     options: { signal: AbortSignal },
   ): Promise<ConcurrencyLease<W> | undefined>;
-  /** Give the slot back. Idempotent; ignores unknown or stale leases. */
+  /** Give the slot back. Idempotent. Ignore unknown or stale leases. */
   release(lease: ConcurrencyLease<W>): Promise<void>;
   /**
    * Throw `ConcurrencyConfigError` for a workload this limiter cannot serve.
-   * Called before a run starts any work.
+   * RunCell calls this before a run starts any work.
    */
   validateWorkload?(workload: W | undefined): void;
   /** Current slot counts, when the limiter can report them. */

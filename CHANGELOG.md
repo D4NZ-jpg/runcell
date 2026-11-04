@@ -8,18 +8,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Opt-in concurrency limits for provider requests.
-  `concurrency: { limiter: createConcurrencyLimiter({ maxConcurrent }) }`
-  gives every provider request (turns, turns after tools, repairs, Pi
-  retries, compaction, credential fallbacks, and agents started from tools)
-  a slot that is held only while the request is active and released before
-  any tool runs. Children inherit the limiter, workload, metadata,
-  cancellation, and budget, and get no exemption.
-- Limiters support workloads with ceilings, strict reservations,
-  priorities, a bounded queue, and wait limits, plus `stats()`. Workload
-  names are inferred from the limiter, so agents (`Agent<W>`) and runs only
-  accept configured workload names at compile time.
-  `runcell/concurrency` exports the allocation algorithm and
+- Opt-in concurrency limits for provider requests, with
+  `concurrency: { limiter: createConcurrencyLimiter({ maxConcurrent }) }`.
+  Every provider request gets a slot: turns, turns after tools, repairs,
+  Pi retries, compaction, credential fallbacks, and agents that tools
+  start. RunCell holds the slot only while the request is active and
+  releases it before any tool runs. Children inherit the limiter,
+  workload, metadata, cancellation, and budget, and get no exemption.
+- Limiter workloads with ceilings, strict reservations, priorities, a
+  bounded queue, and wait limits, plus `stats()`.
+- Typed workload names. Agents (`Agent<W>`) get the names from their
+  limiter, so agents and runs accept only configured names at compile
+  time.
+- `runcell/concurrency`, which exports the allocation algorithm and
   `concurrencyConformanceCases` for custom limiters.
 - Typed `ConcurrencyTimeoutError`, `ConcurrencyQueueFullError`,
   `ConcurrencyLimiterError`, `ConcurrencyLeaseLostError`, and
@@ -29,11 +30,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- A run whose signal aborts now rejects with a `TurnError` (abort reason as
-  `cause`) even when the engine settled the turn quietly, instead of
-  resolving with an empty result.
-- With a concurrency limit configured, Pi cache warming is turned off
-  because its background requests cannot be limited.
+- A run whose signal aborts now rejects with a `TurnError`, with the abort
+  reason as `cause`. This also applies when the engine ended the turn
+  quietly. Before, such a run could resolve with an empty result.
+- When you configure a concurrency limit, RunCell turns off Pi cache
+  warming. A limiter cannot see the background requests of the cache
+  warmer.
 
 ## 1.13.0 - 2026-10-27
 

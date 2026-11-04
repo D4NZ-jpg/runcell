@@ -57,13 +57,15 @@ interface Waiter<W extends string> {
 }
 
 /**
- * An in-process concurrency limit shared by every agent that uses it:
- * `maxConcurrent` provider requests at once, with optional workloads,
- * strict reservations, priorities, a bounded queue, and wait limits.
+ * An in-process concurrency limit that all agents which use it share. It
+ * allows `maxConcurrent` provider requests at the same time. Optional
+ * settings add workloads, strict reservations, priorities, a bounded queue,
+ * and wait limits.
  *
- * All state lives in this process and every operation runs synchronously on
- * the event loop, so allocation is atomic. It does not coordinate across
- * processes; use `@runcell/postgres-concurrency` for several workers.
+ * All state is in this process, and each operation runs synchronously on
+ * the event loop. Thus, allocation is atomic. This limiter does not
+ * coordinate across processes. For several workers, use
+ * `@runcell/postgres-concurrency`.
  *
  * ```ts
  * const limiter = createConcurrencyLimiter({ maxConcurrent: 4 });

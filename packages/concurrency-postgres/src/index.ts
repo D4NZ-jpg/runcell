@@ -25,7 +25,7 @@ export interface PostgresClient {
     sql: string,
     params?: readonly unknown[],
   ): Promise<{ rows: Record<string, unknown>[] }>;
-  /** Return the client to its pool; a truthy argument discards it. */
+  /** Return the client to its pool. A truthy argument discards the client. */
   release(error?: Error): void;
 }
 
@@ -69,16 +69,17 @@ export interface PostgresConcurrencyLimiterOptions<
   /** How often a waiting request checks for a slot, in milliseconds. Defaults to 100. */
   pollIntervalMs?: number;
   /**
-   * How long a waiting request survives without checking in, in
-   * milliseconds. A crashed worker's queue entries are removed after this.
-   * Defaults to 15000; must exceed twice `pollIntervalMs`.
+   * How long a waiting request stays in the queue without a check, in
+   * milliseconds. After this time, the limiter removes the queue entries of
+   * a crashed worker. Defaults to 15000. Must be more than twice
+   * `pollIntervalMs`.
    */
   queueEntryTtlMs?: number;
   /**
    * What to do when the database holds different limits for this `name`.
    * `'reject'` (default) fails requests with `ConcurrencyConfigError`, so
-   * workers never enforce inconsistent limits. `'replace'` overwrites the
-   * stored limits; use it only for a coordinated change.
+   * workers never apply inconsistent limits. `'replace'` writes over the
+   * stored limits. Use it only for a coordinated change.
    */
   onConflict?: 'reject' | 'replace';
 }
@@ -160,9 +161,9 @@ const ms = (param: string) => `(${param}::float8 * interval '1 millisecond')`;
 const WAIT_MS = `(extract(epoch from (now() - enqueued_at)) * 1000)::float8`;
 
 /**
- * A concurrency limiter shared by every worker connected to the same
- * PostgreSQL database: pool and workload limits, strict reservations,
- * priorities, a bounded queue, and wait limits.
+ * A concurrency limiter that all workers which connect to the same
+ * PostgreSQL database share. It supports the limiter and workload limits,
+ * strict reservations, priorities, a bounded queue, and wait limits.
  *
  * ```ts
  * const limiter = createPostgresConcurrencyLimiter({
@@ -174,11 +175,13 @@ const WAIT_MS = `(extract(epoch from (now() - enqueued_at)) * 1000)::float8`;
  * ```
  *
  * Each allocation runs in one short transaction that holds the limiter's
- * row lock, so no two workers grant the same slot. Lease expiry and queue
- * deadlines use database time. No transaction or connection is held while a
- * request waits or while a provider request runs, and no session state is
- * used, so transaction-mode poolers (PgBouncer) work. A database error
- * rejects the operation; RunCell then fails the run closed.
+ * row lock. Thus, no two workers grant the same slot. Lease expiry and queue
+ * deadlines use database time.
+ *
+ * The limiter holds no transaction or
+ * connection while a request waits or while a provider request runs. It
+ * uses no session state, so transaction-mode poolers (PgBouncer) work. A
+ * database error rejects the operation. RunCell then fails the run closed.
  */
 export function createPostgresConcurrencyLimiter<W extends string = 'default'>(
   options: PostgresConcurrencyLimiterOptions<W>,

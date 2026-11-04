@@ -2,9 +2,10 @@
  * `runcell/concurrency`: building blocks for custom concurrency limiters.
  *
  * Application code needs only `createConcurrencyLimiter` and the
- * `concurrency` options from `runcell`. Import from here to implement a
- * limiter on your own coordinator: the shared settings validation and
- * allocation algorithm the built-in limiters use, and a conformance suite.
+ * `concurrency` options from `runcell`. Import from this module to
+ * implement a limiter on your own coordinator. It exports the settings
+ * validation and allocation algorithm that the built-in limiters share, and
+ * a conformance suite.
  */
 export {
   DEFAULT_WORKLOAD,

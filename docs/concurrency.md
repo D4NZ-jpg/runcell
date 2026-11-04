@@ -1,9 +1,9 @@
 # Concurrency limits
 
 A concurrency limit caps how many provider requests your agents have in
-flight at once, across every run, retry, and nested agent. You create a
-limiter and give it to your agents. RunCell handles the queueing, slots, and
-cleanup.
+flight at the same time. The cap applies across every run, retry, and
+nested agent. You create a limiter and give it to your agents. RunCell then
+does the queueing, slot handling, and cleanup.
 
 Limits are opt-in. Without `concurrency`, runs behave exactly as before.
 
@@ -18,9 +18,9 @@ const agent = createAgent({
 });
 ```
 
-Every agent that uses the same limiter shares its slots. Use one limiter
-per capacity you need to protect, for example one per provider account or
-model.
+All agents that use the same limiter share its slots. Use one limiter for
+each capacity that you must protect, for example one limiter for each
+provider account or model.
 
 ## What a slot covers
 
@@ -34,24 +34,33 @@ parent takes slot → model responds → slot released
   → parent takes slot → model resumes
 ```
 
-RunCell takes a slot before every provider request: the first request of a
-run, each request after tool results, repair turns, Pi's automatic
-retries, compaction, credential-fallback attempts, and requests of agents
-started from a tool. It releases the slot when the response completes,
-fails, or is cancelled, and always before a tool runs.
+RunCell takes a slot before every provider request:
 
-So you can run more agents than `maxConcurrent`: at most `maxConcurrent` of
-them talk to the provider at the same time, while the rest run tools or
-wait their turn. A parent waiting for a child holds no slot, so even
-`maxConcurrent: 1` can run a parent that calls a child and then resumes.
-Children get no exemption: they wait in the same queue under the same rules.
+- the first request of a run
+- each request after tool results
+- repair turns
+- Pi's automatic retries
+- compaction
+- credential-fallback attempts
+- requests of agents that a tool starts
 
-The limit applies to provider requests only. It does not limit live agents,
-tools, sandboxes, request rates, or token rates.
+RunCell releases the slot when the response completes, fails, or stops
+because of cancellation. It always releases the slot before a tool runs.
+
+Thus, you can run more agents than `maxConcurrent`. At most
+`maxConcurrent` agents talk to the provider at the same time. The other
+agents run tools or wait for a slot.
+
+A parent that waits for a child holds no slot. Thus, a limiter with `maxConcurrent: 1` can run a parent that
+calls a child and then continues. Children get no exemption. They wait in
+the same queue and obey the same rules.
+
+The limit applies only to provider requests. It does not limit live
+agents, tools, sandboxes, request rates, or token rates.
 
 ## Workloads
 
-Split one capacity between kinds of work with workloads:
+Use workloads to divide one capacity between different types of work:
 
 ```ts
 const claude = createConcurrencyLimiter({
@@ -73,44 +82,44 @@ const agent = createAgent({
 await agent.run({ prompt, concurrency: { workload: 'interactive' } });
 ```
 
-| Option            | Meaning                                                                                                       |
-| ----------------- | ------------------------------------------------------------------------------------------------------------- |
-| `maxConcurrent`   | Maximum provider requests in flight at once.                                                                  |
-| `maxQueued`       | Maximum requests waiting for a slot. Later requests fail with `ConcurrencyQueueFullError`. Omit for no limit. |
-| `workloads`       | Named workloads sharing the capacity. Omit for one `default` workload.                                        |
-| `defaultWorkload` | Workload for requests that select none. Defaults to `default` if it exists, or to the only workload.          |
-| `name`            | Name shown in events and errors. Defaults to `default`.                                                       |
-| `leaseTtlMs`      | How long a slot stays valid without renewal. RunCell renews automatically. Default 30000.                     |
+| Option            | Meaning                                                                                                        |
+| ----------------- | -------------------------------------------------------------------------------------------------------------- |
+| `maxConcurrent`   | Maximum provider requests in flight at the same time.                                                          |
+| `maxQueued`       | Maximum requests that wait for a slot. More requests fail with `ConcurrencyQueueFullError`. Omit for no limit. |
+| `workloads`       | Named workloads that share the capacity. Omit for one `default` workload.                                      |
+| `defaultWorkload` | Workload for requests that select none. Defaults to `default` if it exists, or to the only workload.           |
+| `name`            | Name in events and errors. Defaults to `default`.                                                              |
+| `leaseTtlMs`      | How long a slot stays valid without renewal. RunCell renews it automatically. Default 30000.                   |
 
-| Workload option | Meaning                                                                      |
-| --------------- | ---------------------------------------------------------------------------- |
-| `maxConcurrent` | Ceiling for this workload. Defaults to the limiter's `maxConcurrent`.        |
-| `reserved`      | Slots only this workload can use, counted inside `maxConcurrent`.            |
-| `priority`      | Higher values are served first among workloads with room. Default 0.         |
-| `maxWaitMs`     | Longest a request may wait for a slot. The run's `timeoutMs` can shorten it. |
+| Workload option | Meaning                                                                                |
+| --------------- | -------------------------------------------------------------------------------------- |
+| `maxConcurrent` | Ceiling for this workload. Defaults to the limiter's `maxConcurrent`.                  |
+| `reserved`      | Slots that only this workload can use, counted inside `maxConcurrent`.                 |
+| `priority`      | The limiter serves higher values first among workloads with room. Default 0.           |
+| `maxWaitMs`     | Longest time a request can wait for a slot. The run's `timeoutMs` can make it shorter. |
 
-Rules:
+The limiter applies these rules:
 
-- **Reservations are strict.** In the example, background work never holds
-  more than six slots, even when no interactive request is waiting, so two
-  interactive requests can always start right away. Unused reserved slots
-  stay idle; they are not lent.
-- **Priority** picks between workloads that have room; ties go to the
-  request that has waited longest. Within a workload, requests are served
-  first in, first out. Priority never interrupts a running request.
-- **A workload at its own ceiling never blocks another workload.**
-- **Priority alone does not prevent starvation.** Give a low-priority
-  workload a reservation if it must always make progress.
+- Reservations are strict. In the example, background work never holds
+  more than six slots, even when no interactive request waits. Thus, two
+  interactive requests can always start immediately. Unused reserved slots
+  stay idle. The limiter does not lend them.
+- Priority selects between workloads that have room. A tie goes to the
+  request that waited longest. Within a workload, the limiter serves
+  requests in arrival order. Priority never interrupts a running request.
+- A workload at its own ceiling never blocks a different workload.
+- Priority alone does not prevent starvation. If a low-priority workload
+  must always make progress, give it a reservation.
 
 Invalid settings throw `ConcurrencyConfigError` when you create the
-limiter. If a limiter has several workloads and no default, agents must
-select one; that check happens when the agent is created.
+limiter. If a limiter has several workloads and no default, each agent
+must select a workload. `createAgent` makes sure of this.
 
 ### Typed workload names
 
-Workload names are types, not free-form strings. The limiter infers them
-from the `workloads` keys, and the agent infers them from its limiter, so
-a typo fails to compile:
+Workload names are types, not free-form strings. The limiter gets the
+names from the `workloads` keys, and the agent gets them from its limiter.
+Thus, a typo fails to compile:
 
 ```ts
 const claude = createConcurrencyLimiter({
@@ -129,85 +138,95 @@ agent.run({ prompt, concurrency: { workload: 'interactive' } }); // ok
 agent.run({ prompt, concurrency: { workload: 'batch' } }); // type error
 ```
 
-`defaultWorkload`, the agent's `workload`, each run's `workload`, and
-`limiter.stats().workloads` are all typed the same way. A limiter without
-`workloads` has the single workload `'default'`. An agent without a
-limiter is `Agent<never>`: its runs cannot select a workload.
+The same types apply to `defaultWorkload`, the agent's `workload`, each
+run's `workload`, and `limiter.stats().workloads`. A limiter without
+`workloads` has one workload, `'default'`. An agent without a limiter is
+`Agent<never>`, so its runs cannot select a workload.
 
-A run selects a workload of its agent's limiter; it cannot switch
-limiters. To use a different limiter, create an agent configured with it.
-The same checks still run at runtime for JavaScript callers and for
-workload names built from strings. Event and error fields
-(`event.workload`, `error.workload`) stay `string`, because one stream
-can carry events from several limiters.
+A run selects a workload of its agent's limiter. It cannot change to a
+different limiter. To use a different limiter, create an agent that has
+it. RunCell does the same checks at runtime for JavaScript callers and for
+workload names that come from strings. Event and error fields
+(`event.workload`, `error.workload`) stay `string`, because one event
+stream can carry events from several limiters.
 
 ## Nested runs
 
-An agent started from a host tool is a child run. It inherits:
+An agent that a host tool starts is a child run. It inherits:
 
 - the parent's limiter, even if the child agent has no `concurrency`
-  option;
+  option
 - the parent's workload, unless the child run selects one with
-  `run({ concurrency: { workload } })`. A child agent's own default
-  workload does not override the parent's, so nesting cannot move work to
-  a different workload by accident;
-- the parent's cancellation and remaining time budget.
+  `run({ concurrency: { workload } })`
+- the parent's cancellation and remaining time budget
 
-A child agent configured with a **different** limiter uses that limiter
-and its own workload, for example a child that calls a different model.
+The child agent's own default workload does not replace the parent's
+workload. Thus, nesting cannot move work to a different workload by
+accident.
 
-Event and limiter requests carry `runId`, `rootRunId`, and `parentRunId`.
-RunCell does not control work a tool detaches from its run, such as a
-promise it does not await.
+A child agent that has a **different** limiter uses that limiter and its
+own workload. An example is a child that calls a different model.
+
+Events and limiter requests include `runId`, `rootRunId`, and
+`parentRunId`. RunCell does not control work that a tool detaches from its
+run, for example a promise that the tool does not await.
 
 ## Time budget and cancellation
 
-`timeoutMs` sets a total time budget for a run. Waiting for a slot uses
-that budget; it never restarts or extends it. A child stays within its
-parent's remaining budget.
+`timeoutMs` sets a total time budget for a run. Time spent waiting for a
+slot counts against that budget. The wait never restarts or extends the
+budget. A child stays within its parent's remaining budget.
 
 ```ts
 await agent.run({ prompt, timeoutMs: 120_000 });
 ```
 
-A request waits until the earlier of the workload's `maxWaitMs` and the
-end of the run's budget. Then it leaves the queue and the run fails with
-`ConcurrencyTimeoutError`. The provider is never called.
+A request waits until the workload's `maxWaitMs` or the end of the run's
+budget, whichever comes first. Then the request leaves the queue, and the
+run fails with `ConcurrencyTimeoutError`. RunCell does not call the
+provider.
 
-On cancellation (`signal`, parent cancellation, or the run budget), RunCell
-stops waiting, returns any slot granted at the same moment, aborts the
-active provider request, and releases its slot. Cleanup is idempotent.
+Cancellation can come from `signal`, from the parent, or from the end of
+the run's budget. On cancellation, RunCell:
+
+1. Stops waiting for a slot.
+2. Returns a slot that the limiter granted at the same moment.
+3. Aborts the active provider request.
+4. Releases that request's slot.
+
+Cleanup is idempotent.
 
 ## Failures
 
-| Failure                                 | Run rejects with            | Provider called?       |
-| --------------------------------------- | --------------------------- | ---------------------- |
-| No slot before the deadline             | `ConcurrencyTimeoutError`   | No                     |
-| Queue full                              | `ConcurrencyQueueFullError` | No                     |
-| Limiter or database failing             | `ConcurrencyLimiterError`   | No (fails closed)      |
-| Unknown workload, conflicting limits    | `ConcurrencyConfigError`    | No                     |
-| Slot could not be renewed before expiry | `ConcurrencyLeaseLostError` | Request aborted        |
-| Provider error                          | `TurnError`                 | Yes; slot is released  |
-| Releasing a slot fails                  | (run unaffected)            | `release-failed` event |
+| Failure                                     | Run rejects with            | Provider called?               |
+| ------------------------------------------- | --------------------------- | ------------------------------ |
+| No slot before the deadline                 | `ConcurrencyTimeoutError`   | No                             |
+| Queue full                                  | `ConcurrencyQueueFullError` | No                             |
+| Limiter or database fails                   | `ConcurrencyLimiterError`   | No (fails closed)              |
+| Unknown workload, conflicting limits        | `ConcurrencyConfigError`    | No                             |
+| RunCell cannot renew the slot before expiry | `ConcurrencyLeaseLostError` | RunCell aborts the request     |
+| Provider error                              | `TurnError`                 | Yes. RunCell releases the slot |
+| Slot release fails                          | (run continues)             | `release-failed` event         |
 
-All of these extend `ConcurrencyError` and carry `limiter`, `workload`,
-`runId`, `rootRunId`, `parentRunId`, and `requestId`. After a concurrency
-failure the run stops, and Pi's retries cannot send a request without a
-slot.
+All of these errors extend `ConcurrencyError`. They include `limiter`,
+`workload`, `runId`, `rootRunId`, `parentRunId`, and `requestId`. After a
+concurrency failure, the run stops. Pi's retries cannot send a request
+without a slot.
 
 ::: warning Limitation
-Lease expiry cannot prove that a remote provider stopped processing a
-request. RunCell guarantees that **valid slots** never exceed the limit.
-During a network partition, a request can keep running at the provider
-after its worker lost the slot, so strict physical concurrency needs
-provider-side fencing.
+Internally, a slot is a lease that expires unless RunCell renews it. Lease
+expiry cannot prove that a remote provider stopped work on a request.
+RunCell guarantees that the number of **valid slots** never goes above the
+limit. During a network partition, a request can continue at the provider
+after its worker lost the slot. Strict physical concurrency needs fencing
+at the provider.
 :::
 
 ## Monitoring
 
-`events.onConcurrency` receives structured events. They identify the
-limiter, workload, run lineage, and request, and never contain prompts or
-credentials.
+`events.onConcurrency` receives structured events. Each event identifies
+the limiter, workload, run lineage, and request. Events never contain
+prompts or credentials.
 
 | Event            | Extra fields                   |
 | ---------------- | ------------------------------ |
@@ -223,14 +242,13 @@ credentials.
 | `lease-lost`     | `leaseId`, `holdMs`            |
 | `release-failed` | `leaseId`, `error`             |
 
-`limiter.stats()` returns active and queued counts, overall and per
-workload. RunCell emits events; routing them to alerts is up to you.
+`limiter.stats()` returns active and queued counts, in total and for each
+workload. RunCell emits the events. Your application sends them to alerts.
 
 ## Several workers: PostgreSQL
 
-`@runcell/postgres-concurrency` shares a limiter across independent
-workers through a database. It takes the same limits plus a database and a
-name:
+`@runcell/postgres-concurrency` shares a limiter across independent workers
+through a database. It takes the same limits, plus a database and a name:
 
 ```ts
 import pg from 'pg';
@@ -247,41 +265,52 @@ const claude = createPostgresConcurrencyLimiter({
 });
 ```
 
-Every worker that creates a limiter with the same `name` shares its slots.
+All workers that create a limiter with the same `name` share its slots.
 
 - Each allocation is one short transaction that holds the limiter's row
-  lock, so no two workers grant the same slot.
-- No transaction or connection is held while a request waits or while a
-  provider request runs. Waiting requests check in every `pollIntervalMs`
-  (default 100 ms).
+  lock. Thus, two workers cannot grant the same slot.
+- The limiter holds no transaction or connection while a request waits or
+  while a provider request runs. Each waiting request checks for a slot
+  every `pollIntervalMs` (default 100 ms).
 - Slot expiry and wait deadlines use database time.
-- A crashed worker's slots come back after `leaseTtlMs` (default 30 s) and
-  its queue entries are removed after `queueEntryTtlMs` (default 15 s).
-- No session state is used, so transaction-mode poolers such as PgBouncer
-  work.
+- After a worker crashes, its slots come back after `leaseTtlMs` (default
+  30 s). The limiter removes its queue entries after `queueEntryTtlMs`
+  (default 15 s).
+- The limiter uses no session state. Thus, transaction-mode poolers such
+  as PgBouncer work.
 
-The tables are created on first use. If the database role cannot run DDL,
-apply `postgresConcurrencySchemaSql()` as a migration and pass
+The limiter creates its tables on first use. If the database role cannot
+run DDL, apply `postgresConcurrencySchemaSql()` as a migration and pass
 `ensureSchema: false`.
 
-**Changing limits.** Workers sharing a name must use the same limits. The
-first worker stores them; a worker with different limits fails with
-`ConcurrencyConfigError` instead of enforcing inconsistent rules. For a
-change, either use a new `name` or roll out with `onConflict: 'replace'` in
-a coordinated deployment.
+### Change the limits
+
+All workers that share a name must use the same limits. The first worker
+stores the limits in the database. A worker with different limits fails
+with `ConcurrencyConfigError`, so workers never apply inconsistent rules.
+To change the limits, use a new `name`. Alternatively, deploy all workers
+together with `onConflict: 'replace'`.
 
 ## Custom limiters
 
-Any object that implements `ConcurrencyLimiter` (`name`, `acquire`,
-`renew`, `release`, and optionally `validateWorkload` and `stats`) can back
-a limit. RunCell owns the slot lifecycle; the limiter owns allocation,
-queue order, and storage. It must provide atomic allocation, expiring
-leases, idempotent renewal and release, never-reused lease ids, and
-cancellation-safe `acquire`. `renew` resolves `undefined` when the lease is
-no longer held and rejects only for transient failures.
+Any object that implements `ConcurrencyLimiter` can back a limit. The
+object has `name`, `acquire`, `renew`, and `release`, and optionally
+`validateWorkload` and `stats`. RunCell owns the slot lifecycle. The
+limiter owns allocation, queue order, and storage.
 
-`runcell/concurrency` exports the allocation algorithm the built-in
-limiters share and a conformance suite:
+A custom limiter must:
+
+- allocate slots atomically
+- give leases that expire
+- make renewal and release idempotent
+- never use a lease id again
+- make `acquire` safe to cancel
+
+`renew` resolves `undefined` when the limiter no longer holds the lease.
+It rejects only for transient failures.
+
+`runcell/concurrency` exports the allocation algorithm that the built-in
+limiters share, and a conformance suite:
 
 ```ts
 import { concurrencyConformanceCases } from 'runcell/concurrency';
@@ -293,10 +322,10 @@ for (const c of concurrencyConformanceCases({ createLimiter })) {
 
 ## Engine notes
 
-- Pi's cache warmer sends background requests that cannot be limited, so
-  RunCell turns it off when a limit is configured.
-- Provider SDK retries inside one request (for example, an HTTP retry on a
-  dropped connection) run under that request's slot. Pi-level retries are
-  new requests and take new slots.
-- Requests a Pi extension sends on its own, outside the model stream, are
-  not limited.
+- Pi's cache warmer sends background requests that a limiter cannot see.
+  Thus, RunCell turns off cache warming when you configure a limit.
+- Provider SDK retries inside one request, for example an HTTP retry after
+  a dropped connection, use that request's slot. Pi-level retries are new
+  requests and take new slots.
+- RunCell does not limit requests that a Pi extension sends by itself,
+  outside the model stream.

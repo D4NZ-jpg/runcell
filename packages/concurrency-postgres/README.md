@@ -1,9 +1,9 @@
 # @runcell/postgres-concurrency
 
 A PostgreSQL concurrency limiter for [runcell](https://github.com/D4NZ-jpg/runcell).
-Every worker connected to the same database shares the limit: maximum
-provider requests in flight, workload ceilings, strict reservations,
-priorities, a bounded queue, and wait limits.
+All workers that connect to the same database share the limit. The limit
+has these parts: maximum provider requests in flight, workload ceilings,
+strict reservations, priorities, a bounded queue, and wait limits.
 
 ## Usage
 
@@ -29,65 +29,74 @@ const agent = createAgent({
 });
 ```
 
-Workers that create a limiter with the same `name` share its slots.
-Workload names are typed exactly as with `createConcurrencyLimiter`: the
-agent's and runs' `workload` options only accept configured names. The
-`db` pool is typed structurally, so any pg-compatible pool works and `pg`
-is not a dependency of this package.
+All workers that create a limiter with the same `name` share its slots.
+
+Workload names have the same types as with `createConcurrencyLimiter`. The
+`workload` options of the agent and its runs accept only configured names.
+
+The `db` option has a structural type. Thus, any pool that is compatible
+with `pg` works, and this package does not depend on `pg`.
 
 ## Options
 
-Takes the same limits as `createConcurrencyLimiter` (`maxConcurrent`,
-`maxQueued`, `workloads`, `defaultWorkload`), plus:
+The limiter takes the same limits as `createConcurrencyLimiter`
+(`maxConcurrent`, `maxQueued`, `workloads`, `defaultWorkload`). It also
+takes these options:
 
 | Option            | Default               | Description                                                                |
 | ----------------- | --------------------- | -------------------------------------------------------------------------- |
 | `db`              | required              | A `pg.Pool` or compatible pool.                                            |
 | `name`            | required              | Identifies the shared limit. Workers with the same name share slots.       |
-| `tablePrefix`     | `runcell_concurrency` | Table prefix; may be schema-qualified.                                     |
+| `tablePrefix`     | `runcell_concurrency` | Table prefix. It can include a schema name.                                |
 | `ensureSchema`    | `true`                | Create the tables on first use.                                            |
 | `leaseTtlMs`      | `30000`               | How long a slot stays valid without renewal.                               |
 | `pollIntervalMs`  | `100`                 | How often a waiting request checks for a slot.                             |
-| `queueEntryTtlMs` | `15000`               | How long a waiting request survives without checking in.                   |
-| `onConflict`      | `'reject'`            | `'replace'` overwrites different stored limits (for a coordinated change). |
+| `queueEntryTtlMs` | `15000`               | How long a waiting request stays in the queue without a check.             |
+| `onConflict`      | `'reject'`            | `'replace'` writes over different stored limits, for a coordinated change. |
 
 ## How it works
 
 - Each allocation is one short transaction that holds the limiter's row
-  lock and uses RunCell's shared allocation algorithm. Two workers can
-  never grant the same slot.
-- No transaction or connection is held while a request waits or while a
-  provider request runs. Only one worker at a time allocates; the others
-  use `SKIP LOCKED` and just check their own entry.
+  lock. The transaction uses the allocation algorithm that all RunCell
+  limiters share. Two workers can never grant the same slot.
+- The limiter holds no transaction or connection while a request waits or
+  while a provider request runs.
+- Only one worker at a time allocates. The other workers use `SKIP LOCKED`
+  and examine only their own queue entry.
 - Slot expiry and wait deadlines use database time.
-- A crashed worker's slots come back after `leaseTtlMs`, and its queue
-  entries are removed after `queueEntryTtlMs`.
-- No session state is used, so transaction-mode poolers (PgBouncer) work.
-- A database error rejects the operation, and RunCell fails the run closed
-  with `ConcurrencyLimiterError`.
+- After a worker crashes, its slots come back after `leaseTtlMs`. The
+  limiter removes its queue entries after `queueEntryTtlMs`.
+- The limiter uses no session state. Thus, transaction-mode poolers such
+  as PgBouncer work.
+- A database error rejects the operation. RunCell then fails the run
+  closed with `ConcurrencyLimiterError`.
 
 ## Migrations
 
-If the database role cannot run DDL, set `ensureSchema: false` and apply the
-idempotent statements from `postgresConcurrencySchemaSql(tablePrefix)` in
-your migration tool.
+If the database role cannot run DDL, do these steps:
 
-## Changing limits
+1. Apply the statements from `postgresConcurrencySchemaSql(tablePrefix)`
+   with your migration tool. The statements are idempotent.
+2. Set `ensureSchema: false`.
+
+## Change the limits
 
 The first worker stores the limits for a `name`. A worker with different
-limits fails with `ConcurrencyConfigError` rather than enforcing
-inconsistent rules. Use a new `name`, or roll out with
-`onConflict: 'replace'` in a coordinated deployment.
+limits fails with `ConcurrencyConfigError`, so workers never apply
+inconsistent rules. To change the limits, use a new `name`. Alternatively,
+deploy all workers together with `onConflict: 'replace'`.
 
 ## Guarantees
 
-Valid slots never exceed the configured limit. Lease expiry cannot stop a
-request already running at the provider, so strict physical concurrency
-during a network partition needs provider-side fencing.
+The number of valid slots never goes above the configured limit. Lease
+expiry cannot stop a request that already runs at the provider. Thus,
+strict physical concurrency during a network partition needs fencing at
+the provider.
 
-The test suite runs against PGlite (in-process PostgreSQL) with several
-limiter instances sharing one database. PGlite has a single connection, so
-transactions from different workers interleave at transaction boundaries;
-parallel connections against a server are not exercised.
+The tests run against PGlite, an in-process PostgreSQL, with several
+limiter instances that share one database. PGlite has a single
+connection. Thus, transactions from different workers interleave at
+transaction boundaries. The tests do not use parallel connections to a
+database server.
 
 See the [concurrency guide](https://runcell.run/concurrency).

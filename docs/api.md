@@ -68,21 +68,21 @@ run(options: RunOptionsBase): Promise<RunResult<undefined>>;
 
 ### Run options
 
-| Option               | Type                                  | Description                                                                                                                                                                                |
-| -------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `prompt`             | `string`                              | The task prompt. Supply either `prompt` or `messages`.                                                                                                                                     |
-| `messages`           | `readonly UIChatMessage[]`            | A UI chat history (AI SDK `UIMessage` shape). Must end with a user message. Earlier turns replay as context. File parts on every user message become workspace files under `attachments/`. |
-| `maxAttachmentBytes` | `number`                              | Per-attachment size limit for `file` parts in `messages`. Defaults to 20 MB.                                                                                                               |
-| `schema`             | `AgentSchema`                         | Structured output contract ([Standard Schema](https://standardschema.dev)). Omit for a plain turn.                                                                                         |
-| `files`              | `FileInput[]`                         | Files seeded into the workspace before the run. Relative paths only.                                                                                                                       |
-| `sandbox`            | `Sandbox \| SandboxOption`            | A caller-owned handle that Runcell does not destroy, or an ephemeral mode option.                                                                                                          |
-| `thread`             | `Thread`                              | Conversation to continue. A successful run mutates it in place.                                                                                                                            |
-| `events`             | `AgentEvents`                         | Per-run lifecycle callbacks, invoked in addition to the agent-level ones.                                                                                                                  |
-| `pi`                 | `{ thinkingLevel?: PiThinkingLevel }` | Per-run thinking-level override. The only accepted key is `thinkingLevel`. It wins for this run only.                                                                                      |
-| `sessionId`          | `string`                              | Resume a previous session by id.                                                                                                                                                           |
-| `signal`             | `AbortSignal`                         | Cancels the run.                                                                                                                                                                           |
-| `timeoutMs`          | `number`                              | Total run budget in milliseconds. The run aborts when it is spent. Waiting for a concurrency slot consumes it; children stay within their parent's remaining budget.                       |
-| `concurrency`        | `RunConcurrencyOptions`               | Per-run `{ workload?, metadata? }`. `workload` is typed by the agent's limiter. Requires a limiter on the agent or the parent run. See [Concurrency limits](./concurrency.md).             |
+| Option               | Type                                  | Description                                                                                                                                                                                   |
+| -------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prompt`             | `string`                              | The task prompt. Supply either `prompt` or `messages`.                                                                                                                                        |
+| `messages`           | `readonly UIChatMessage[]`            | A UI chat history (AI SDK `UIMessage` shape). Must end with a user message. Earlier turns replay as context. File parts on every user message become workspace files under `attachments/`.    |
+| `maxAttachmentBytes` | `number`                              | Per-attachment size limit for `file` parts in `messages`. Defaults to 20 MB.                                                                                                                  |
+| `schema`             | `AgentSchema`                         | Structured output contract ([Standard Schema](https://standardschema.dev)). Omit for a plain turn.                                                                                            |
+| `files`              | `FileInput[]`                         | Files seeded into the workspace before the run. Relative paths only.                                                                                                                          |
+| `sandbox`            | `Sandbox \| SandboxOption`            | A caller-owned handle that Runcell does not destroy, or an ephemeral mode option.                                                                                                             |
+| `thread`             | `Thread`                              | Conversation to continue. A successful run mutates it in place.                                                                                                                               |
+| `events`             | `AgentEvents`                         | Per-run lifecycle callbacks, invoked in addition to the agent-level ones.                                                                                                                     |
+| `pi`                 | `{ thinkingLevel?: PiThinkingLevel }` | Per-run thinking-level override. The only accepted key is `thinkingLevel`. It wins for this run only.                                                                                         |
+| `sessionId`          | `string`                              | Resume a previous session by id.                                                                                                                                                              |
+| `signal`             | `AbortSignal`                         | Cancels the run.                                                                                                                                                                              |
+| `timeoutMs`          | `number`                              | Total run budget in milliseconds. The run aborts at the end of the budget. Time spent waiting for a concurrency slot counts against it. Children stay within their parent's remaining budget. |
+| `concurrency`        | `RunConcurrencyOptions`               | Per-run `{ workload?, metadata? }`. The agent's limiter sets the type of `workload`. Needs a limiter on the agent or the parent run. See [Concurrency limits](./concurrency.md).              |
 
 The per-run `pi` object accepts only `thinkingLevel`. Extensions stay
 agent-level. Invalid values make `run()` throw `InvalidOptionError` before the
@@ -475,12 +475,15 @@ part that is not a data URL or that is over the limit.
 ## Concurrency limits
 
 `createConcurrencyLimiter(options): InMemoryConcurrencyLimiter<W>` creates an
-in-process limiter, where `W` is the union of its workload names; agents
-created with it are `Agent<W>`, so workload names are checked at compile
-time (`maxConcurrent`, optional `maxQueued`, `workloads`,
-`defaultWorkload`, `name`, `leaseTtlMs`). `limiter.stats()` returns active
-and queued counts. `ConcurrencyLimiter` is the contract for custom
-limiters; `runcell/concurrency` exports the shared allocation algorithm and
+in-process limiter. The options are `maxConcurrent` and the optional
+`maxQueued`, `workloads`, `defaultWorkload`, `name`, and `leaseTtlMs`.
+
+`W` is the union of the limiter's workload names. Agents that use the
+limiter are `Agent<W>`, so TypeScript makes sure of workload names at
+compile time. `limiter.stats()` returns active and queued counts.
+
+`ConcurrencyLimiter` is the contract for custom limiters.
+`runcell/concurrency` exports the shared allocation algorithm and
 `concurrencyConformanceCases`. See [Concurrency limits](./concurrency.md).
 
 ## Utility exports
