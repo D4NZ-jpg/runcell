@@ -4,6 +4,32 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Opt-in admission control for provider requests. `admission: { adapter }`
+  gates every provider request (initial turns, turns after tools, repairs,
+  Pi retries, compaction, credential fallbacks, and child agents started
+  from tools) with a lease that is held only while the request is active
+  and released before any tool runs. Children inherit lineage, pool,
+  workload, metadata, cancellation, and budget, and get no exemption.
+- `createInMemoryScheduler` enforces pools, workload limits, strict
+  reservations, priorities, bounded queues, and wait limits.
+  `admissionConformanceCases` checks custom adapters.
+- Typed `AdmissionTimeoutError`, `AdmissionQueueFullError`,
+  `AdmissionBackendError`, `AdmissionLeaseLostError`, and
+  `AdmissionConfigError`, and structured `onAdmission` events.
+- Run option `timeoutMs`: a total run budget that admission waits consume.
+
+### Changed
+
+- A run whose signal aborts now rejects with a `TurnError` (abort reason as
+  `cause`) even when the engine settled the turn quietly, instead of
+  resolving with an empty result.
+- With admission configured, Pi cache warming is turned off because its
+  background requests cannot be admitted.
+
 ## 1.13.0 - 2026-10-27
 
 ### Added

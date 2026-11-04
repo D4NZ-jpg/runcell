@@ -35,6 +35,18 @@
 - PDFs: install the optional peers `pdfjs-dist` and `@napi-rs/canvas` to
   enable the built-in `readPdfPages` tool.
 
+## Admission control
+
+- Opt-in: `admission: { adapter: createInMemoryScheduler({ policy }) }`, or
+  `createPostgresScheduler` from `@runcell/postgres-admission` for several
+  workers. A permit covers one provider request and is released before
+  tools run, so nested agents never deadlock and get no exemption.
+- Per run: `admission: { workload }` selects a workload; `timeoutMs` sets
+  the run budget that admission waits consume.
+- Failures are typed: `AdmissionTimeoutError`, `AdmissionQueueFullError`,
+  `AdmissionBackendError` (fails closed), `AdmissionLeaseLostError`,
+  `AdmissionConfigError`.
+
 ## Docs
 
 - Getting started: https://runcell.run/getting-started
@@ -44,4 +56,5 @@
 - Sandboxes: https://runcell.run/sandboxes
 - Threads: https://runcell.run/threads
 - Structured output: https://runcell.run/structured-output
+- Admission control: https://runcell.run/admission
 - API reference: https://runcell.run/api
