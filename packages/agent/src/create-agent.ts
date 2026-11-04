@@ -1,6 +1,8 @@
 import type { ExtensionFactory, PiThinkingLevel } from '@local/harness-pi-raw';
 import { normalizeCredentials, type CredentialPlan } from './credentials.js';
+import type { AdmissionOptions, RunAdmissionOptions } from './admission.js';
 import { InvalidOptionError } from './errors.js';
+import { DEFAULT_ADMISSION_POOL } from './run-context.js';
 import { normalizeFiles } from './files.js';
 import { defaultRuntime, type RuncellRuntime } from './runtime.js';
 import { resolveSandboxConfig, type SandboxConfig } from './sandbox.js';
@@ -127,6 +129,8 @@ export function resolveAgentConfig(
     '"pi.thinkingLevel"',
   );
 
+  validateAdmissionOptions(options.admission);
+
   return {
     model: options.model,
     systemPrompt: options.systemPrompt,
@@ -207,6 +211,86 @@ export function validateRunOptions(
     );
   }
   validateThinkingLevel(options.pi?.thinkingLevel, 'run "pi.thinkingLevel"');
+  if (options.timeoutMs !== undefined) {
+    validatePositiveInt(options.timeoutMs, 'run "timeoutMs"');
+  }
+  if (options.admission !== undefined) {
+    validateAdmissionSelection(options.admission, 'run "admission"');
+  }
+}
+
+function validatePositiveInt(value: unknown, label: string): void {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw new InvalidOptionError(
+      `${label} must be a positive integer, received: ${String(value)}`,
+    );
+  }
+}
+
+function isPlainRecord(value: unknown): boolean {
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Pool, workload, metadata, and wait limit shared by agent and run options. */
+function validateAdmissionSelection(
+  value: unknown,
+  label: string,
+): asserts value is RunAdmissionOptions {
+  if (!isPlainRecord(value)) {
+    throw new InvalidOptionError(`${label} must be an object.`);
+  }
+  const options = value as Record<string, unknown>;
+  for (const key of ['pool', 'workload'] as const) {
+    const field = options[key];
+    if (
+      field !== undefined &&
+      (typeof field !== 'string' || field.length === 0)
+    ) {
+      throw new InvalidOptionError(
+        `${label}.${key} must be a non-empty string.`,
+      );
+    }
+  }
+  if (
+    options['metadata'] !== undefined &&
+    !isPlainRecord(options['metadata'])
+  ) {
+    throw new InvalidOptionError(`${label}.metadata must be an object.`);
+  }
+  if (options['maxWaitMs'] !== undefined) {
+    validatePositiveInt(options['maxWaitMs'], `${label}.maxWaitMs`);
+  }
+}
+
+/**
+ * Reject unsupported admission configurations up front instead of running
+ * without admission.
+ */
+function validateAdmissionOptions(value: AdmissionOptions | undefined): void {
+  if (value === undefined) {
+    return;
+  }
+  validateAdmissionSelection(value, '"admission"');
+  const adapter = (value as { adapter?: unknown }).adapter as
+    Record<string, unknown> | undefined;
+  if (
+    adapter == null ||
+    typeof adapter !== 'object' ||
+    typeof adapter['acquire'] !== 'function' ||
+    typeof adapter['renew'] !== 'function' ||
+    typeof adapter['release'] !== 'function'
+  ) {
+    throw new InvalidOptionError(
+      '"admission.adapter" must implement acquire, renew, and release.',
+    );
+  }
+  if (value.cleanupTimeoutMs !== undefined) {
+    validatePositiveInt(value.cleanupTimeoutMs, '"admission.cleanupTimeoutMs"');
+  }
+  value.adapter.validate?.({
+    pool: value.pool ?? DEFAULT_ADMISSION_POOL,
+    workload: value.workload,
+  });
 }
 
 /** Runtime guard for JS callers; deliberately not a type guard so the

@@ -24,6 +24,7 @@ import {
   PI_SILENT_TURN_ABORT_REASON,
   type PiCredentialStore,
   type PiHarnessSettings,
+  type PiProviderRequestGate,
   type PiSessionUsageTotals,
   type PiThinkingLevel,
 } from '@local/harness-pi-raw';
@@ -38,11 +39,22 @@ import {
   type CredentialStore,
 } from './credentials.js';
 import {
+  createRunAdmission,
+  type RunAdmission,
+} from './admission-controller.js';
+import {
+  AdmissionTimeoutError,
   CredentialError,
   ExtensionError,
   IncompleteResultError,
   TurnError,
+  type AdmissionError,
 } from './errors.js';
+import {
+  createRunContext,
+  runInContext,
+  type RunContext,
+} from './run-context.js';
 import { normalizeFiles, type NormalizedFile } from './files.js';
 import {
   createReadPdfPagesTool,
@@ -102,6 +114,11 @@ export interface RuntimeRunInput {
    * hop) and the attempt's side-effect tracker. Set by the attempt loop.
    */
   attempt?: RunAttempt;
+  /**
+   * Internal: lineage, budget, cancellation, and admission for the run. Set
+   * once per run by the attempt loop so credential fallbacks share it.
+   */
+  context?: RunContext;
 }
 
 interface RunAttempt {
@@ -132,45 +149,73 @@ export const defaultRuntime: RuncellRuntime = {
       input.agentOptions.events,
       input.runOptions.events,
     );
-    for (const [index, source] of sources.entries()) {
-      const next = sources[index + 1];
-      const attempt: RunAttempt = {
-        credentials: source,
-        toolExecuted: false,
-        hasNextSource: next !== undefined,
-      };
-      try {
-        return await runWithHarness({ ...input, attempt });
-      } catch (error) {
-        // A credentials chain retries the run on the next source when the
-        // failure is a credential error and no tool has executed yet;
-        // retrying after a tool ran would repeat its side effects.
-        if (
-          next !== undefined &&
-          !attempt.toolExecuted &&
-          isCredentialFailure(error)
-        ) {
-          safeEmit(events?.onCredentialFallback, {
-            from: attempt.credentials.mode,
-            to: next.mode,
-            cause: error,
-          });
-          continue;
-        }
-        if (isInstanceOfSafe(error, ExtensionError)) {
-          throw error;
-        }
-        const extensionError = findPiExtensionError(error);
-        if (extensionError) {
-          throw new ExtensionError(extensionError.message, { cause: error });
-        }
-        throw error;
-      }
+    const { context, dispose } = input.context
+      ? { context: input.context, dispose: () => undefined }
+      : createInputRunContext(input);
+    try {
+      return await runCredentialAttempts(
+        { ...input, context },
+        sources,
+        events,
+      );
+    } finally {
+      dispose();
     }
-    // Unreachable: the loop returns or throws on the last source.
-    throw new Error('credentials chain exhausted without a result.');
   },
 };
+
+function createInputRunContext(input: RuntimeRunInput) {
+  return createRunContext({
+    admission: input.agentOptions.admission,
+    runAdmission: input.runOptions.admission,
+    timeoutMs: input.runOptions.timeoutMs,
+    signal: input.runOptions.signal,
+  });
+}
+
+async function runCredentialAttempts(
+  input: RuntimeRunInput & { context: RunContext },
+  sources: readonly ConcreteCredentialPlan[],
+  events: AgentEvents | undefined,
+): Promise<RunResult<unknown>> {
+  for (const [index, source] of sources.entries()) {
+    const next = sources[index + 1];
+    const attempt: RunAttempt = {
+      credentials: source,
+      toolExecuted: false,
+      hasNextSource: next !== undefined,
+    };
+    try {
+      return await runWithHarness({ ...input, attempt });
+    } catch (error) {
+      // A credentials chain retries the run on the next source when the
+      // failure is a credential error and no tool has executed yet;
+      // retrying after a tool ran would repeat its side effects.
+      if (
+        next !== undefined &&
+        !attempt.toolExecuted &&
+        isCredentialFailure(error)
+      ) {
+        safeEmit(events?.onCredentialFallback, {
+          from: attempt.credentials.mode,
+          to: next.mode,
+          cause: error,
+        });
+        continue;
+      }
+      if (isInstanceOfSafe(error, ExtensionError)) {
+        throw error;
+      }
+      const extensionError = findPiExtensionError(error);
+      if (extensionError) {
+        throw new ExtensionError(extensionError.message, { cause: error });
+      }
+      throw error;
+    }
+  }
+  // Unreachable: the loop returns or throws on the last source.
+  throw new Error('credentials chain exhausted without a result.');
+}
 
 /**
  * Whether a failure means the credential source itself cannot authenticate:
@@ -244,14 +289,33 @@ function findPiExtensionError(error: unknown): { message: string } | undefined {
   return undefined;
 }
 
-async function runWithHarness({
+async function runWithHarness(
+  input: RuntimeRunInput,
+): Promise<RunResult<unknown>> {
+  if (input.context) {
+    return runAttemptWithHarness({ ...input, context: input.context });
+  }
+  const { context, dispose } = createInputRunContext(input);
+  try {
+    return await runAttemptWithHarness({ ...input, context });
+  } finally {
+    dispose();
+  }
+}
+
+async function runAttemptWithHarness({
   agentOptions,
   config,
-  runOptions,
+  runOptions: requestedRunOptions,
   onTextDelta,
   onStreamPart,
   attempt: runAttempt,
-}: RuntimeRunInput): Promise<RunResult<unknown>> {
+  context: runContext,
+}: RuntimeRunInput & { context: RunContext }): Promise<RunResult<unknown>> {
+  // The run signal also carries parent cancellation and the run deadline.
+  const runOptions: RuntimeRunOptions = runContext.signal
+    ? { ...requestedRunOptions, signal: runContext.signal }
+    : requestedRunOptions;
   // Direct callers (tests, custom runtimes) may omit the attempt loop; a
   // chain then requires it, so resolve the concrete source here.
   const credentials: ConcreteCredentialPlan = runAttempt?.credentials ??
@@ -274,6 +338,14 @@ async function runWithHarness({
   const events = mergeEvents(agentOptions.events, runOptions.events);
   const threadInternals = getThreadInternals(runOptions.thread);
   let succeeded = false;
+  const admission: RunAdmission | undefined = runContext.admission
+    ? createRunAdmission(
+        { ...runContext, admission: runContext.admission },
+        event => {
+          safeEmit(events?.onAdmission, event);
+        },
+      )
+    : undefined;
 
   // PDFs cannot be viewed through the engine's read tool (it reads text and
   // images), so seeded PDFs get a built-in page-rendering tool when the
@@ -291,6 +363,7 @@ async function runWithHarness({
 
   const tools = createTools({
     tools: agentOptions.tools,
+    runContext,
     schema,
     builtinTools: pdfRenderer
       ? {
@@ -336,6 +409,7 @@ async function runWithHarness({
       createPiSettings(
         { ...config, credentials },
         runOptions.pi?.thinkingLevel,
+        admission?.gate,
       ),
     ),
     permissionMode: 'allow-all',
@@ -395,6 +469,7 @@ async function runWithHarness({
       ...(runOptions.signal ? { abortSignal: runOptions.signal } : {}),
     });
   } catch (error) {
+    await admission?.dispose();
     await disposeOwnedSandbox();
     throw error;
   }
@@ -514,6 +589,17 @@ async function runWithHarness({
         throw streamThrown;
       }
 
+      // A denied request or lost lease always fails the run, even when Pi
+      // settled the turn quietly (for example as an abort).
+      const admissionFailure = admission?.failure();
+      if (admissionFailure) {
+        throw admissionFailure;
+      }
+      // Cancellation (caller, parent, or run budget) never yields a result.
+      if (runOptions.signal?.aborted) {
+        throw runOptions.signal.reason;
+      }
+
       // Terminal for the turn: fail the run with the real error instead of
       // dissolving into an empty result. Thrown after the stream drains so
       // the iterator closes cleanly.
@@ -552,19 +638,37 @@ async function runWithHarness({
     const runError: unknown = callerAborted
       ? (runOptions.signal?.reason as unknown)
       : error;
-    const extensionError = callerAborted
-      ? undefined
-      : findPiExtensionError(runError);
-    const failure = extensionError
-      ? new ExtensionError(extensionError.message, { cause: runError })
-      : toRunFailure(
-          runError,
+    // An admission failure means the request was denied or its lease was
+    // lost; it outranks the generic turn error Pi reports for it. An
+    // admission timeout caused by the run budget outranks that abort too.
+    const admissionFailure = admission?.failure();
+    const useAdmissionFailure =
+      admissionFailure !== undefined &&
+      (!callerAborted ||
+        isInstanceOfSafe(admissionFailure, AdmissionTimeoutError));
+    const extensionError =
+      callerAborted || useAdmissionFailure
+        ? undefined
+        : findPiExtensionError(runError);
+    const failure = useAdmissionFailure
+      ? withUsage(
+          admissionFailure,
           finalizeRunUsage(
             usage,
             usageBaseline,
             getPiSessionUsageTotals(session),
           ),
-        );
+        )
+      : extensionError
+        ? new ExtensionError(extensionError.message, { cause: runError })
+        : toRunFailure(
+            runError,
+            finalizeRunUsage(
+              usage,
+              usageBaseline,
+              getPiSessionUsageTotals(session),
+            ),
+          );
     // A credential failure that the chain will retry on the next source is
     // reported through onCredentialFallback instead of onError.
     const willFallBack =
@@ -576,6 +680,7 @@ async function runWithHarness({
     }
     throw failure;
   } finally {
+    await admission?.dispose();
     if (succeeded && threadInternals) {
       // Flush Pi's journal into the sandbox (leaves it running) and capture
       // it into the thread. The continuation is cleared up front so a failed
@@ -594,6 +699,17 @@ async function runWithHarness({
     }
     await disposeOwnedSandbox();
   }
+}
+
+function withUsage(error: AdmissionError, usage: RunUsage): AdmissionError {
+  if (error.usage === undefined) {
+    Object.defineProperty(error, 'usage', {
+      value: usage,
+      configurable: true,
+      enumerable: true,
+    });
+  }
+  return error;
 }
 
 /**
@@ -741,6 +857,7 @@ function mergeEvents(
       agent.onCredentialFallback,
       run.onCredentialFallback,
     ),
+    onAdmission: both(agent.onAdmission, run.onAdmission),
   };
 }
 
@@ -924,11 +1041,13 @@ function recordThreadTurn(
 
 function createTools({
   tools,
+  runContext,
   schema,
   builtinTools,
   onSubmit,
 }: {
   tools: AgentOptions['tools'];
+  runContext: RunContext;
   schema: AgentSchema | undefined;
   builtinTools?: AgentOptions['tools'];
   onSubmit: (value: unknown) => void;
@@ -936,11 +1055,11 @@ function createTools({
   const out: ToolSet = {};
 
   for (const [name, definition] of Object.entries(tools ?? {})) {
-    out[name] = createHostTool(definition);
+    out[name] = createHostTool(definition, runContext);
   }
   // Built-in tool names are reserved, so these never collide with user tools.
   for (const [name, definition] of Object.entries(builtinTools ?? {})) {
-    out[name] = createHostTool(definition);
+    out[name] = createHostTool(definition, runContext);
   }
 
   if (schema) {
@@ -991,12 +1110,20 @@ function isPromiseLike<T>(value: T | PromiseLike<T>): value is PromiseLike<T> {
   return typeof (value as { then?: unknown }).then === 'function';
 }
 
-function createHostTool(definition: ToolDefinition): ToolSet[string] {
+/**
+ * Host tools execute inside their run's context, so a RunCell agent started
+ * from a tool becomes a child run (lineage, admission, budget, cancellation).
+ * No provider permit is held while a tool runs.
+ */
+function createHostTool(
+  definition: ToolDefinition,
+  runContext: RunContext,
+): ToolSet[string] {
   return tool({
     description: definition.description,
     inputSchema: toToolInputSchema(definition.schema),
     execute(input) {
-      return definition.execute(input);
+      return runInContext(runContext, () => definition.execute(input));
     },
   });
 }
@@ -1376,11 +1503,13 @@ function createPiSettings(
     credentials: ConcreteCredentialPlan;
   },
   runThinkingLevel?: PiThinkingLevel,
+  providerRequestGate?: PiProviderRequestGate,
 ): PiHarnessSettings {
   const { credentials, model, systemPrompt, extensions } = config;
   const thinkingLevel = runThinkingLevel ?? config.thinkingLevel;
   const base = {
     model,
+    ...(providerRequestGate ? { providerRequestGate } : {}),
     ...(thinkingLevel ? { thinkingLevel } : {}),
     ...(systemPrompt
       ? {

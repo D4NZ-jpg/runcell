@@ -60,7 +60,15 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
       })),
     },
     SettingsManager: {
-      inMemory: vi.fn(() => ({})),
+      inMemory: vi.fn(() => {
+        let cacheWarming = 'streaming';
+        return {
+          getCacheWarmingMode: () => cacheWarming,
+          setCacheWarmingMode: (mode: string) => {
+            cacheWarming = mode;
+          },
+        };
+      }),
     },
   };
 });
@@ -101,6 +109,64 @@ describe('createPiSession', () => {
       expect.objectContaining({ allowModelNetwork: false }),
     );
     await session.doDestroy();
+  });
+
+  it('gates the Pi agent stream function and turns cache warming off', async () => {
+    const inner = vi.fn();
+    const agent = { streamFunction: inner };
+    piMock.session = createPiAgentSession({ agent });
+    let settingsManager:
+      | { getCacheWarmingMode(): string }
+      | undefined;
+    piMock.createAgentSession.mockImplementation(async options => {
+      settingsManager = options.settingsManager;
+      return { session: piMock.session };
+    });
+    const admit = vi.fn(() => Promise.reject(new Error('denied')));
+    const session = await createPiSession({
+      sessionId: 'session-gated',
+      sandboxSession: createSandboxSession(),
+      sessionWorkDir: '/sandbox/work',
+      skills: [],
+      settings: { providerRequestGate: { admit } },
+      isResume: false,
+    });
+    const control = await session.doPromptTurn({
+      prompt: 'go',
+      tools: [],
+      emit: vi.fn(),
+    });
+    await control.done;
+
+    expect(agent.streamFunction).not.toBe(inner);
+    expect(settingsManager?.getCacheWarmingMode()).toBe('off');
+    await expect(
+      (agent.streamFunction as (...args: unknown[]) => Promise<unknown>)(
+        { id: 'm', provider: 'p' },
+        {},
+      ),
+    ).rejects.toThrow('Provider request was not admitted.');
+    expect(admit).toHaveBeenCalledOnce();
+    expect(inner).not.toHaveBeenCalled();
+    await session.doDestroy();
+  });
+
+  it('rejects a caller settings manager that keeps cache warming on', async () => {
+    await expect(
+      createPiSession({
+        sessionId: 'session-gated-bad',
+        sandboxSession: createSandboxSession(),
+        sessionWorkDir: '/sandbox/work',
+        skills: [],
+        settings: {
+          providerRequestGate: { admit: vi.fn() },
+          settingsManager: {
+            getCacheWarmingMode: () => 'streaming',
+          } as never,
+        },
+        isResume: false,
+      }),
+    ).rejects.toThrow(/cache warming/);
   });
 
   it('emits per-turn usage and cost deltas on finish', async () => {

@@ -22,6 +22,15 @@ export type {
   PiSessionSettings,
   PiThinkingLevel,
 } from './pi-session';
+export {
+  PI_PROVIDER_REQUEST_DENIED_MESSAGE,
+  PiProviderRequestDeniedError,
+} from './pi-provider-gate';
+export type {
+  PiProviderRequestGate,
+  PiProviderRequestOutcome,
+  PiProviderRequestPermit,
+} from './pi-provider-gate';
 export { isToolContent, toolContent, TOOL_CONTENT_TYPE } from './tool-content';
 export type {
   ToolContent,

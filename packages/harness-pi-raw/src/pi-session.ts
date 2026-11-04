@@ -32,6 +32,11 @@ import type {
 } from '@ai-sdk/harness';
 import type { Experimental_SandboxSession } from '@ai-sdk/provider-utils';
 import { resolvePiAuth, type PiAuthOptions } from './pi-auth';
+import {
+  assertGateCompatibleSettings,
+  installProviderRequestGate,
+  type PiProviderRequestGate,
+} from './pi-provider-gate';
 import { getPiTerminalError, parseNativeEvent } from './pi-events';
 import { HARNESS_ID } from './pi-harness-id';
 import { createPiModelResolver } from './pi-model-resolver';
@@ -130,7 +135,24 @@ interface PiSessionUsageSource {
   readonly [PI_SESSION_USAGE_TOTALS]: () => PiSessionUsageTotals;
 }
 
-type PiHarnessSession = HarnessV1Session & PiSessionUsageSource;
+/*
+ * Hands a parked, same-process session the resuming run's provider gate.
+ * Returns false when the session cannot honor the gate (it was built
+ * ungated), so the caller cold-starts instead of running unadmitted.
+ */
+const PI_REPLACE_PROVIDER_GATE: unique symbol = Symbol(
+  'runcell.pi.replace-provider-gate',
+);
+
+interface PiProviderGateTarget {
+  readonly [PI_REPLACE_PROVIDER_GATE]: (
+    gate: PiProviderRequestGate | undefined,
+  ) => boolean;
+}
+
+type PiHarnessSession = HarnessV1Session &
+  PiSessionUsageSource &
+  PiProviderGateTarget;
 
 /**
  * Read cumulative usage recorded for this exact Pi session instance. Callers
@@ -400,6 +422,14 @@ export interface PiSessionSettings {
   /** Activate every registered Pi tool after the raw SDK session starts. */
   readonly activateAllExtensionTools?: boolean;
 
+  /**
+   * Admission gate for every provider request in the session. When set, Pi
+   * cache warming is turned off (or a caller-supplied settings manager that
+   * enables it is rejected), because its background requests cannot be
+   * gated.
+   */
+  readonly providerRequestGate?: PiProviderRequestGate;
+
   /** Opt-in resource discovery. Defaults keep the stock adapter's safe mode. */
   readonly enableExtensions?: boolean;
   readonly enableThemes?: boolean;
@@ -530,7 +560,16 @@ export async function createPiSession(
   if (input.isResume) {
     const key = parkKey(input.sessionId, input.resumeSessionFileName);
     const parkedSession = parkedPiSessions.get(key);
-    if (parkedSession) {
+    if (
+      parkedSession &&
+      !parkedSession[PI_REPLACE_PROVIDER_GATE](
+        input.settings.providerRequestGate,
+      )
+    ) {
+      // Built without a gate; it cannot admit this run's requests.
+      parkedPiSessions.delete(key);
+      await Promise.resolve(parkedSession.doDestroy()).catch(() => {});
+    } else if (parkedSession) {
       parkedPiSessions.delete(key);
       Object.defineProperty(parkedSession, 'isResume', {
         value: true,
@@ -669,6 +708,12 @@ export async function createPiSession(
       }));
     const settingsManager =
       input.settings.settingsManager ?? SettingsManager.inMemory();
+    if (input.settings.providerRequestGate) {
+      assertGateCompatibleSettings(
+        settingsManager,
+        input.settings.settingsManager === undefined,
+      );
+    }
 
     // Run-scoped env (for the model resolver's gateway fallback heuristic).
     const resolverEnv = await resolvePiAuth(
@@ -797,6 +842,8 @@ export async function createPiSession(
   } = acquired;
 
   // Per-session mutable state we hold across prompts.
+  const gated = input.settings.providerRequestGate !== undefined;
+  let providerGate = input.settings.providerRequestGate;
   let piSession: AgentSession | undefined;
   let unsubscribe: (() => void) | undefined;
   let lastToolsSignature: string | undefined;
@@ -1029,6 +1076,9 @@ export async function createPiSession(
         : {}),
       ...(resolvedModel ? { model: resolvedModel } : {}),
     });
+    if (gated) {
+      installProviderRequestGate(session.agent, () => providerGate);
+    }
     if (activateAllExtensionTools) {
       session.setActiveToolsByName([
         ...new Set([
@@ -1299,6 +1349,11 @@ export async function createPiSession(
   const sessionImpl: PiHarnessSession = {
     sessionId: input.sessionId,
     [PI_SESSION_USAGE_TOTALS]: () => ({ ...sessionUsageTotals }),
+    [PI_REPLACE_PROVIDER_GATE]: gate => {
+      if (gate && !gated) return false;
+      providerGate = gate;
+      return true;
+    },
     isResume: input.isResume,
     // The model Pi actually resolves to (the configured id, or its default when
     // unset) — `gen_ai.request.model`.

@@ -146,6 +146,112 @@ export class CredentialError extends RuncellError {
   }
 }
 
+/** Identifies the admission request an {@link AdmissionError} belongs to. */
+export interface AdmissionErrorDetails {
+  pool?: string;
+  workload?: string;
+  runId?: string;
+  rootRunId?: string;
+  parentRunId?: string;
+  requestId?: string;
+}
+
+interface AdmissionErrorOptions extends AdmissionErrorDetails {
+  cause?: unknown;
+  usage?: RunUsage;
+}
+
+/**
+ * Base class for admission-control failures. An admission failure means the
+ * provider request was never sent (or, for {@link AdmissionLeaseLostError},
+ * was aborted), which distinguishes it from a provider failure
+ * ({@link TurnError}). Runtime-created failures carry `usage` for the run.
+ */
+export class AdmissionError extends RuncellError {
+  declare readonly usage?: RunUsage;
+  readonly pool: string | undefined;
+  readonly workload: string | undefined;
+  readonly runId: string | undefined;
+  readonly rootRunId: string | undefined;
+  readonly parentRunId: string | undefined;
+  readonly requestId: string | undefined;
+
+  constructor(message: string, options: AdmissionErrorOptions = {}) {
+    super(message, 'cause' in options ? { cause: options.cause } : undefined);
+    this.name = 'AdmissionError';
+    this.pool = options.pool;
+    this.workload = options.workload;
+    this.runId = options.runId;
+    this.rootRunId = options.rootRunId;
+    this.parentRunId = options.parentRunId;
+    this.requestId = options.requestId;
+    if (options.usage !== undefined) {
+      Object.defineProperty(this, 'usage', {
+        value: options.usage,
+        configurable: true,
+        enumerable: true,
+      });
+    }
+  }
+}
+
+/**
+ * The admission deadline passed before a permit was granted: the request's
+ * wait limit, the workload's `maxWaitMs`, or the remaining run budget,
+ * whichever came first. The provider was not called.
+ */
+export class AdmissionTimeoutError extends AdmissionError {
+  constructor(message: string, options?: AdmissionErrorOptions) {
+    super(message, options);
+    this.name = 'AdmissionTimeoutError';
+  }
+}
+
+/**
+ * The pool's queue already holds `maxQueued` waiting requests. The provider
+ * was not called.
+ */
+export class AdmissionQueueFullError extends AdmissionError {
+  constructor(message: string, options?: AdmissionErrorOptions) {
+    super(message, options);
+    this.name = 'AdmissionQueueFullError';
+  }
+}
+
+/**
+ * The admission backend failed or could not be reached. Admission fails
+ * closed: the provider was not called. The backend error is the `cause`.
+ */
+export class AdmissionBackendError extends AdmissionError {
+  constructor(message: string, options?: AdmissionErrorOptions) {
+    super(message, options);
+    this.name = 'AdmissionBackendError';
+  }
+}
+
+/**
+ * A granted lease expired or could not be renewed before expiry. RunCell
+ * aborted the provider request that held it and stopped the run.
+ */
+export class AdmissionLeaseLostError extends AdmissionError {
+  constructor(message: string, options?: AdmissionErrorOptions) {
+    super(message, options);
+    this.name = 'AdmissionLeaseLostError';
+  }
+}
+
+/**
+ * The admission configuration is invalid, references an unknown pool or
+ * workload, or conflicts with the policy other workers use for the same
+ * pool.
+ */
+export class AdmissionConfigError extends AdmissionError {
+  constructor(message: string, options?: AdmissionErrorOptions) {
+    super(message, options);
+    this.name = 'AdmissionConfigError';
+  }
+}
+
 export class NotImplementedError extends RuncellError {
   constructor(message: string) {
     super(message);

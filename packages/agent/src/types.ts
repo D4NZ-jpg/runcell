@@ -1,4 +1,9 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
+import type {
+  AdmissionEvent,
+  AdmissionOptions,
+  RunAdmissionOptions,
+} from './admission.js';
 import type { ExtensionFactory, PiThinkingLevel } from '@local/harness-pi-raw';
 import type { Credentials } from './credentials.js';
 import type { FileInput } from './files.js';
@@ -87,6 +92,12 @@ export interface AgentEvents {
   onFinish?: (info: FinishEvent) => void;
   onError?: (error: unknown) => void;
   onCredentialFallback?: (info: CredentialFallbackEvent) => void;
+  /**
+   * Admission lifecycle events (wait started, acquired, timed out, released,
+   * renewal failed, lease lost, cleanup failed, ...). Only emitted when
+   * admission is configured. Events never contain prompts or credentials.
+   */
+  onAdmission?: (event: AdmissionEvent) => void;
 }
 
 /**
@@ -138,6 +149,13 @@ export interface AgentOptions {
   maxRepairs?: number;
   /** Pi engine escape hatch: extensions and other Pi-specific options. */
   pi?: PiOptions;
+  /**
+   * Opt-in admission control. Every provider request of every run (initial
+   * turns, turns after tools, repairs, retries, compaction, and RunCell
+   * agents started from this agent's tools) holds a permit only while the
+   * request is active. See https://runcell.run/admission
+   */
+  admission?: AdmissionOptions;
 }
 
 /**
@@ -202,6 +220,17 @@ export interface RunOptionsBase {
   sessionId?: string;
   /** Abort signal to cancel the run. */
   signal?: AbortSignal;
+  /**
+   * Total time budget for the run, in milliseconds. The run is aborted when
+   * it is exceeded. Admission waits consume this budget. A run started from
+   * another run's tool also stays within its parent's remaining budget.
+   */
+  timeoutMs?: number;
+  /**
+   * Per-run admission selection and metadata. Requires an admission adapter
+   * on the agent or an admitted parent run.
+   */
+  admission?: RunAdmissionOptions;
   /**
    * Per-run Pi engine overrides, merged over the agent-level `pi` options.
    * `extensions` intentionally stays agent-level: extensions are loaded once
