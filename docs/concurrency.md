@@ -331,10 +331,11 @@ for (const c of concurrencyConformanceCases({ createLimiter })) {
 
 ## Engine notes
 
-- Pi's cache warmer sends background requests that a limiter cannot see.
-  Thus, RunCell turns off cache warming when you configure a limit.
+- Pi's cache warmer sends background requests. They would take slots, so
+  RunCell turns off cache warming when you configure a limit.
 - Provider SDK retries inside one request, for example an HTTP retry after
   a dropped connection, use that request's slot. Pi-level retries are new
   requests and take new slots.
-- RunCell does not limit requests that a Pi extension sends by itself,
-  outside the model stream.
+- Requests that a Pi extension sends through the session's model runtime
+  take slots. RunCell cannot limit requests that an extension sends by
+  other means, for example with its own HTTP client.

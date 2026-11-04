@@ -33,7 +33,7 @@ import type {
 import type { Experimental_SandboxSession } from '@ai-sdk/provider-utils';
 import { resolvePiAuth, type PiAuthOptions } from './pi-auth';
 import {
-  assertGateCompatibleSettings,
+  disableCacheWarming,
   installProviderRequestGate,
   type PiProviderRequestGate,
 } from './pi-provider-gate';
@@ -423,10 +423,10 @@ export interface PiSessionSettings {
   readonly activateAllExtensionTools?: boolean;
 
   /**
-   * Admission gate for every provider request in the session. When set, Pi
-   * cache warming is turned off (or a caller-supplied settings manager that
-   * enables it is rejected), because its background requests cannot be
-   * gated.
+   * Admission gate for every provider request in the session. The gate wraps
+   * the session's own `ModelRuntime`, so it cannot be combined with a
+   * caller-supplied `modelRuntime`. Cache warming is turned off on an
+   * adapter-owned settings manager, so background requests take no slots.
    */
   readonly providerRequestGate?: PiProviderRequestGate;
 
@@ -602,6 +602,10 @@ export async function createPiSession(
     : path.join(hostRoot, 'agent');
   const hostSessionDir = path.join(hostRoot, 'sessions');
   const releaseHostRoot = acquireHostRootLease(hostRoot);
+  // Read per request: a parked session can be handed a new run's gate.
+  const gateHolder: { current: PiProviderRequestGate | undefined } = {
+    current: input.settings.providerRequestGate,
+  };
 
   // Pi runs in this host process but must behave as though it lives in the
   // sandbox workspace: its working directory is the real `sessionWorkDir`
@@ -694,6 +698,13 @@ export async function createPiSession(
 
     // Pi auth + model catalog are global to this Pi session. These live on the
     // real host filesystem (`hostAgentDir`), never in the sandbox/workspace.
+    if (input.settings.providerRequestGate && input.settings.modelRuntime) {
+      throw new Error(
+        'providerRequestGate cannot be combined with a caller-supplied ' +
+          'modelRuntime: the gate wraps the runtime, and a shared runtime ' +
+          'would gate other sessions.',
+      );
+    }
     const modelRuntime =
       input.settings.modelRuntime ??
       (await ModelRuntime.create({
@@ -706,13 +717,13 @@ export async function createPiSession(
           ? { credentials: input.settings.piCredentials }
           : {}),
       }));
+    if (input.settings.providerRequestGate) {
+      installProviderRequestGate(modelRuntime, () => gateHolder.current);
+    }
     const settingsManager =
       input.settings.settingsManager ?? SettingsManager.inMemory();
-    if (input.settings.providerRequestGate) {
-      assertGateCompatibleSettings(
-        settingsManager,
-        input.settings.settingsManager === undefined,
-      );
+    if (input.settings.providerRequestGate && !input.settings.settingsManager) {
+      disableCacheWarming(settingsManager);
     }
 
     // Run-scoped env (for the model resolver's gateway fallback heuristic).
@@ -843,7 +854,6 @@ export async function createPiSession(
 
   // Per-session mutable state we hold across prompts.
   const gated = input.settings.providerRequestGate !== undefined;
-  let providerGate = input.settings.providerRequestGate;
   let piSession: AgentSession | undefined;
   let unsubscribe: (() => void) | undefined;
   let lastToolsSignature: string | undefined;
@@ -1076,9 +1086,6 @@ export async function createPiSession(
         : {}),
       ...(resolvedModel ? { model: resolvedModel } : {}),
     });
-    if (gated) {
-      installProviderRequestGate(session.agent, () => providerGate);
-    }
     if (activateAllExtensionTools) {
       session.setActiveToolsByName([
         ...new Set([
@@ -1351,7 +1358,7 @@ export async function createPiSession(
     [PI_SESSION_USAGE_TOTALS]: () => ({ ...sessionUsageTotals }),
     [PI_REPLACE_PROVIDER_GATE]: gate => {
       if (gate && !gated) return false;
-      providerGate = gate;
+      gateHolder.current = gate;
       return true;
     },
     isResume: input.isResume,

@@ -11,6 +11,8 @@ updates:
     open-pull-requests-limit: 10
     versioning-strategy: increase
     groups:
+      # Pi upgrades need a manual review of request paths before merge:
+      # packages/harness-pi-raw/README.md#pi-upgrade-review
       pi-engine:
         patterns:
           - '@earendil-works/*'

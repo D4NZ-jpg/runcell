@@ -111,13 +111,22 @@ describe('createPiSession', () => {
     await session.doDestroy();
   });
 
-  it('gates the Pi agent stream function and turns cache warming off', async () => {
-    const inner = vi.fn();
-    const agent = { streamFunction: inner };
+  it('gates the session model runtime, keeps the agent stream function, and turns cache warming off', async () => {
+    const innerStream = vi.fn();
+    const runtime = {
+      getModels: vi.fn(() => []),
+      registerProvider: vi.fn(),
+      setRuntimeApiKey: vi.fn(() => Promise.resolve()),
+      streamSimple: innerStream,
+      stream: innerStream,
+    };
+    piMock.modelRuntimeCreate.mockImplementation(() =>
+      Promise.resolve(runtime),
+    );
+    const streamFunction = vi.fn();
+    const agent = { streamFunction };
     piMock.session = createPiAgentSession({ agent });
-    let settingsManager:
-      | { getCacheWarmingMode(): string }
-      | undefined;
+    let settingsManager: { getCacheWarmingMode(): string } | undefined;
     piMock.createAgentSession.mockImplementation(async options => {
       settingsManager = options.settingsManager;
       return { session: piMock.session };
@@ -138,20 +147,22 @@ describe('createPiSession', () => {
     });
     await control.done;
 
-    expect(agent.streamFunction).not.toBe(inner);
+    // Pi keys compaction auth on the stream function's identity (#11520).
+    expect(agent.streamFunction).toBe(streamFunction);
+    expect(runtime.streamSimple).not.toBe(innerStream);
     expect(settingsManager?.getCacheWarmingMode()).toBe('off');
-    await expect(
-      (agent.streamFunction as (...args: unknown[]) => Promise<unknown>)(
-        { id: 'm', provider: 'p' },
-        {},
-      ),
-    ).rejects.toThrow('Provider request was not admitted.');
+    const result = await (
+      runtime.streamSimple as unknown as (...args: unknown[]) => {
+        result(): Promise<{ errorMessage?: string }>;
+      }
+    )({ id: 'm', provider: 'p', api: 'x' }, {}).result();
+    expect(result.errorMessage).toBe('Provider request was not admitted.');
     expect(admit).toHaveBeenCalledOnce();
-    expect(inner).not.toHaveBeenCalled();
+    expect(innerStream).not.toHaveBeenCalled();
     await session.doDestroy();
   });
 
-  it('rejects a caller settings manager that keeps cache warming on', async () => {
+  it('rejects a gate combined with a caller-supplied model runtime', async () => {
     await expect(
       createPiSession({
         sessionId: 'session-gated-bad',
@@ -160,13 +171,11 @@ describe('createPiSession', () => {
         skills: [],
         settings: {
           providerRequestGate: { admit: vi.fn() },
-          settingsManager: {
-            getCacheWarmingMode: () => 'streaming',
-          } as never,
+          modelRuntime: {} as never,
         },
         isResume: false,
       }),
-    ).rejects.toThrow(/cache warming/);
+    ).rejects.toThrow(/caller-supplied modelRuntime/);
   });
 
   it('emits per-turn usage and cost deltas on finish', async () => {

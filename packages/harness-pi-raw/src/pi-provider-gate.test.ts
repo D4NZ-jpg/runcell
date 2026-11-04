@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
-import { SettingsManager } from '@earendil-works/pi-coding-agent';
 import {
-  assertGateCompatibleSettings,
+  SettingsManager,
+  type ModelRuntime,
+} from '@earendil-works/pi-coding-agent';
+import {
+  disableCacheWarming,
   installProviderRequestGate,
-  PiProviderRequestDeniedError,
+  PI_PROVIDER_REQUEST_DENIED_MESSAGE,
   type PiProviderRequestGate,
   type PiProviderRequestOutcome,
 } from './pi-provider-gate';
@@ -54,66 +57,92 @@ function recordingGate() {
   return { gate, log, outcomes, revoke };
 }
 
-type AnyStreamFn = (
-  model: unknown,
+type Stream = AsyncIterable<{ type: string }> & {
+  result(): Promise<{ stopReason: string; errorMessage?: string }>;
+};
+type StreamFn = (
+  model: { id: string; provider: string; api: string },
   context: unknown,
   options?: { signal?: AbortSignal },
 ) => unknown;
 
-function gatedAgent(inner: AnyStreamFn, gate: PiProviderRequestGate | undefined) {
-  const agent = { streamFunction: inner } as unknown as Parameters<
-    typeof installProviderRequestGate
-  >[0];
-  installProviderRequestGate(agent, () => gate);
-  return agent.streamFunction as unknown as (
-    model: unknown,
-    context: unknown,
-    options?: { signal?: AbortSignal },
-  ) => Promise<AsyncIterable<{ type: string }> & { result(): Promise<unknown> }>;
+/** A fake runtime with Pi's method shapes: `complete*` call `stream*`. */
+function gatedRuntime(
+  streamSimple: StreamFn,
+  gate: PiProviderRequestGate | undefined,
+) {
+  const runtime = {
+    streamSimple,
+    stream: streamSimple,
+    completeSimple(m: unknown, c: unknown, o?: unknown) {
+      return (this.streamSimple as (...a: unknown[]) => Stream)(
+        m,
+        c,
+        o,
+      ).result();
+    },
+  };
+  installProviderRequestGate(runtime as unknown as ModelRuntime, () => gate);
+  return runtime as unknown as {
+    streamSimple: (...args: Parameters<StreamFn>) => Stream;
+    stream: (...args: Parameters<StreamFn>) => Stream;
+    completeSimple: (...args: Parameters<StreamFn>) => Promise<unknown>;
+  };
+}
+
+function replying(
+  log?: string[],
+  stopReason: 'stop' | 'error' = 'stop',
+): StreamFn {
+  return () => {
+    log?.push('request');
+    const stream = createAssistantMessageEventStream();
+    queueMicrotask(() => {
+      stream.push({ type: 'start', partial: assistantMessage() } as never);
+      stream.push(
+        (stopReason === 'stop'
+          ? { type: 'done', reason: 'stop', message: assistantMessage() }
+          : {
+              type: 'error',
+              reason: 'error',
+              error: assistantMessage('error'),
+            }) as never,
+      );
+    });
+    return stream;
+  };
 }
 
 describe('installProviderRequestGate', () => {
-  it('admits before the request and releases before the terminal event is delivered', async () => {
+  it('returns a stream at once, admits first, and releases before the terminal event', async () => {
     const { gate, log, outcomes } = recordingGate();
-    const inner = vi.fn(() => {
-      log.push('request');
-      const stream = createAssistantMessageEventStream();
-      queueMicrotask(() => {
-        stream.push({ type: 'start', partial: assistantMessage() } as never);
-        stream.push({
-          type: 'done',
-          reason: 'stop',
-          message: assistantMessage(),
-        } as never);
-      });
-      return stream;
-    });
-    const stream = await gatedAgent(inner, gate)(model, { messages: [] });
+    const runtime = gatedRuntime(replying(log), gate);
+    const stream = runtime.streamSimple(model, { messages: [] });
+    expect(typeof stream.result).toBe('function');
     const seen: string[] = [];
     for await (const event of stream) {
       seen.push(event.type);
       log.push(`event:${event.type}`);
     }
     expect(seen).toEqual(['start', 'done']);
+    expect(log.slice(0, 2)).toEqual(['admit', 'request']);
     expect(log.indexOf('release:completed')).toBeLessThan(
       log.indexOf('event:done'),
     );
-    expect(log.slice(0, 2)).toEqual(['admit', 'request']);
     expect(outcomes).toEqual(['completed']);
-    await expect(stream.result()).resolves.toMatchObject({ stopReason: 'stop' });
+    await expect(stream.result()).resolves.toMatchObject({
+      stopReason: 'stop',
+    });
   });
 
-  it('releases for consumers that only await result()', async () => {
-    const { gate, outcomes } = recordingGate();
-    const stream = await gatedAgent(() => {
-      const s = createAssistantMessageEventStream();
-      queueMicrotask(() =>
-        s.push({ type: 'done', reason: 'stop', message: assistantMessage() } as never),
-      );
-      return s;
-    }, gate)(model, {});
-    await stream.result();
-    expect(outcomes).toEqual(['completed']);
+  it('gates completeSimple and stream too', async () => {
+    const simple = recordingGate();
+    await gatedRuntime(replying(), simple.gate).completeSimple(model, {});
+    expect(simple.outcomes).toEqual(['completed']);
+
+    const plain = recordingGate();
+    await gatedRuntime(replying(), plain.gate).stream(model, {}).result();
+    expect(plain.outcomes).toEqual(['completed']);
   });
 
   it('never calls the provider when admission is denied', async () => {
@@ -121,52 +150,73 @@ describe('installProviderRequestGate', () => {
     const gate: PiProviderRequestGate = {
       admit: () => Promise.reject(new Error('no capacity')),
     };
-    await expect(gatedAgent(inner, gate)(model, {})).rejects.toBeInstanceOf(
-      PiProviderRequestDeniedError,
-    );
+    const result = await gatedRuntime(inner, gate)
+      .streamSimple(model, {})
+      .result();
+    expect(result).toMatchObject({
+      stopReason: 'error',
+      errorMessage: PI_PROVIDER_REQUEST_DENIED_MESSAGE,
+    });
     expect(inner).not.toHaveBeenCalled();
+  });
+
+  it('passes virtual-model calls through and gates the routed request once', async () => {
+    const { gate } = recordingGate();
+    const admit = vi.mocked(gate.admit);
+    const physical = replying();
+    // Pi routes a virtual model and then calls streamSimple again.
+    const runtime = gatedRuntime(function (this: unknown, m, c, o) {
+      if (m.api === 'pi-virtual') {
+        return (runtime.streamSimple as StreamFn)(
+          { ...model, id: 'routed' },
+          c,
+          o,
+        );
+      }
+      return physical(m, c, o);
+    }, gate);
+    await runtime
+      .streamSimple({ id: 'auto', provider: 'p', api: 'pi-virtual' }, {})
+      .result();
+    expect(admit).toHaveBeenCalledTimes(1);
+    expect(admit.mock.calls[0]?.[0]).toMatchObject({ model: { id: 'routed' } });
   });
 
   it('releases as failed when the provider throws or reports an error', async () => {
     const thrower = recordingGate();
-    await expect(
-      gatedAgent(() => {
-        throw new Error('boom');
-      }, thrower.gate)(model, {}),
-    ).rejects.toThrow('boom');
+    const result = await gatedRuntime(() => {
+      throw new Error('boom');
+    }, thrower.gate)
+      .streamSimple(model, {})
+      .result();
+    expect(result).toMatchObject({ stopReason: 'error', errorMessage: 'boom' });
     expect(thrower.outcomes).toEqual(['failed']);
 
     const reporter = recordingGate();
-    const stream = await gatedAgent(() => {
-      const s = createAssistantMessageEventStream();
-      queueMicrotask(() =>
-        s.push({
-          type: 'error',
-          reason: 'error',
-          error: assistantMessage('error'),
-        } as never),
-      );
-      return s;
-    }, reporter.gate)(model, {});
-    await stream.result();
+    await gatedRuntime(replying(undefined, 'error'), reporter.gate)
+      .streamSimple(model, {})
+      .result();
     expect(reporter.outcomes).toEqual(['failed']);
   });
 
   it('aborts the provider request when the permit is revoked', async () => {
     const { gate, revoke, outcomes } = recordingGate();
     let providerSignal: AbortSignal | undefined;
-    const stream = await gatedAgent((_m, _c, options) => {
+    const stream = gatedRuntime((_m, _c, options) => {
       providerSignal = options?.signal;
       const s = createAssistantMessageEventStream();
-      options?.signal?.addEventListener('abort', () =>
+      options?.signal?.addEventListener('abort', () => {
         s.push({
           type: 'error',
           reason: 'aborted',
           error: assistantMessage('aborted'),
-        } as never),
-      );
+        } as never);
+      });
       return s;
-    }, gate)(model, {});
+    }, gate).streamSimple(model, {});
+    await vi.waitFor(() => {
+      expect(providerSignal).toBeDefined();
+    });
     revoke.abort(new Error('lease lost'));
     expect(providerSignal?.aborted).toBe(true);
     await stream.result();
@@ -176,49 +226,39 @@ describe('installProviderRequestGate', () => {
   it('releases on caller cancellation even if the provider never settles', async () => {
     const { gate, outcomes } = recordingGate();
     const caller = new AbortController();
-    await gatedAgent(() => createAssistantMessageEventStream(), gate)(
-      model,
-      {},
-      { signal: caller.signal },
-    );
+    let started = false;
+    gatedRuntime(() => {
+      started = true;
+      return createAssistantMessageEventStream();
+    }, gate).streamSimple(model, {}, { signal: caller.signal });
+    await vi.waitFor(() => {
+      expect(started).toBe(true);
+    });
     caller.abort();
-    await Promise.resolve();
-    expect(outcomes).toEqual(['cancelled']);
+    await vi.waitFor(() => {
+      expect(outcomes).toEqual(['cancelled']);
+    });
   });
 
-  it('passes through untouched when no gate is configured', async () => {
+  it('passes through untouched when no gate is configured', () => {
     const original = createAssistantMessageEventStream();
-    const result = await gatedAgent(() => original, undefined)(model, {});
-    expect(result).toBe(original);
+    expect(
+      gatedRuntime(() => original, undefined).streamSimple(model, {}),
+    ).toBe(original);
   });
 
-  it('rejects an agent without a stream function', () => {
-    expect(() =>
-      installProviderRequestGate(
-        {} as Parameters<typeof installProviderRequestGate>[0],
-        () => undefined,
-      ),
-    ).toThrow(/cannot be installed/);
+  it('rejects a runtime without the stream methods', () => {
+    expect(() => {
+      installProviderRequestGate({} as ModelRuntime, () => undefined);
+    }).toThrow(/cannot be installed/);
   });
 });
 
-describe('assertGateCompatibleSettings', () => {
-  it('turns cache warming off for adapter-owned settings', () => {
+describe('disableCacheWarming', () => {
+  it('turns cache warming off', () => {
     const settings = SettingsManager.inMemory();
     expect(settings.getCacheWarmingMode()).not.toBe('off');
-    assertGateCompatibleSettings(settings, true);
+    disableCacheWarming(settings);
     expect(settings.getCacheWarmingMode()).toBe('off');
-  });
-
-  it('rejects caller-supplied settings that enable cache warming', () => {
-    expect(() =>
-      assertGateCompatibleSettings(SettingsManager.inMemory(), false),
-    ).toThrow(/cache warming/);
-    expect(() =>
-      assertGateCompatibleSettings(
-        SettingsManager.inMemory({ cacheWarming: 'off' }),
-        false,
-      ),
-    ).not.toThrow();
   });
 });

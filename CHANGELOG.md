@@ -30,6 +30,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Updated `@ai-sdk/harness` and the sandbox packages to 1.0.173,
+  `@ai-sdk/provider-utils` to 5.0.74, and `ai` to 7.0.162. The optional
+  Vercel sandbox peer is now 1.0.173.
+- The Pi engine dependency now requires `@earendil-works/pi-coding-agent`
+  ^1.5.0.
+- The host sandbox implements the new sandbox session methods `stat`,
+  `listDirectory`, and `deleteFile`, and keeps standard input open for
+  `spawn({ stdin: true })`.
+- The repository develops against Zod 4. Consumers can still use Zod 3
+  or Zod 4.
 - A run whose signal aborts now rejects with a `TurnError`, with the abort
   reason as `cause`. This also applies when the engine ended the turn
   quietly. Before, such a run could resolve with an empty result.

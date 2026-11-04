@@ -1,10 +1,11 @@
-import type { AgentSession, SettingsManager } from '@earendil-works/pi-coding-agent';
+import type {
+  ModelRuntime,
+  SettingsManager,
+} from '@earendil-works/pi-coding-agent';
 
-type PiAgent = AgentSession['agent'];
-type PiStreamFn = PiAgent['streamFunction'];
-type PiModel = Parameters<PiStreamFn>[0];
-type PiStreamOptions = NonNullable<Parameters<PiStreamFn>[2]>;
-type PiEventStream = Awaited<ReturnType<PiStreamFn>>;
+type PiStreamSimple = ModelRuntime['streamSimple'];
+type PiModel = Parameters<PiStreamSimple>[0];
+type PiEventStream = ReturnType<PiStreamSimple>;
 type PiStreamEvent = PiEventStream extends AsyncIterable<infer E> ? E : never;
 type PiAssistantMessage = Awaited<ReturnType<PiEventStream['result']>>;
 
@@ -27,10 +28,11 @@ export interface PiProviderRequestPermit {
 }
 
 /**
- * Admission hook for every provider request Pi makes in a session: agent
- * turns, turns after tool results, auto-retries, compaction, and branch
- * summaries. `admit` resolves with a permit once the request may proceed,
- * or rejects to deny it; a denied request is never sent.
+ * Admission hook for every provider request of a session's model runtime:
+ * agent turns, turns after tool results, auto-retries, compaction, branch
+ * summaries, and runtime calls from extensions. `admit` resolves with a
+ * permit once the request may proceed, or rejects to deny it; a denied
+ * request is never sent.
  */
 export interface PiProviderRequestGate {
   admit(request: {
@@ -55,98 +57,118 @@ export class PiProviderRequestDeniedError extends Error {
 }
 
 /**
- * Pi's cache warmer sends background provider requests outside the agent
- * loop, which a gate cannot see. Gated sessions must run with it off: an
- * adapter-owned settings manager is switched off; a caller-supplied one that
- * enables it is rejected rather than silently bypassing admission.
+ * Pi's cache warmer sends background requests through the model runtime.
+ * They are gated like any other request, so they would take slots. An
+ * adapter-owned settings manager is switched off to keep background
+ * requests out of the limit; a caller-supplied one keeps its setting.
  */
-export function assertGateCompatibleSettings(
-  settingsManager: SettingsManager,
-  owned: boolean,
-): void {
-  if (settingsManager.getCacheWarmingMode() === 'off') {
-    return;
-  }
-  if (owned) {
+export function disableCacheWarming(settingsManager: SettingsManager): void {
+  if (settingsManager.getCacheWarmingMode() !== 'off') {
     settingsManager.setCacheWarmingMode('off');
-    return;
   }
-  throw new Error(
-    'Concurrency limits require Pi cache warming to be off: the supplied ' +
-      'settingsManager enables it, and cache-warming requests cannot be ' +
-      'limited.',
-  );
+}
+
+/*
+ * Pi's `api` id for virtual models (`VIRTUAL_MODEL_API` in pi-coding-agent,
+ * not exported). A virtual-model call routes and then calls `streamSimple`
+ * again with the physical model; only that inner call reaches a provider.
+ * Gating both would take two slots for one request and deadlock a limiter
+ * with one slot. Review on every Pi upgrade (docs: Pi upgrade review).
+ */
+const PI_VIRTUAL_MODEL_API = 'pi-virtual';
+
+/**
+ * Gate every provider request of a session's `ModelRuntime`. Wraps the
+ * runtime's `streamSimple` and `stream` (and with them `completeSimple` and
+ * `complete`, which call them), so the agent's own stream function keeps its
+ * identity: Pi decides how compaction and summary requests authenticate by
+ * that identity (pi #11520). `getGate` is read per request, so a parked
+ * session can be handed a new run's gate.
+ *
+ * The runtime must belong to one session; a shared runtime would gate other
+ * sessions with this session's gate.
+ */
+export function installProviderRequestGate(
+  runtime: ModelRuntime,
+  getGate: () => PiProviderRequestGate | undefined,
+): void {
+  for (const method of ['streamSimple', 'stream'] as const) {
+    const inner = (runtime[method] as PiStreamSimple | undefined)?.bind(
+      runtime,
+    );
+    if (typeof inner !== 'function') {
+      throw new Error(
+        `Pi model runtime has no ${method} method; the concurrency limit cannot be installed.`,
+      );
+    }
+    const gated: PiStreamSimple = (model, context, options) => {
+      const gate = getGate();
+      if (!gate || model.api === PI_VIRTUAL_MODEL_API) {
+        return inner(model, context, options);
+      }
+      return gatedRequest(gate, inner, model, context, options);
+    };
+    Object.defineProperty(runtime, method, {
+      value: gated,
+      configurable: true,
+      writable: true,
+    });
+  }
 }
 
 /**
- * Wrap a Pi agent's stream function so every provider request passes the
- * gate returned by `getGate` (read per request, so a parked session can be
- * handed a new run's gate). Throws when the agent exposes no stream function
- * to wrap, rather than running ungated.
+ * Return a stream at once, as `ModelRuntime` callers expect, and forward
+ * the provider stream into it once the gate admits the request.
  */
-export function installProviderRequestGate(
-  agent: PiAgent,
-  getGate: () => PiProviderRequestGate | undefined,
-): void {
-  const inner = agent.streamFunction as PiStreamFn | undefined;
-  if (typeof inner !== 'function') {
-    throw new Error(
-      'Pi agent exposes no stream function; the concurrency limit cannot be installed.',
-    );
-  }
-  agent.streamFunction = (model, context, options) => {
-    const gate = getGate();
-    if (!gate) {
-      return inner(model, context, options);
-    }
-    return gatedRequest(gate, inner, model, context, options);
-  };
-}
-
-async function gatedRequest(
+function gatedRequest(
   gate: PiProviderRequestGate,
-  inner: PiStreamFn,
+  inner: PiStreamSimple,
   model: PiModel,
-  context: Parameters<PiStreamFn>[1],
-  options: PiStreamOptions | undefined,
-): Promise<PiEventStream> {
-  const callerSignal = options?.signal;
-  let permit: PiProviderRequestPermit;
-  try {
-    permit = await gate.admit({
-      model: { provider: model.provider, id: model.id },
-      signal: callerSignal,
-    });
-  } catch (error) {
-    if (callerSignal?.aborted) {
-      throw error;
-    }
-    throw new PiProviderRequestDeniedError({ cause: error });
-  }
-
-  const signal = callerSignal
-    ? AbortSignal.any([callerSignal, permit.signal])
-    : permit.signal;
-  // Cancellation must free capacity even if the provider never settles.
-  const onCallerAbort = () => {
-    void permit.release('cancelled');
-  };
-  callerSignal?.addEventListener('abort', onCallerAbort, { once: true });
-  const detach = () =>
-    callerSignal?.removeEventListener('abort', onCallerAbort);
-
-  let source: PiEventStream;
-  try {
-    source = await inner(model, context, { ...options, signal });
-  } catch (error) {
-    detach();
-    await permit.release(signal.aborted ? 'cancelled' : 'failed');
-    throw error;
-  }
-
+  context: Parameters<PiStreamSimple>[1],
+  options: Parameters<PiStreamSimple>[2],
+): PiEventStream {
   const forward = new ForwardingStream<PiStreamEvent, PiAssistantMessage>();
+  const callerSignal = options?.signal;
+  const fail = (error: unknown, aborted: boolean) => {
+    const message = failureMessage(model, error, aborted);
+    forward.finish(
+      {
+        type: 'error',
+        reason: aborted ? 'aborted' : 'error',
+        error: message,
+      } as PiStreamEvent,
+      message,
+    );
+  };
+
   void (async () => {
+    let permit: PiProviderRequestPermit;
     try {
+      permit = await gate.admit({
+        model: { provider: model.provider, id: model.id },
+        signal: callerSignal,
+      });
+    } catch (error) {
+      const aborted = callerSignal?.aborted === true;
+      // A denied request is never sent. The fixed message keeps Pi's
+      // auto-retry from treating the denial as transient.
+      fail(
+        aborted ? error : new PiProviderRequestDeniedError({ cause: error }),
+        aborted,
+      );
+      return;
+    }
+
+    const signal = callerSignal
+      ? AbortSignal.any([callerSignal, permit.signal])
+      : permit.signal;
+    // Cancellation must free capacity even if the provider never settles.
+    const onCallerAbort = () => {
+      void permit.release('cancelled');
+    };
+    callerSignal?.addEventListener('abort', onCallerAbort, { once: true });
+    try {
+      const source = inner(model, context, { ...options, signal });
       for await (const event of source) {
         if (event.type === 'done' || event.type === 'error') {
           await permit.release(
@@ -156,7 +178,10 @@ async function gatedRequest(
                 ? 'cancelled'
                 : 'failed',
           );
-          forward.finish(event, event.type === 'done' ? event.message : event.error);
+          forward.finish(
+            event,
+            event.type === 'done' ? event.message : event.error,
+          );
           return;
         }
         forward.push(event);
@@ -166,17 +191,9 @@ async function gatedRequest(
       forward.finish(undefined, await source.result());
     } catch (error) {
       await permit.release(signal.aborted ? 'cancelled' : 'failed');
-      const message = failureMessage(model, error, signal.aborted);
-      forward.finish(
-        {
-          type: 'error',
-          reason: signal.aborted ? 'aborted' : 'error',
-          error: message,
-        } as PiStreamEvent,
-        message,
-      );
+      fail(error, signal.aborted);
     } finally {
-      detach();
+      callerSignal?.removeEventListener('abort', onCallerAbort);
     }
   })();
   return forward as unknown as PiEventStream;
