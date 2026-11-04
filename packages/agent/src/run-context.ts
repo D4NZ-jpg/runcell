@@ -1,30 +1,24 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import type {
-  AdmissionAdapter,
-  AdmissionOptions,
-  RunAdmissionOptions,
-} from './admission.js';
+  ConcurrencyLimiter,
+  ConcurrencyOptions,
+  RunConcurrencyOptions,
+} from './concurrency.js';
 import { InvalidOptionError } from './errors.js';
 
-export const DEFAULT_ADMISSION_POOL = 'default';
-export const DEFAULT_CLEANUP_TIMEOUT_MS = 5_000;
-
-/** Resolved admission settings for one run. */
-export interface RunAdmissionContext {
-  adapter: AdmissionAdapter;
-  pool: string;
+/** Resolved concurrency settings for one run. */
+export interface RunConcurrencyContext {
+  limiter: ConcurrencyLimiter;
   workload: string | undefined;
   metadata: Readonly<Record<string, unknown>>;
-  maxWaitMs: number | undefined;
-  cleanupTimeoutMs: number;
 }
 
 /**
  * Lineage, budget, and cancellation for one run. Host tools execute inside
  * their run's context, so a RunCell agent started from a tool becomes a
- * child: it inherits lineage, admission, the remaining time budget, and
- * cancellation.
+ * child: it inherits lineage, the concurrency limit, the remaining time
+ * budget, and cancellation.
  */
 export interface RunContext {
   runId: string;
@@ -34,7 +28,7 @@ export interface RunContext {
   signal: AbortSignal | undefined;
   /** Epoch-ms run deadline, inherited from the parent when earlier. */
   deadline: number | undefined;
-  admission: RunAdmissionContext | undefined;
+  concurrency: RunConcurrencyContext | undefined;
 }
 
 const runContextStorage = new AsyncLocalStorage<RunContext>();
@@ -51,31 +45,31 @@ export function runInContext<T>(context: RunContext, fn: () => T): T {
 
 /**
  * Build a run's context from its options and the enclosing run (when called
- * from a host tool). Validates admission inheritance and selection and
- * throws before any work starts. `dispose` stops the run-deadline timer.
+ * from a host tool). Validates the concurrency selection and throws before
+ * any work starts. `dispose` stops the run-deadline timer.
  */
 export function createRunContext({
-  admission: agentAdmission,
-  runAdmission,
+  concurrency: agentConcurrency,
+  runConcurrency,
   timeoutMs,
   signal: callerSignal,
   parent = currentRunContext(),
 }: {
-  admission: AdmissionOptions | undefined;
-  runAdmission: RunAdmissionOptions | undefined;
+  concurrency: ConcurrencyOptions | undefined;
+  runConcurrency: RunConcurrencyOptions | undefined;
   timeoutMs: number | undefined;
   signal: AbortSignal | undefined;
   parent?: RunContext | undefined;
 }): { context: RunContext; dispose: () => void } {
   const runId = randomUUID();
-  const now = Date.now();
-  const ownDeadline = timeoutMs !== undefined ? now + timeoutMs : undefined;
+  const ownDeadline =
+    timeoutMs !== undefined ? Date.now() + timeoutMs : undefined;
   const deadline = minDefined(ownDeadline, parent?.deadline);
 
-  const admission = resolveRunAdmission(
-    agentAdmission,
-    runAdmission,
-    parent?.admission,
+  const concurrency = resolveRunConcurrency(
+    agentConcurrency,
+    runConcurrency,
+    parent?.concurrency,
   );
 
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -108,62 +102,49 @@ export function createRunContext({
       parentRunId: parent?.runId,
       signal,
       deadline,
-      admission,
+      concurrency,
     },
     dispose: () => {
-      if (timer) clearTimeout(timer);
+      clearTimeout(timer);
     },
   };
 }
 
 /**
- * Admission selection precedence:
- * - adapter: the agent's, else the parent's (children are never exempt);
- * - pool/workload: per-run selection, else the parent's when the adapter is
- *   shared, else the agent's defaults, else `'default'`; a workload is only
- *   inherited together with its pool;
- * - metadata: agent defaults, then inherited, then per-run (later wins);
- * - maxWaitMs: per-run, else agent, else inherited.
+ * Selection precedence:
+ * - limiter: the run's, else the agent's, else the parent's. Children are
+ *   never exempt: an agent without `concurrency` inherits its parent's.
+ * - workload: the run's, else the parent's when the limiter is the same
+ *   (so a child agent's own default cannot move work to another workload),
+ *   else the agent's when the limiter is the agent's.
+ * - metadata: agent, then inherited, then run (later wins).
  */
-function resolveRunAdmission(
-  agent: AdmissionOptions | undefined,
-  run: RunAdmissionOptions | undefined,
-  parent: RunAdmissionContext | undefined,
-): RunAdmissionContext | undefined {
-  const adapter = agent?.adapter ?? parent?.adapter;
-  if (!adapter) {
+function resolveRunConcurrency(
+  agent: ConcurrencyOptions | undefined,
+  run: RunConcurrencyOptions | undefined,
+  parent: RunConcurrencyContext | undefined,
+): RunConcurrencyContext | undefined {
+  const limiter = run?.limiter ?? agent?.limiter ?? parent?.limiter;
+  if (!limiter) {
     if (run !== undefined) {
       throw new InvalidOptionError(
-        'run "admission" options require an admission adapter on the agent ' +
-          '(or an admitted parent run).',
+        'run "concurrency" needs a limiter: pass "concurrency.limiter" on ' +
+          'the run or the agent.',
       );
     }
     return undefined;
   }
-  const inherited = parent?.adapter === adapter ? parent : undefined;
-  const agentPool = agent?.pool ?? DEFAULT_ADMISSION_POOL;
-  const pool = run?.pool ?? inherited?.pool ?? agentPool;
+  const inherited = parent?.limiter === limiter ? parent : undefined;
   const workload =
     run?.workload ??
-    (inherited?.pool === pool ? inherited.workload : undefined) ??
-    (pool === agentPool ? agent?.workload : undefined);
-  const resolved: RunAdmissionContext = {
-    adapter,
-    pool,
+    inherited?.workload ??
+    (agent?.limiter === limiter ? agent.workload : undefined);
+  limiter.validateWorkload?.(workload);
+  return {
+    limiter,
     workload,
-    metadata: {
-      ...agent?.metadata,
-      ...parent?.metadata,
-      ...run?.metadata,
-    },
-    maxWaitMs: run?.maxWaitMs ?? agent?.maxWaitMs ?? parent?.maxWaitMs,
-    cleanupTimeoutMs:
-      agent?.cleanupTimeoutMs ??
-      parent?.cleanupTimeoutMs ??
-      DEFAULT_CLEANUP_TIMEOUT_MS,
+    metadata: { ...agent?.metadata, ...parent?.metadata, ...run?.metadata },
   };
-  adapter.validate?.({ pool, workload });
-  return resolved;
 }
 
 export function minDefined(

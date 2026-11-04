@@ -22,6 +22,11 @@
       "types": "./dist/pi.d.ts",
       "import": "./dist/pi.js",
       "default": "./dist/pi.js"
+    },
+    "./concurrency": {
+      "types": "./dist/concurrency.d.ts",
+      "import": "./dist/concurrency.js",
+      "default": "./dist/concurrency.js"
     }
   },
   "engines": {

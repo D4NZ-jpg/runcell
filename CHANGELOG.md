@@ -8,27 +8,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Opt-in admission control for provider requests. `admission: { adapter }`
-  gates every provider request (initial turns, turns after tools, repairs,
-  Pi retries, compaction, credential fallbacks, and child agents started
-  from tools) with a lease that is held only while the request is active
-  and released before any tool runs. Children inherit lineage, pool,
-  workload, metadata, cancellation, and budget, and get no exemption.
-- `createInMemoryScheduler` enforces pools, workload limits, strict
-  reservations, priorities, bounded queues, and wait limits.
-  `admissionConformanceCases` checks custom adapters.
-- Typed `AdmissionTimeoutError`, `AdmissionQueueFullError`,
-  `AdmissionBackendError`, `AdmissionLeaseLostError`, and
-  `AdmissionConfigError`, and structured `onAdmission` events.
-- Run option `timeoutMs`: a total run budget that admission waits consume.
+- Opt-in concurrency limits for provider requests.
+  `concurrency: { limiter: createConcurrencyLimiter({ maxConcurrent }) }`
+  gives every provider request (turns, turns after tools, repairs, Pi
+  retries, compaction, credential fallbacks, and agents started from tools)
+  a slot that is held only while the request is active and released before
+  any tool runs. Children inherit the limiter, workload, metadata,
+  cancellation, and budget, and get no exemption.
+- Limiters support workloads with ceilings, strict reservations,
+  priorities, a bounded queue, and wait limits, plus `stats()`.
+  `runcell/concurrency` exports the allocation algorithm and
+  `concurrencyConformanceCases` for custom limiters.
+- Typed `ConcurrencyTimeoutError`, `ConcurrencyQueueFullError`,
+  `ConcurrencyLimiterError`, `ConcurrencyLeaseLostError`, and
+  `ConcurrencyConfigError`, and structured `onConcurrency` events.
+- Run option `timeoutMs`: a total run budget that waiting for a slot
+  consumes.
 
 ### Changed
 
 - A run whose signal aborts now rejects with a `TurnError` (abort reason as
   `cause`) even when the engine settled the turn quietly, instead of
   resolving with an empty result.
-- With admission configured, Pi cache warming is turned off because its
-  background requests cannot be admitted.
+- With a concurrency limit configured, Pi cache warming is turned off
+  because its background requests cannot be limited.
 
 ## 1.13.0 - 2026-10-27
 

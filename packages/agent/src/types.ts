@@ -1,9 +1,9 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type {
-  AdmissionEvent,
-  AdmissionOptions,
-  RunAdmissionOptions,
-} from './admission.js';
+  ConcurrencyEvent,
+  ConcurrencyOptions,
+  RunConcurrencyOptions,
+} from './concurrency.js';
 import type { ExtensionFactory, PiThinkingLevel } from '@local/harness-pi-raw';
 import type { Credentials } from './credentials.js';
 import type { FileInput } from './files.js';
@@ -93,11 +93,11 @@ export interface AgentEvents {
   onError?: (error: unknown) => void;
   onCredentialFallback?: (info: CredentialFallbackEvent) => void;
   /**
-   * Admission lifecycle events (wait started, acquired, timed out, released,
-   * renewal failed, lease lost, cleanup failed, ...). Only emitted when
-   * admission is configured. Events never contain prompts or credentials.
+   * Concurrency-slot events (wait started, acquired, timed out, released,
+   * lease lost, ...). Only emitted when a concurrency limit is configured.
+   * Events never contain prompts or credentials.
    */
-  onAdmission?: (event: AdmissionEvent) => void;
+  onConcurrency?: (event: ConcurrencyEvent) => void;
 }
 
 /**
@@ -150,12 +150,12 @@ export interface AgentOptions {
   /** Pi engine escape hatch: extensions and other Pi-specific options. */
   pi?: PiOptions;
   /**
-   * Opt-in admission control. Every provider request of every run (initial
-   * turns, turns after tools, repairs, retries, compaction, and RunCell
-   * agents started from this agent's tools) holds a permit only while the
-   * request is active. See https://runcell.run/admission
+   * Opt-in concurrency limit for provider requests. Every provider request
+   * of every run (turns, turns after tools, repairs, retries, compaction,
+   * and agents started from this agent's tools) holds a slot only while the
+   * request is active. See https://runcell.run/concurrency
    */
-  admission?: AdmissionOptions;
+  concurrency?: ConcurrencyOptions;
 }
 
 /**
@@ -222,15 +222,15 @@ export interface RunOptionsBase {
   signal?: AbortSignal;
   /**
    * Total time budget for the run, in milliseconds. The run is aborted when
-   * it is exceeded. Admission waits consume this budget. A run started from
+   * it is exceeded. Waiting for a concurrency slot consumes this budget. A run started from
    * another run's tool also stays within its parent's remaining budget.
    */
   timeoutMs?: number;
   /**
-   * Per-run admission selection and metadata. Requires an admission adapter
-   * on the agent or an admitted parent run.
+   * Per-run concurrency selection: a workload, metadata, or a different
+   * limiter. Requires a limiter on the run, the agent, or the parent run.
    */
-  admission?: RunAdmissionOptions;
+  concurrency?: RunConcurrencyOptions;
   /**
    * Per-run Pi engine overrides, merged over the agent-level `pi` options.
    * `extensions` intentionally stays agent-level: extensions are loaded once

@@ -25,54 +25,32 @@ export {
   CredentialError,
   ExtensionError,
   NotImplementedError,
-  AdmissionError,
-  AdmissionTimeoutError,
-  AdmissionQueueFullError,
-  AdmissionBackendError,
-  AdmissionLeaseLostError,
-  AdmissionConfigError,
+  ConcurrencyError,
+  ConcurrencyTimeoutError,
+  ConcurrencyQueueFullError,
+  ConcurrencyLimiterError,
+  ConcurrencyLeaseLostError,
+  ConcurrencyConfigError,
 } from './errors.js';
-export type { AdmissionErrorDetails } from './errors.js';
+export type { ConcurrencyErrorDetails } from './errors.js';
 
+export { createConcurrencyLimiter } from './concurrency-limiter.js';
 export type {
-  AdmissionAdapter,
-  AdmissionEvent,
-  AdmissionLease,
-  AdmissionOptions,
-  AdmissionReleaseOutcome,
-  AdmissionRenewOptions,
-  AdmissionRequest,
-  AdmissionTarget,
-  RunAdmissionOptions,
-} from './admission.js';
-export {
-  admissionPoolFingerprint,
-  normalizeAdmissionPolicy,
-  resolveAdmissionTarget,
-  selectAdmissionGrants,
-} from './admission-policy.js';
+  ConcurrencyLimiterOptions,
+  InMemoryConcurrencyLimiter,
+} from './concurrency-limiter.js';
 export type {
-  AdmissionPolicy,
-  AdmissionPoolPolicy,
-  AdmissionWaiter,
-  AdmissionWorkloadPolicy,
-  NormalizedAdmissionPolicy,
-  NormalizedPoolPolicy,
-  NormalizedWorkloadPolicy,
-} from './admission-policy.js';
-export { createInMemoryScheduler } from './admission-scheduler.js';
-export type {
-  AdmissionPoolStats,
-  AdmissionScheduler,
-  AdmissionSchedulerEvent,
-  InMemorySchedulerOptions,
-} from './admission-scheduler.js';
-export { admissionConformanceCases } from './admission-conformance.js';
-export type {
-  AdmissionConformanceCase,
-  AdmissionConformanceOptions,
-  AdmissionConformanceSetup,
-} from './admission-conformance.js';
+  ConcurrencyEvent,
+  ConcurrencyLease,
+  ConcurrencyLimiter,
+  ConcurrencyLimits,
+  ConcurrencyOptions,
+  ConcurrencyReleaseOutcome,
+  ConcurrencyRequest,
+  ConcurrencyStats,
+  ConcurrencyWorkload,
+  RunConcurrencyOptions,
+} from './concurrency.js';
 
 export { assertSafeWorkspacePath } from './paths.js';
 export { normalizeFiles } from './files.js';

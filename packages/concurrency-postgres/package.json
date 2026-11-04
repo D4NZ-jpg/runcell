@@ -1,15 +1,15 @@
 {
-  "name": "@runcell/postgres-admission",
+  "name": "@runcell/postgres-concurrency",
   "version": "0.1.0",
-  "description": "PostgreSQL scheduler backend for runcell admission control: shared provider-request capacity, workload limits, reservations, and priorities across independent workers.",
+  "description": "PostgreSQL concurrency limiter for runcell: shared provider-request capacity, workload limits, reservations, and priorities across independent workers.",
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/D4NZ-jpg/runcell.git",
-    "directory": "packages/admission-postgres"
+    "directory": "packages/concurrency-postgres"
   },
-  "homepage": "https://runcell.run/admission",
+  "homepage": "https://runcell.run/concurrency",
   "bugs": {
     "url": "https://github.com/D4NZ-jpg/runcell/issues"
   },
@@ -58,10 +58,10 @@
   },
   "keywords": [
     "runcell",
-    "admission-control",
+    "concurrency",
+    "concurrency-limit",
     "postgres",
     "scheduler",
-    "concurrency",
-    "rate-limiting"
+    "llm"
   ]
 }

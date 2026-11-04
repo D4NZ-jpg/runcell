@@ -1,8 +1,7 @@
 import type { ExtensionFactory, PiThinkingLevel } from '@local/harness-pi-raw';
 import { normalizeCredentials, type CredentialPlan } from './credentials.js';
-import type { AdmissionOptions, RunAdmissionOptions } from './admission.js';
+import type { ConcurrencyOptions } from './concurrency.js';
 import { InvalidOptionError } from './errors.js';
-import { DEFAULT_ADMISSION_POOL } from './run-context.js';
 import { normalizeFiles } from './files.js';
 import { defaultRuntime, type RuncellRuntime } from './runtime.js';
 import { resolveSandboxConfig, type SandboxConfig } from './sandbox.js';
@@ -129,7 +128,7 @@ export function resolveAgentConfig(
     '"pi.thinkingLevel"',
   );
 
-  validateAdmissionOptions(options.admission);
+  validateConcurrencyOptions(options.concurrency);
 
   return {
     model: options.model,
@@ -214,8 +213,8 @@ export function validateRunOptions(
   if (options.timeoutMs !== undefined) {
     validatePositiveInt(options.timeoutMs, 'run "timeoutMs"');
   }
-  if (options.admission !== undefined) {
-    validateAdmissionSelection(options.admission, 'run "admission"');
+  if (options.concurrency !== undefined) {
+    validateConcurrencySelection(options.concurrency, 'run "concurrency"');
   }
 }
 
@@ -231,25 +230,39 @@ function isPlainRecord(value: unknown): boolean {
   return value != null && typeof value === 'object' && !Array.isArray(value);
 }
 
-/** Pool, workload, metadata, and wait limit shared by agent and run options. */
-function validateAdmissionSelection(
-  value: unknown,
-  label: string,
-): asserts value is RunAdmissionOptions {
+const CONCURRENCY_KEYS = new Set(['limiter', 'workload', 'metadata']);
+
+/** Shape checks shared by agent-level and run-level `concurrency`. */
+function validateConcurrencySelection(value: unknown, label: string): void {
   if (!isPlainRecord(value)) {
     throw new InvalidOptionError(`${label} must be an object.`);
   }
   const options = value as Record<string, unknown>;
-  for (const key of ['pool', 'workload'] as const) {
-    const field = options[key];
-    if (
-      field !== undefined &&
-      (typeof field !== 'string' || field.length === 0)
-    ) {
-      throw new InvalidOptionError(
-        `${label}.${key} must be a non-empty string.`,
-      );
-    }
+  const unknownKey = Object.keys(options).find(
+    key => !CONCURRENCY_KEYS.has(key),
+  );
+  if (unknownKey !== undefined) {
+    throw new InvalidOptionError(
+      `${label} does not accept "${unknownKey}". Supported keys: limiter, ` +
+        'workload, metadata. Set limits and wait times on the limiter; set ' +
+        'the run budget with "timeoutMs".',
+    );
+  }
+  const limiter = options['limiter'];
+  if (limiter !== undefined && !isConcurrencyLimiter(limiter)) {
+    throw new InvalidOptionError(
+      `${label}.limiter must be a concurrency limiter (a name plus ` +
+        'acquire, renew, and release), e.g. createConcurrencyLimiter(...).',
+    );
+  }
+  const workload = options['workload'];
+  if (
+    workload !== undefined &&
+    (typeof workload !== 'string' || workload.length === 0)
+  ) {
+    throw new InvalidOptionError(
+      `${label}.workload must be a non-empty string.`,
+    );
   }
   if (
     options['metadata'] !== undefined &&
@@ -257,40 +270,39 @@ function validateAdmissionSelection(
   ) {
     throw new InvalidOptionError(`${label}.metadata must be an object.`);
   }
-  if (options['maxWaitMs'] !== undefined) {
-    validatePositiveInt(options['maxWaitMs'], `${label}.maxWaitMs`);
+}
+
+function isConcurrencyLimiter(value: unknown): boolean {
+  if (value == null || typeof value !== 'object') {
+    return false;
   }
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate['name'] === 'string' &&
+    typeof candidate['acquire'] === 'function' &&
+    typeof candidate['renew'] === 'function' &&
+    typeof candidate['release'] === 'function'
+  );
 }
 
 /**
- * Reject unsupported admission configurations up front instead of running
- * without admission.
+ * Reject unsupported concurrency configurations up front instead of running
+ * without a limit.
  */
-function validateAdmissionOptions(value: AdmissionOptions | undefined): void {
+function validateConcurrencyOptions(
+  value: ConcurrencyOptions | undefined,
+): void {
   if (value === undefined) {
     return;
   }
-  validateAdmissionSelection(value, '"admission"');
-  const adapter = (value as { adapter?: unknown }).adapter as
-    Record<string, unknown> | undefined;
-  if (
-    adapter == null ||
-    typeof adapter !== 'object' ||
-    typeof adapter['acquire'] !== 'function' ||
-    typeof adapter['renew'] !== 'function' ||
-    typeof adapter['release'] !== 'function'
-  ) {
+  validateConcurrencySelection(value, '"concurrency"');
+  if ((value as Partial<ConcurrencyOptions>).limiter === undefined) {
     throw new InvalidOptionError(
-      '"admission.adapter" must implement acquire, renew, and release.',
+      '"concurrency.limiter" is required, e.g. ' +
+        'createConcurrencyLimiter({ maxConcurrent: 4 }).',
     );
   }
-  if (value.cleanupTimeoutMs !== undefined) {
-    validatePositiveInt(value.cleanupTimeoutMs, '"admission.cleanupTimeoutMs"');
-  }
-  value.adapter.validate?.({
-    pool: value.pool ?? DEFAULT_ADMISSION_POOL,
-    workload: value.workload,
-  });
+  value.limiter.validateWorkload?.(value.workload);
 }
 
 /** Runtime guard for JS callers; deliberately not a type guard so the

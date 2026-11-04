@@ -39,16 +39,16 @@ import {
   type CredentialStore,
 } from './credentials.js';
 import {
-  createRunAdmission,
-  type RunAdmission,
-} from './admission-controller.js';
+  createRunConcurrency,
+  type RunConcurrency,
+} from './concurrency-controller.js';
 import {
-  AdmissionTimeoutError,
+  ConcurrencyTimeoutError,
   CredentialError,
   ExtensionError,
   IncompleteResultError,
   TurnError,
-  type AdmissionError,
+  type ConcurrencyError,
 } from './errors.js';
 import {
   createRunContext,
@@ -115,7 +115,7 @@ export interface RuntimeRunInput {
    */
   attempt?: RunAttempt;
   /**
-   * Internal: lineage, budget, cancellation, and admission for the run. Set
+   * Internal: lineage, budget, cancellation, and concurrency for the run. Set
    * once per run by the attempt loop so credential fallbacks share it.
    */
   context?: RunContext;
@@ -166,8 +166,8 @@ export const defaultRuntime: RuncellRuntime = {
 
 function createInputRunContext(input: RuntimeRunInput) {
   return createRunContext({
-    admission: input.agentOptions.admission,
-    runAdmission: input.runOptions.admission,
+    concurrency: input.agentOptions.concurrency,
+    runConcurrency: input.runOptions.concurrency,
     timeoutMs: input.runOptions.timeoutMs,
     signal: input.runOptions.signal,
   });
@@ -338,11 +338,11 @@ async function runAttemptWithHarness({
   const events = mergeEvents(agentOptions.events, runOptions.events);
   const threadInternals = getThreadInternals(runOptions.thread);
   let succeeded = false;
-  const admission: RunAdmission | undefined = runContext.admission
-    ? createRunAdmission(
-        { ...runContext, admission: runContext.admission },
+  const concurrency: RunConcurrency | undefined = runContext.concurrency
+    ? createRunConcurrency(
+        { ...runContext, concurrency: runContext.concurrency },
         event => {
-          safeEmit(events?.onAdmission, event);
+          safeEmit(events?.onConcurrency, event);
         },
       )
     : undefined;
@@ -409,7 +409,7 @@ async function runAttemptWithHarness({
       createPiSettings(
         { ...config, credentials },
         runOptions.pi?.thinkingLevel,
-        admission?.gate,
+        concurrency?.gate,
       ),
     ),
     permissionMode: 'allow-all',
@@ -469,7 +469,7 @@ async function runAttemptWithHarness({
       ...(runOptions.signal ? { abortSignal: runOptions.signal } : {}),
     });
   } catch (error) {
-    await admission?.dispose();
+    await concurrency?.dispose();
     await disposeOwnedSandbox();
     throw error;
   }
@@ -591,9 +591,9 @@ async function runAttemptWithHarness({
 
       // A denied request or lost lease always fails the run, even when Pi
       // settled the turn quietly (for example as an abort).
-      const admissionFailure = admission?.failure();
-      if (admissionFailure) {
-        throw admissionFailure;
+      const concurrencyFailure = concurrency?.failure();
+      if (concurrencyFailure) {
+        throw concurrencyFailure;
       }
       // Cancellation (caller, parent, or run budget) never yields a result.
       if (runOptions.signal?.aborted) {
@@ -638,21 +638,21 @@ async function runAttemptWithHarness({
     const runError: unknown = callerAborted
       ? (runOptions.signal?.reason as unknown)
       : error;
-    // An admission failure means the request was denied or its lease was
-    // lost; it outranks the generic turn error Pi reports for it. An
-    // admission timeout caused by the run budget outranks that abort too.
-    const admissionFailure = admission?.failure();
-    const useAdmissionFailure =
-      admissionFailure !== undefined &&
+    // A concurrency failure means the request was denied or its lease was
+    // lost; it outranks the generic turn error Pi reports for it. A slot
+    // timeout caused by the run budget outranks that abort too.
+    const concurrencyFailure = concurrency?.failure();
+    const useConcurrencyFailure =
+      concurrencyFailure !== undefined &&
       (!callerAborted ||
-        isInstanceOfSafe(admissionFailure, AdmissionTimeoutError));
+        isInstanceOfSafe(concurrencyFailure, ConcurrencyTimeoutError));
     const extensionError =
-      callerAborted || useAdmissionFailure
+      callerAborted || useConcurrencyFailure
         ? undefined
         : findPiExtensionError(runError);
-    const failure = useAdmissionFailure
+    const failure = useConcurrencyFailure
       ? withUsage(
-          admissionFailure,
+          concurrencyFailure,
           finalizeRunUsage(
             usage,
             usageBaseline,
@@ -680,7 +680,7 @@ async function runAttemptWithHarness({
     }
     throw failure;
   } finally {
-    await admission?.dispose();
+    await concurrency?.dispose();
     if (succeeded && threadInternals) {
       // Flush Pi's journal into the sandbox (leaves it running) and capture
       // it into the thread. The continuation is cleared up front so a failed
@@ -701,7 +701,7 @@ async function runAttemptWithHarness({
   }
 }
 
-function withUsage(error: AdmissionError, usage: RunUsage): AdmissionError {
+function withUsage(error: ConcurrencyError, usage: RunUsage): ConcurrencyError {
   if (error.usage === undefined) {
     Object.defineProperty(error, 'usage', {
       value: usage,
@@ -857,7 +857,7 @@ function mergeEvents(
       agent.onCredentialFallback,
       run.onCredentialFallback,
     ),
-    onAdmission: both(agent.onAdmission, run.onAdmission),
+    onConcurrency: both(agent.onConcurrency, run.onConcurrency),
   };
 }
 
@@ -1112,7 +1112,7 @@ function isPromiseLike<T>(value: T | PromiseLike<T>): value is PromiseLike<T> {
 
 /**
  * Host tools execute inside their run's context, so a RunCell agent started
- * from a tool becomes a child run (lineage, admission, budget, cancellation).
+ * from a tool becomes a child run (lineage, concurrency limit, budget, cancellation).
  * No provider permit is held while a tool runs.
  */
 function createHostTool(

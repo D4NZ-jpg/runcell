@@ -1,117 +1,114 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AdmissionAdapter } from './admission.js';
+import type { ConcurrencyLimiter } from './concurrency.js';
+import { createConcurrencyLimiter } from './concurrency-limiter.js';
 import { createAgent } from './create-agent.js';
-import { InvalidOptionError } from './errors.js';
+import { ConcurrencyConfigError, InvalidOptionError } from './errors.js';
 import { createRunContext, runInContext } from './run-context.js';
 
-const adapter = (): AdmissionAdapter => ({
+const stubLimiter = (name = 'stub'): ConcurrencyLimiter => ({
+  name,
   acquire: vi.fn(),
   renew: vi.fn(),
   release: vi.fn(),
 });
 
+const root = (options: Partial<Parameters<typeof createRunContext>[0]> = {}) =>
+  createRunContext({
+    concurrency: undefined,
+    runConcurrency: undefined,
+    timeoutMs: undefined,
+    signal: undefined,
+    parent: undefined,
+    ...options,
+  });
+
 describe('createRunContext', () => {
-  it('starts a root lineage without admission by default', () => {
-    const { context } = createRunContext({
-      admission: undefined,
-      runAdmission: undefined,
-      timeoutMs: undefined,
-      signal: undefined,
-      parent: undefined,
-    });
+  it('starts a root lineage without a limit by default', () => {
+    const { context } = root();
     expect(context.rootRunId).toBe(context.runId);
     expect(context.parentRunId).toBeUndefined();
-    expect(context.admission).toBeUndefined();
+    expect(context.concurrency).toBeUndefined();
     expect(context.signal).toBeUndefined();
   });
 
-  it('inherits adapter, pool, workload, metadata, budget, and cancellation', () => {
-    const shared = adapter();
-    const parentCancel = new AbortController();
-    const parent = createRunContext({
-      admission: {
-        adapter: shared,
-        pool: 'p',
-        workload: 'background',
-        metadata: { a: 1 },
-      },
-      runAdmission: undefined,
+  it('inherits limiter, workload, metadata, budget, and cancellation', () => {
+    const limiter = stubLimiter();
+    const cancel = new AbortController();
+    const parent = root({
+      concurrency: { limiter, workload: 'background', metadata: { a: 1 } },
       timeoutMs: 10_000,
-      signal: parentCancel.signal,
-      parent: undefined,
+      signal: cancel.signal,
     });
     const child = runInContext(parent.context, () =>
       createRunContext({
-        // A child agent's own defaults do not escape the parent's workload.
-        admission: {
-          adapter: shared,
-          pool: 'p',
-          workload: 'interactive',
-          metadata: { b: 2 },
-        },
-        runAdmission: { metadata: { c: 3 } },
+        // The child's own default cannot move work off the parent's workload.
+        concurrency: { limiter, workload: 'interactive', metadata: { b: 2 } },
+        runConcurrency: { metadata: { c: 3 } },
         timeoutMs: 60_000,
         signal: undefined,
       }),
     );
     expect(child.context.parentRunId).toBe(parent.context.runId);
     expect(child.context.rootRunId).toBe(parent.context.runId);
-    expect(child.context.admission).toMatchObject({
-      adapter: shared,
-      pool: 'p',
+    expect(child.context.concurrency).toEqual({
+      limiter,
       workload: 'background',
       metadata: { a: 1, b: 2, c: 3 },
     });
     expect(child.context.deadline).toBe(parent.context.deadline);
-    parentCancel.abort(new Error('stop'));
+    cancel.abort(new Error('stop'));
     expect(child.context.signal?.aborted).toBe(true);
     parent.dispose();
     child.dispose();
   });
 
-  it('lets a child without admission config inherit the parent adapter', () => {
-    const shared = adapter();
-    const parent = createRunContext({
-      admission: { adapter: shared },
-      runAdmission: undefined,
-      timeoutMs: undefined,
-      signal: undefined,
-      parent: undefined,
-    });
-    const child = createRunContext({
-      admission: undefined,
-      runAdmission: { workload: 'batch' },
-      timeoutMs: undefined,
-      signal: undefined,
+  it('gives a child without concurrency config the parent limiter', () => {
+    const limiter = stubLimiter();
+    const parent = root({ concurrency: { limiter } });
+    const child = root({
+      runConcurrency: { workload: 'batch' },
       parent: parent.context,
     });
-    expect(child.context.admission).toMatchObject({
-      adapter: shared,
-      pool: 'default',
+    expect(child.context.concurrency).toMatchObject({
+      limiter,
       workload: 'batch',
     });
   });
 
-  it('rejects run admission options without any adapter', () => {
+  it("uses a child agent's own limiter with its own workload", () => {
+    const parentLimiter = stubLimiter('parent');
+    const childLimiter = stubLimiter('child');
+    const parent = root({
+      concurrency: { limiter: parentLimiter, workload: 'background' },
+    });
+    const child = root({
+      concurrency: { limiter: childLimiter, workload: 'fast' },
+      parent: parent.context,
+    });
+    expect(child.context.concurrency).toMatchObject({
+      limiter: childLimiter,
+      workload: 'fast',
+    });
+  });
+
+  it('rejects run options without any limiter', () => {
+    expect(() => root({ runConcurrency: { workload: 'w' } })).toThrow(
+      InvalidOptionError,
+    );
+  });
+
+  it('validates the selected workload against the limiter', () => {
+    const limiter = createConcurrencyLimiter({
+      maxConcurrent: 2,
+      workloads: { a: {}, b: {} },
+    });
     expect(() =>
-      createRunContext({
-        admission: undefined,
-        runAdmission: { pool: 'p' },
-        timeoutMs: undefined,
-        signal: undefined,
-        parent: undefined,
-      }),
-    ).toThrow(InvalidOptionError);
+      root({ concurrency: { limiter }, runConcurrency: { workload: 'c' } }),
+    ).toThrow(ConcurrencyConfigError);
   });
 
   it('aborts the run signal when the budget is spent', async () => {
-    const { context, dispose } = createRunContext({
-      admission: undefined,
-      runAdmission: undefined,
-      timeoutMs: 10,
-      signal: undefined,
-      parent: undefined,
-    });
+    const { context, dispose } = root({ timeoutMs: 10 });
     await vi.waitFor(() => {
       expect(context.signal?.aborted).toBe(true);
     });
@@ -120,45 +117,51 @@ describe('createRunContext', () => {
   });
 });
 
-describe('admission option validation', () => {
-  it('rejects an adapter without the full contract', () => {
+describe('concurrency option validation', () => {
+  it('requires a limiter that implements the contract', () => {
+    expect(() => createAgent({ model: 'm', concurrency: {} as never })).toThrow(
+      /"concurrency.limiter" is required/,
+    );
     expect(() =>
       createAgent({
         model: 'm',
-        admission: { adapter: { acquire: vi.fn() } as never },
+        concurrency: { limiter: { acquire: vi.fn() } as never },
       }),
-    ).toThrow(/acquire, renew, and release/);
+    ).toThrow(/must be a concurrency limiter/);
   });
 
-  it('validates the pool and workload eagerly through the adapter', () => {
-    const validate = vi.fn(() => {
-      throw new Error('unknown pool');
-    });
+  it('rejects unknown keys with a hint', () => {
     expect(() =>
       createAgent({
         model: 'm',
-        admission: { adapter: { ...adapter(), validate } },
+        concurrency: { limiter: stubLimiter(), maxWaitMs: 5 } as never,
       }),
-    ).toThrow('unknown pool');
-    expect(validate).toHaveBeenCalledWith({
-      pool: 'default',
-      workload: undefined,
-    });
+    ).toThrow(/does not accept "maxWaitMs"/);
   });
 
-  it('rejects invalid run timeouts and admission selections', async () => {
+  it('validates the agent workload eagerly', () => {
+    const limiter = createConcurrencyLimiter({
+      maxConcurrent: 2,
+      workloads: { a: {}, b: {} },
+    });
+    expect(() => createAgent({ model: 'm', concurrency: { limiter } })).toThrow(
+      /no default workload/,
+    );
+    expect(() =>
+      createAgent({ model: 'm', concurrency: { limiter, workload: 'z' } }),
+    ).toThrow(/Unknown workload "z"/);
+  });
+
+  it('rejects invalid run timeouts and selections', async () => {
     const agent = createAgent({
       model: 'm',
-      admission: { adapter: adapter() },
+      concurrency: { limiter: stubLimiter() },
     });
     await expect(agent.run({ prompt: 'x', timeoutMs: 0 })).rejects.toThrow(
       /timeoutMs/,
     );
     await expect(
-      agent.run({ prompt: 'x', admission: { pool: '' } }),
-    ).rejects.toThrow(/pool/);
-    await expect(
-      agent.run({ prompt: 'x', admission: { maxWaitMs: -5 } }),
-    ).rejects.toThrow(/maxWaitMs/);
+      agent.run({ prompt: 'x', concurrency: { workload: '' } }),
+    ).rejects.toThrow(/workload/);
   });
 });

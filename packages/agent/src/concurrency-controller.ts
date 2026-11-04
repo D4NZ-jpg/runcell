@@ -4,36 +4,37 @@ import type {
   PiProviderRequestPermit,
 } from '@local/harness-pi-raw';
 import type {
-  AdmissionEvent,
-  AdmissionLease,
-  AdmissionReleaseOutcome,
-} from './admission.js';
+  ConcurrencyEvent,
+  ConcurrencyLease,
+  ConcurrencyReleaseOutcome,
+} from './concurrency.js';
 import {
-  AdmissionBackendError,
-  AdmissionConfigError,
-  AdmissionError,
-  AdmissionLeaseLostError,
-  AdmissionQueueFullError,
-  AdmissionTimeoutError,
+  ConcurrencyConfigError,
+  ConcurrencyError,
+  ConcurrencyLeaseLostError,
+  ConcurrencyLimiterError,
+  ConcurrencyQueueFullError,
+  ConcurrencyTimeoutError,
 } from './errors.js';
-import {
-  minDefined,
-  type RunAdmissionContext,
-  type RunContext,
-} from './run-context.js';
+import type { RunConcurrencyContext, RunContext } from './run-context.js';
 
 /** Renewal retry cadence after a transient failure, in milliseconds. */
 const RENEW_RETRY_MAX_MS = 1_000;
+/**
+ * How long RunCell waits for `release` before moving on. A release that
+ * fails or times out emits `release-failed`; lease expiry recovers the slot.
+ */
+const RELEASE_TIMEOUT_MS = 5_000;
 
 // Distributive over the union so each event keeps its own fields.
-type EventInput = AdmissionEvent extends infer E
-  ? E extends AdmissionEvent
-    ? Omit<E, keyof AdmissionEventIds | 'timestamp'>
+type EventInput = ConcurrencyEvent extends infer E
+  ? E extends ConcurrencyEvent
+    ? Omit<E, keyof ConcurrencyEventIds | 'timestamp'>
     : never
   : never;
 
-interface AdmissionEventIds {
-  pool: string;
+interface ConcurrencyEventIds {
+  limiter: string;
   workload: string | undefined;
   runId: string;
   rootRunId: string;
@@ -41,36 +42,36 @@ interface AdmissionEventIds {
   requestId: string;
 }
 
-export interface RunAdmission {
+export interface RunConcurrency {
   /** Gate handed to the Pi adapter; consulted before every provider request. */
   gate: PiProviderRequestGate;
   /**
-   * The first admission failure of the run (timeout, queue full, backend,
+   * The run's first concurrency failure (timeout, queue full, limiter,
    * config, lease lost). Once set, every later request is denied with it.
    */
-  failure(): AdmissionError | undefined;
-  /** Release every outstanding permit. Idempotent. */
+  failure(): ConcurrencyError | undefined;
+  /** Release every held slot. Idempotent. */
   dispose(): Promise<void>;
 }
 
 /**
- * RunCell-owned lease lifecycle for one run: deadline-bounded,
+ * RunCell-owned slot lifecycle for one run: deadline-bounded,
  * cancellation-safe acquisition; renewal until the request ends; lease-loss
  * abort; idempotent, bounded release; and structured events.
  */
-export function createRunAdmission(
-  context: RunContext & { admission: RunAdmissionContext },
-  onEvent: (event: AdmissionEvent) => void,
-): RunAdmission {
-  const admission = context.admission;
-  const { adapter, pool, workload } = admission;
-  let failure: AdmissionError | undefined;
+export function createRunConcurrency(
+  context: RunContext & { concurrency: RunConcurrencyContext },
+  onEvent: (event: ConcurrencyEvent) => void,
+): RunConcurrency {
+  const { limiter, workload, metadata } = context.concurrency;
+  const limiterName = limiter.name;
+  let failure: ConcurrencyError | undefined;
   const permits = new Set<{
-    release(o: AdmissionReleaseOutcome): Promise<void>;
+    release(o: ConcurrencyReleaseOutcome): Promise<void>;
   }>();
 
-  const ids = (requestId: string): AdmissionEventIds => ({
-    pool,
+  const ids = (requestId: string): ConcurrencyEventIds => ({
+    limiter: limiterName,
     workload,
     runId: context.runId,
     rootRunId: context.rootRunId,
@@ -85,19 +86,19 @@ export function createRunAdmission(
         timestamp: Date.now(),
       });
     } catch {
-      // Observers never affect admission.
+      // Observers never affect slot handling.
     }
   };
-  const fail = (error: AdmissionError): AdmissionError => {
+  const fail = (error: ConcurrencyError): ConcurrencyError => {
     failure ??= error;
     return error;
   };
 
-  const releaseQuietly = async (lease: AdmissionLease, requestId: string) => {
+  const releaseQuietly = async (lease: ConcurrencyLease, requestId: string) => {
     try {
-      await withTimeout(adapter.release(lease), admission.cleanupTimeoutMs);
+      await withTimeout(limiter.release(lease), RELEASE_TIMEOUT_MS);
     } catch (error) {
-      emit(requestId, { type: 'cleanup-failed', leaseId: lease.id, error });
+      emit(requestId, { type: 'release-failed', leaseId: lease.id, error });
     }
   };
 
@@ -115,12 +116,7 @@ export function createRunAdmission(
 
     const requestId = randomUUID();
     const startedAt = Date.now();
-    const deadline = minDefined(
-      admission.maxWaitMs !== undefined
-        ? startedAt + admission.maxWaitMs
-        : undefined,
-      context.deadline,
-    );
+    const deadline = context.deadline;
     emit(requestId, { type: 'wait-started', deadline });
 
     // Timers may fire a millisecond early against Date.now(); a run-budget
@@ -135,8 +131,8 @@ export function createRunAdmission(
               'TimeoutError',
         ));
     const timeoutError = (cause?: unknown) =>
-      new AdmissionTimeoutError(
-        `Admission wait limit reached for pool "${pool}" after ${Date.now() - startedAt} ms.`,
+      new ConcurrencyTimeoutError(
+        `No "${limiterName}" concurrency slot was free within the run's time budget (waited ${Date.now() - startedAt} ms).`,
         { ...ids(requestId), ...(cause !== undefined ? { cause } : {}) },
       );
 
@@ -162,58 +158,64 @@ export function createRunAdmission(
       if (
         deadlineController.signal.aborted ||
         deadlineReached() ||
-        isInstance(error, AdmissionTimeoutError)
+        isInstance(error, ConcurrencyTimeoutError)
       ) {
         emit(requestId, { type: 'timed-out', waitMs });
-        return fail(timeoutError(error));
+        return fail(
+          isInstance(error, ConcurrencyTimeoutError)
+            ? new ConcurrencyTimeoutError(messageOf(error), {
+                ...ids(requestId),
+                cause: error,
+              })
+            : timeoutError(error),
+        );
       }
       const cancel = cancelSignals.find(s => s.aborted);
       if (cancel) {
         emit(requestId, { type: 'wait-cancelled', waitMs });
         return cancel.reason;
       }
-      if (isInstance(error, AdmissionQueueFullError)) {
+      if (isInstance(error, ConcurrencyQueueFullError)) {
         emit(requestId, { type: 'queue-full', waitMs });
         return fail(
-          new AdmissionQueueFullError(messageOf(error), {
+          new ConcurrencyQueueFullError(messageOf(error), {
             ...ids(requestId),
             cause: error,
           }),
         );
       }
-      if (isInstance(error, AdmissionConfigError)) {
+      if (isInstance(error, ConcurrencyConfigError)) {
+        emit(requestId, { type: 'config-error', error });
         return fail(
-          new AdmissionConfigError(messageOf(error), {
+          new ConcurrencyConfigError(messageOf(error), {
             ...ids(requestId),
             cause: error,
           }),
         );
       }
-      emit(requestId, { type: 'backend-failed', waitMs, error });
+      emit(requestId, { type: 'limiter-error', waitMs, error });
       return fail(
-        new AdmissionBackendError(
-          `Admission backend failed for pool "${pool}"; the provider request was not sent.`,
+        new ConcurrencyLimiterError(
+          `Concurrency limiter "${limiterName}" failed; the provider request was not sent.`,
           { ...ids(requestId), cause: error },
         ),
       );
     };
 
-    let lease: AdmissionLease;
+    let lease: ConcurrencyLease;
     try {
       if (deadline !== undefined && deadline <= startedAt) {
         throw timeoutError();
       }
       lease = await abandonOnAbort(
         Promise.resolve().then(() =>
-          adapter.acquire({
-            pool,
+          limiter.acquire({
             workload,
             runId: context.runId,
             requestId,
             rootRunId: context.rootRunId,
             parentRunId: context.parentRunId,
-            metadata: admission.metadata,
-            deadline,
+            metadata,
             timeoutMs:
               deadline !== undefined
                 ? Math.max(0, deadline - startedAt)
@@ -242,10 +244,10 @@ export function createRunAdmission(
         candidate != null &&
         typeof (candidate as { id?: unknown }).id === 'string'
       ) {
-        await releaseQuietly(candidate as AdmissionLease, requestId);
+        await releaseQuietly(candidate as ConcurrencyLease, requestId);
       }
       throw classify(
-        new TypeError('Admission adapter returned an invalid lease.'),
+        new TypeError('Concurrency limiter returned an invalid lease.'),
       );
     }
 
@@ -258,7 +260,7 @@ export function createRunAdmission(
   };
 
   const createPermit = (
-    granted: AdmissionLease,
+    granted: ConcurrencyLease,
     requestId: string,
   ): PiProviderRequestPermit => {
     const revoke = new AbortController();
@@ -278,8 +280,8 @@ export function createRunAdmission(
 
     const lose = () => {
       if (released()) return;
-      const error = new AdmissionLeaseLostError(
-        `Admission lease for pool "${pool}" was lost; the provider request was aborted.`,
+      const error = new ConcurrencyLeaseLostError(
+        `Concurrency slot on "${limiterName}" was lost; the provider request was aborted.`,
         ids(requestId),
       );
       fail(error);
@@ -309,7 +311,7 @@ export function createRunAdmission(
       try {
         const next = await abandonOnAbort(
           Promise.resolve().then(() =>
-            adapter.renew(current, { signal: control.signal }),
+            limiter.renew(current, { signal: control.signal }),
           ),
           control.signal,
           () => undefined,
@@ -320,7 +322,9 @@ export function createRunAdmission(
           return;
         }
         if (!isValidLease(next) || next.id !== current.id) {
-          throw new TypeError('Admission adapter returned an invalid renewal.');
+          throw new TypeError(
+            'Concurrency limiter returned an invalid renewal.',
+          );
         }
         current = next;
         // Conservative: measured from when the renewal was sent.
@@ -340,7 +344,7 @@ export function createRunAdmission(
       }
     };
 
-    const release = (outcome: AdmissionReleaseOutcome): Promise<void> => {
+    const release = (outcome: ConcurrencyReleaseOutcome): Promise<void> => {
       if (state.releasing) return state.releasing;
       clearTimeout(renewTimer);
       permits.delete(handle);
@@ -374,9 +378,9 @@ export function createRunAdmission(
   };
 }
 
-function isValidLease(value: unknown): value is AdmissionLease {
+function isValidLease(value: unknown): value is ConcurrencyLease {
   if (value == null || typeof value !== 'object') return false;
-  const lease = value as Partial<AdmissionLease>;
+  const lease = value as Partial<ConcurrencyLease>;
   return (
     typeof lease.id === 'string' &&
     lease.id.length > 0 &&
@@ -401,7 +405,7 @@ function messageOf(error: unknown): string {
   try {
     return error instanceof Error ? error.message : String(error);
   } catch {
-    return 'Admission failed.';
+    return 'Concurrency limiter failed.';
   }
 }
 

@@ -1,5 +1,5 @@
 /**
- * End-to-end admission tests through the real Pi agent loop. A Pi
+ * End-to-end concurrency-limit tests through the real Pi agent loop. A Pi
  * extension registers a scripted in-process provider, so every provider
  * request goes through the same stream-function path production uses.
  */
@@ -7,13 +7,13 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
 import type { ExtensionFactory } from '@local/harness-pi-raw';
-import type { AdmissionAdapter, AdmissionEvent } from './admission.js';
-import { createInMemoryScheduler } from './admission-scheduler.js';
+import type { ConcurrencyEvent, ConcurrencyLimiter } from './concurrency.js';
+import { createConcurrencyLimiter } from './concurrency-limiter.js';
 import { createAgent } from './create-agent.js';
 import {
-  AdmissionBackendError,
-  AdmissionLeaseLostError,
-  AdmissionTimeoutError,
+  ConcurrencyLeaseLostError,
+  ConcurrencyLimiterError,
+  ConcurrencyTimeoutError,
   TurnError,
 } from './errors.js';
 
@@ -145,23 +145,25 @@ function fakeProvider(
   };
 }
 
-/** Tracks permits through scheduler events. */
-function trackedScheduler(capacity: number, leaseTtlMs?: number) {
+/** A limiter that counts held slots, so tests can check the limit directly. */
+function trackedLimiter(capacity: number) {
   const state = { active: 0, peak: 0 };
-  const scheduler = createInMemoryScheduler({
-    policy: { pools: { default: { maxConcurrent: capacity } } },
-    ...(leaseTtlMs ? { leaseTtlMs } : {}),
-    onEvent(event) {
-      if (event.type === 'granted') {
-        state.active += 1;
-        state.peak = Math.max(state.peak, state.active);
-      }
-      if (event.type === 'released' || event.type === 'lease-expired') {
-        state.active -= 1;
-      }
+  const inner = createConcurrencyLimiter({ maxConcurrent: capacity });
+  const limiter: ConcurrencyLimiter = {
+    name: inner.name,
+    async acquire(request) {
+      const lease = await inner.acquire(request);
+      state.active += 1;
+      state.peak = Math.max(state.peak, state.active);
+      return lease;
     },
-  });
-  return { scheduler, state };
+    renew: (lease, options) => inner.renew(lease, options),
+    async release(lease) {
+      state.active -= 1;
+      await inner.release(lease);
+    },
+  };
+  return { limiter, inner, state };
 }
 
 const requirePermit = (state: { active: number }) => () => {
@@ -170,10 +172,10 @@ const requirePermit = (state: { active: number }) => () => {
   }
 };
 
-describe('admission (end to end)', { timeout: 30_000 }, () => {
+describe('concurrency limits (end to end)', { timeout: 30_000 }, () => {
   it('runs a capacity-one parent/child without deadlock; tools hold no permit', async () => {
-    const { scheduler, state } = trackedScheduler(1);
-    const events: AdmissionEvent[] = [];
+    const { limiter, state } = trackedLimiter(1);
+    const events: ConcurrencyEvent[] = [];
     const childProbe: ProviderProbe = {
       calls: 0,
       onRequest: requirePermit(state),
@@ -189,12 +191,12 @@ describe('admission (end to end)', { timeout: 30_000 }, () => {
       pi: {
         extensions: [fakeProvider(() => ({ text: 'child done' }), childProbe)],
       },
-      // No admission config: the child inherits the parent's adapter.
+      // No concurrency config: the child inherits the parent's limiter.
     });
     const parent = createAgent({
       model: 'fake/model',
-      admission: { adapter: scheduler, metadata: { tenant: 't1' } },
-      events: { onAdmission: event => events.push(event) },
+      concurrency: { limiter, metadata: { tenant: 't1' } },
+      events: { onConcurrency: event => events.push(event) },
       tools: {
         spawnChild: {
           description: 'Run a child agent.',
@@ -203,8 +205,8 @@ describe('admission (end to end)', { timeout: 30_000 }, () => {
             permitsDuringTool.push(state.active);
             const result = await child.run({
               prompt: 'child task',
-              admission: { metadata: { step: 'child' } },
-              events: { onAdmission: event => events.push(event) },
+              concurrency: { metadata: { step: 'child' } },
+              events: { onConcurrency: event => events.push(event) },
             });
             return result.text;
           },
@@ -240,17 +242,17 @@ describe('admission (end to end)', { timeout: 30_000 }, () => {
     expect(parentRun.rootRunId).toBe(parentRun.runId);
     expect(childRun.parentRunId).toBe(parentRun.runId);
     expect(childRun.rootRunId).toBe(parentRun.runId);
-    expect(childRun.pool).toBe('default');
+    expect(childRun.limiter).toBe('default');
     expect(resumed.runId).toBe(parentRun.runId);
     expect(
       events.flatMap(e => (e.type === 'released' ? [e.outcome] : [])),
     ).toEqual(['completed', 'completed', 'completed']);
-    // Lineage and metadata reach the adapter, never prompt text.
+    // Lineage and metadata reach the limiter, never prompt text.
     expect(JSON.stringify(events)).not.toContain('task');
   });
 
   it('keeps nested work progressing under contention', async () => {
-    const { scheduler, state } = trackedScheduler(2);
+    const { limiter, state } = trackedLimiter(2);
     const child = createAgent({
       model: 'fake/model',
       pi: { extensions: [fakeProvider(() => ({ text: 'leaf' }))] },
@@ -258,7 +260,7 @@ describe('admission (end to end)', { timeout: 30_000 }, () => {
     const makeParent = () =>
       createAgent({
         model: 'fake/model',
-        admission: { adapter: scheduler },
+        concurrency: { limiter },
         tools: {
           spawnChild: {
             description: 'Run a child agent.',
@@ -285,10 +287,10 @@ describe('admission (end to end)', { timeout: 30_000 }, () => {
   });
 
   it('holds the permit for the whole streamed response', async () => {
-    const { scheduler, state } = trackedScheduler(1);
+    const { limiter, state } = trackedLimiter(1);
     const agent = createAgent({
       model: 'fake/model',
-      admission: { adapter: scheduler },
+      concurrency: { limiter },
       pi: {
         extensions: [fakeProvider(() => ({ text: 'streamed' }), undefined, 30)],
       },
@@ -305,12 +307,12 @@ describe('admission (end to end)', { timeout: 30_000 }, () => {
   });
 
   it('admits repair requests separately', async () => {
-    const { scheduler } = trackedScheduler(1);
-    const acquired: AdmissionEvent[] = [];
+    const { limiter } = trackedLimiter(1);
+    const acquired: ConcurrencyEvent[] = [];
     const agent = createAgent({
       model: 'fake/model',
-      admission: { adapter: scheduler },
-      events: { onAdmission: e => e.type === 'acquired' && acquired.push(e) },
+      concurrency: { limiter },
+      events: { onConcurrency: e => e.type === 'acquired' && acquired.push(e) },
       pi: {
         extensions: [
           fakeProvider(({ index }) =>
@@ -330,10 +332,10 @@ describe('admission (end to end)', { timeout: 30_000 }, () => {
   });
 
   it('releases the permit and preserves the provider error on failure', async () => {
-    const { scheduler, state } = trackedScheduler(1);
+    const { limiter, state } = trackedLimiter(1);
     const agent = createAgent({
       model: 'fake/model',
-      admission: { adapter: scheduler },
+      concurrency: { limiter },
       pi: {
         extensions: [
           fakeProvider(() => ({ error: 'bad request: invalid model input' })),
@@ -346,52 +348,51 @@ describe('admission (end to end)', { timeout: 30_000 }, () => {
     expect(state.active).toBe(0);
   });
 
-  it('fails with an admission timeout within the run budget and never calls the provider', async () => {
-    const { scheduler } = trackedScheduler(1);
+  it('fails with a concurrency timeout within the run budget and never calls the provider', async () => {
+    const { limiter, inner } = trackedLimiter(1);
     const blocker = new AbortController();
-    const held = await scheduler.acquire({
-      pool: 'default',
+    const held = await inner.acquire({
       workload: undefined,
       runId: 'other',
       rootRunId: 'other',
       parentRunId: undefined,
       requestId: 'r',
       metadata: {},
-      deadline: undefined,
       timeoutMs: undefined,
       signal: blocker.signal,
     });
     const probe: ProviderProbe = { calls: 0 };
     const agent = createAgent({
       model: 'fake/model',
-      admission: { adapter: scheduler },
+      concurrency: { limiter },
       pi: { extensions: [fakeProvider(() => ({ text: 'never' }), probe)] },
     });
     const startedAt = Date.now();
     const error = await agent
       .run({ prompt: 'go', timeoutMs: 1_500 })
       .catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(AdmissionTimeoutError);
+    expect(error).toBeInstanceOf(ConcurrencyTimeoutError);
     expect(Date.now() - startedAt).toBeLessThan(5_000);
     expect(probe.calls).toBe(0);
-    await scheduler.release(held);
-    expect((await scheduler.stats('default')).queued).toBe(0);
+    await inner.release(held);
+    expect((await inner.stats()).queued).toBe(0);
   });
 
   it('fails closed when the backend is unavailable', async () => {
     const probe: ProviderProbe = { calls: 0 };
-    const broken: AdmissionAdapter = {
+    const broken: ConcurrencyLimiter = {
+      name: 'broken',
       acquire: () => Promise.reject(new Error('ECONNREFUSED')),
       renew: () => Promise.resolve(undefined),
       release: () => Promise.resolve(),
     };
     const agent = createAgent({
       model: 'fake/model',
-      admission: { adapter: broken },
+      concurrency: { limiter: broken },
       pi: { extensions: [fakeProvider(() => ({ text: 'never' }), probe)] },
     });
     const error = await agent.run({ prompt: 'go' }).catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(AdmissionBackendError);
+    expect(error).toBeInstanceOf(ConcurrencyLimiterError);
     expect((error as Error).cause).toMatchObject({ message: 'ECONNREFUSED' });
     expect(probe.calls).toBe(0);
   });
@@ -399,11 +400,11 @@ describe('admission (end to end)', { timeout: 30_000 }, () => {
   it('aborts the request and fails the run when the lease is lost', async () => {
     let aborted = false;
     let leases = 0;
-    const losing: AdmissionAdapter = {
+    const losing: ConcurrencyLimiter = {
+      name: 'losing',
       acquire: () =>
         Promise.resolve({
           id: `lease-${++leases}`,
-          pool: 'default',
           workload: undefined,
           ttlMs: 60,
         }),
@@ -417,9 +418,9 @@ describe('admission (end to end)', { timeout: 30_000 }, () => {
     };
     const agent = createAgent({
       model: 'fake/model',
-      admission: { adapter: losing },
+      concurrency: { limiter: losing },
       events: {
-        onAdmission: e => {
+        onConcurrency: e => {
           if (e.type === 'lease-lost') aborted = true;
         },
       },
@@ -427,14 +428,75 @@ describe('admission (end to end)', { timeout: 30_000 }, () => {
     });
     const startedAt = Date.now();
     const error = await agent.run({ prompt: 'go' }).catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(AdmissionLeaseLostError);
+    expect(error).toBeInstanceOf(ConcurrencyLeaseLostError);
     expect(aborted).toBe(true);
     expect(Date.now() - startedAt).toBeLessThan(1_900);
     // No retry or further request continued under the lost lease.
     expect(probe.calls).toBe(1);
   });
 
-  it('runs unchanged without an adapter', async () => {
+  it("keeps a child on its parent's workload unless the run selects one", async () => {
+    const limiter = createConcurrencyLimiter({
+      maxConcurrent: 2,
+      workloads: { interactive: {}, background: {} },
+    });
+    const seen: string[] = [];
+    const record = (e: ConcurrencyEvent) => {
+      if (e.type === 'acquired')
+        seen.push(`${e.parentRunId ? 'child' : 'parent'}:${e.workload ?? ''}`);
+    };
+    const child = createAgent({
+      model: 'fake/model',
+      // The child's own default does not move inherited work.
+      concurrency: { limiter, workload: 'interactive' },
+      events: { onConcurrency: record },
+      pi: { extensions: [fakeProvider(() => ({ text: 'leaf' }))] },
+    });
+    const parent = createAgent({
+      model: 'fake/model',
+      concurrency: { limiter, workload: 'background' },
+      events: { onConcurrency: record },
+      tools: {
+        inherit: {
+          description: 'Child on the inherited workload.',
+          schema: z.object({}),
+          execute: async () => (await child.run({ prompt: 'x' })).text,
+        },
+        select: {
+          description: 'Child on an explicit workload.',
+          schema: z.object({}),
+          execute: async () =>
+            (
+              await child.run({
+                prompt: 'x',
+                concurrency: { workload: 'interactive' },
+              })
+            ).text,
+        },
+      },
+      pi: {
+        extensions: [
+          fakeProvider(({ toolResults }) =>
+            toolResults === 0
+              ? { toolCall: { name: 'inherit', arguments: {} } }
+              : toolResults === 1
+                ? { toolCall: { name: 'select', arguments: {} } }
+                : { text: 'done' },
+          ),
+        ],
+      },
+    });
+    await parent.run({ prompt: 'go' });
+    expect(seen).toEqual([
+      'parent:background',
+      'child:background',
+      'parent:background',
+      'child:interactive',
+      'parent:background',
+    ]);
+  });
+
+  it('runs unchanged without a limiter', async () => {
     const agent = createAgent({
       model: 'fake/model',
       pi: { extensions: [fakeProvider(() => ({ text: 'plain' }))] },

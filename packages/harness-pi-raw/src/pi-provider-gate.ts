@@ -72,9 +72,9 @@ export function assertGateCompatibleSettings(
     return;
   }
   throw new Error(
-    'Provider-request admission requires Pi cache warming to be off: the ' +
-      'supplied settingsManager enables it, and cache-warming requests ' +
-      'cannot be admitted.',
+    'Concurrency limits require Pi cache warming to be off: the supplied ' +
+      'settingsManager enables it, and cache-warming requests cannot be ' +
+      'limited.',
   );
 }
 
@@ -91,7 +91,7 @@ export function installProviderRequestGate(
   const inner = agent.streamFunction as PiStreamFn | undefined;
   if (typeof inner !== 'function') {
     throw new Error(
-      'Pi agent exposes no stream function; provider-request admission cannot be installed.',
+      'Pi agent exposes no stream function; the concurrency limit cannot be installed.',
     );
   }
   agent.streamFunction = (model, context, options) => {

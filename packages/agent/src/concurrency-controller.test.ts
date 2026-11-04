@@ -1,40 +1,39 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
-  AdmissionAdapter,
-  AdmissionEvent,
-  AdmissionLease,
-  AdmissionRequest,
-} from './admission.js';
-import { createRunAdmission } from './admission-controller.js';
+  ConcurrencyEvent,
+  ConcurrencyLease,
+  ConcurrencyLimiter,
+  ConcurrencyRequest,
+} from './concurrency.js';
+import { createRunConcurrency } from './concurrency-controller.js';
 import {
-  AdmissionBackendError,
-  AdmissionConfigError,
-  AdmissionLeaseLostError,
-  AdmissionQueueFullError,
-  AdmissionTimeoutError,
+  ConcurrencyConfigError,
+  ConcurrencyLeaseLostError,
+  ConcurrencyLimiterError,
+  ConcurrencyQueueFullError,
+  ConcurrencyTimeoutError,
 } from './errors.js';
-import type { RunAdmissionContext, RunContext } from './run-context.js';
+import type { RunContext } from './run-context.js';
 
-const lease = (id = 'lease-1', ttlMs = 10_000): AdmissionLease => ({
+const lease = (id = 'lease-1', ttlMs = 10_000): ConcurrencyLease => ({
   id,
-  pool: 'p',
   workload: undefined,
   ttlMs,
 });
 
 function setup(
-  adapter: Partial<AdmissionAdapter>,
+  overridesLimiter: Partial<ConcurrencyLimiter>,
   overrides: Partial<RunContext> = {},
-  admissionOverrides: Partial<RunAdmissionContext> = {},
 ) {
-  const events: AdmissionEvent[] = [];
-  const full: AdmissionAdapter = {
+  const events: ConcurrencyEvent[] = [];
+  const limiter: ConcurrencyLimiter = {
+    name: 'claude',
     acquire: () => Promise.resolve(lease()),
     renew: l => Promise.resolve(l),
     release: () => Promise.resolve(),
-    ...adapter,
+    ...overridesLimiter,
   };
-  const admission = createRunAdmission(
+  const concurrency = createRunConcurrency(
     {
       runId: 'run',
       rootRunId: 'root',
@@ -42,44 +41,35 @@ function setup(
       signal: undefined,
       deadline: undefined,
       ...overrides,
-      admission: {
-        adapter: full,
-        pool: 'p',
-        workload: undefined,
-        metadata: { tenant: 't' },
-        maxWaitMs: undefined,
-        cleanupTimeoutMs: 1_000,
-        ...admissionOverrides,
-      },
+      concurrency: { limiter, workload: undefined, metadata: { tenant: 't' } },
     },
     event => events.push(event),
   );
-  return { admission, events, adapter: full };
+  return { run: concurrency, events, limiter };
 }
 
-const types = (events: AdmissionEvent[]) => events.map(e => e.type);
+const types = (events: ConcurrencyEvent[]) => events.map(e => e.type);
 const admit = (
-  admission: ReturnType<typeof createRunAdmission>,
+  run: ReturnType<typeof createRunConcurrency>,
   signal?: AbortSignal,
-) => admission.gate.admit({ model: { provider: 'x', id: 'y' }, signal });
+) => run.gate.admit({ model: { provider: 'x', id: 'y' }, signal });
 
 afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('createRunAdmission', () => {
+describe('createRunConcurrency', () => {
   it('passes lineage, metadata, and deadline to the adapter and releases once', async () => {
-    const acquire = vi.fn((_: AdmissionRequest) => Promise.resolve(lease()));
+    const acquire = vi.fn((_: ConcurrencyRequest) => Promise.resolve(lease()));
     const release = vi.fn(() => Promise.resolve());
-    const { admission, events } = setup(
+    const { run, events } = setup(
       { acquire, release },
       { deadline: Date.now() + 5_000 },
     );
-    const permit = await admit(admission);
+    const permit = await admit(run);
     const [request] = acquire.mock.calls[0] ?? [];
     if (!request) throw new Error('acquire was not called');
     expect(request).toMatchObject({
-      pool: 'p',
       runId: 'run',
       rootRunId: 'root',
       parentRunId: 'parent',
@@ -99,73 +89,73 @@ describe('createRunAdmission', () => {
 
   it('times out at the effective deadline without granting', async () => {
     const acquire = vi.fn(
-      ({ signal }: AdmissionRequest) =>
-        new Promise<AdmissionLease>((_, reject) => {
+      ({ signal }: ConcurrencyRequest) =>
+        new Promise<ConcurrencyLease>((_, reject) => {
           signal.addEventListener('abort', () => {
             reject(signal.reason as Error);
           });
         }),
     );
-    const { admission, events } = setup({ acquire }, {}, { maxWaitMs: 20 });
-    const error = await admit(admission).catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(AdmissionTimeoutError);
-    expect(error).toMatchObject({ runId: 'run', pool: 'p' });
+    const { run, events } = setup({ acquire }, { deadline: Date.now() + 20 });
+    const error = await admit(run).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConcurrencyTimeoutError);
+    expect(error).toMatchObject({ runId: 'run', limiter: 'claude' });
     expect(types(events)).toEqual(['wait-started', 'timed-out']);
     // The run is poisoned: later requests are denied with the same error.
-    await expect(admit(admission)).rejects.toBe(error);
+    await expect(admit(run)).rejects.toBe(error);
     expect(acquire).toHaveBeenCalledTimes(1);
   });
 
   it('times out at once when the run budget is already spent', async () => {
     const acquire = vi.fn();
-    const { admission } = setup({ acquire }, { deadline: Date.now() - 1 });
-    await expect(admit(admission)).rejects.toBeInstanceOf(
-      AdmissionTimeoutError,
-    );
+    const { run } = setup({ acquire }, { deadline: Date.now() - 1 });
+    await expect(admit(run)).rejects.toBeInstanceOf(ConcurrencyTimeoutError);
     expect(acquire).not.toHaveBeenCalled();
   });
 
   it('treats adapter rejections as backend failures and fails closed', async () => {
     const cause = new Error('connection refused');
-    const { admission, events } = setup({
+    const { run, events } = setup({
       acquire: () => Promise.reject(cause),
     });
-    const error = await admit(admission).catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(AdmissionBackendError);
+    const error = await admit(run).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConcurrencyLimiterError);
     expect((error as Error).cause).toBe(cause);
-    expect(types(events)).toEqual(['wait-started', 'backend-failed']);
+    expect(types(events)).toEqual(['wait-started', 'limiter-error']);
   });
 
   it('keeps queue-full and config errors typed', async () => {
     const full = setup({
-      acquire: () => Promise.reject(new AdmissionQueueFullError('full')),
+      acquire: () => Promise.reject(new ConcurrencyQueueFullError('full')),
     });
-    await expect(admit(full.admission)).rejects.toBeInstanceOf(
-      AdmissionQueueFullError,
+    await expect(admit(full.run)).rejects.toBeInstanceOf(
+      ConcurrencyQueueFullError,
     );
     expect(types(full.events)).toContain('queue-full');
     const config = setup({
-      acquire: () => Promise.reject(new AdmissionConfigError('unknown pool')),
+      acquire: () => Promise.reject(new ConcurrencyConfigError('unknown pool')),
     });
-    await expect(admit(config.admission)).rejects.toBeInstanceOf(
-      AdmissionConfigError,
+    await expect(admit(config.run)).rejects.toBeInstanceOf(
+      ConcurrencyConfigError,
     );
+    expect(types(config.events)).toContain('config-error');
   });
 
   it('stops waiting on cancellation and returns a late grant', async () => {
-    let grant!: (l: AdmissionLease) => void;
+    let grant!: (l: ConcurrencyLease) => void;
     const release = vi.fn(() => Promise.resolve());
-    const { admission, events } = setup({
+    const { run, events } = setup({
       // Ignores the signal, as a misbehaving backend might.
-      acquire: () => new Promise<AdmissionLease>(resolve => (grant = resolve)),
+      acquire: () =>
+        new Promise<ConcurrencyLease>(resolve => (grant = resolve)),
       release,
     });
     const controller = new AbortController();
     const reason = new Error('cancelled');
-    const pending = admit(admission, controller.signal);
+    const pending = admit(run, controller.signal);
     controller.abort(reason);
     await expect(pending).rejects.toBe(reason);
-    expect(admission.failure()).toBeUndefined();
+    expect(run.failure()).toBeUndefined();
     grant(lease('late'));
     await vi.waitFor(() => {
       expect(release).toHaveBeenCalledWith(lease('late'));
@@ -176,7 +166,7 @@ describe('createRunAdmission', () => {
   it('releases a permit granted concurrently with cancellation', async () => {
     const controller = new AbortController();
     const release = vi.fn(() => Promise.resolve());
-    const { admission } = setup({
+    const { run } = setup({
       acquire: () => {
         // Grant and cancellation land in the same tick.
         const granted = Promise.resolve(lease('raced'));
@@ -187,7 +177,7 @@ describe('createRunAdmission', () => {
       },
       release,
     });
-    await admit(admission, controller.signal).then(
+    await admit(run, controller.signal).then(
       permit => permit.release('completed'),
       () => undefined,
     );
@@ -196,12 +186,12 @@ describe('createRunAdmission', () => {
 
   it('renews before expiry and stops renewing after release', async () => {
     vi.useFakeTimers();
-    const renew = vi.fn((l: AdmissionLease) => Promise.resolve(l));
-    const { admission } = setup({
+    const renew = vi.fn((l: ConcurrencyLease) => Promise.resolve(l));
+    const { run } = setup({
       acquire: () => Promise.resolve(lease('l', 100)),
       renew,
     });
-    const permit = await admit(admission);
+    const permit = await admit(run);
     await vi.advanceTimersByTimeAsync(260);
     expect(renew.mock.calls.length).toBeGreaterThanOrEqual(4);
     expect(permit.signal.aborted).toBe(false);
@@ -213,17 +203,17 @@ describe('createRunAdmission', () => {
 
   it('treats a lease the backend no longer holds as lost', async () => {
     const release = vi.fn(() => Promise.resolve());
-    const { admission, events } = setup({
+    const { run, events } = setup({
       acquire: () => Promise.resolve(lease('l', 40)),
       renew: () => Promise.resolve(undefined),
       release,
     });
-    const permit = await admit(admission);
+    const permit = await admit(run);
     await vi.waitFor(() => {
       expect(permit.signal.aborted).toBe(true);
     });
-    expect(permit.signal.reason).toBeInstanceOf(AdmissionLeaseLostError);
-    expect(admission.failure()).toBeInstanceOf(AdmissionLeaseLostError);
+    expect(permit.signal.reason).toBeInstanceOf(ConcurrencyLeaseLostError);
+    expect(run.failure()).toBeInstanceOf(ConcurrencyLeaseLostError);
     await vi.waitFor(() => {
       expect(release).toHaveBeenCalledTimes(1);
     });
@@ -232,19 +222,17 @@ describe('createRunAdmission', () => {
       type: 'released',
       outcome: 'lease-lost',
     });
-    await expect(admit(admission)).rejects.toBeInstanceOf(
-      AdmissionLeaseLostError,
-    );
+    await expect(admit(run)).rejects.toBeInstanceOf(ConcurrencyLeaseLostError);
   });
 
   it('retries failed renewals until expiry, then loses the lease', async () => {
     vi.useFakeTimers();
     const renew = vi.fn(() => Promise.reject(new Error('blip')));
-    const { admission, events } = setup({
+    const { run, events } = setup({
       acquire: () => Promise.resolve(lease('l', 200)),
       renew,
     });
-    const permit = await admit(admission);
+    const permit = await admit(run);
     await vi.advanceTimersByTimeAsync(150);
     expect(permit.signal.aborted).toBe(false);
     expect(types(events)).toContain('renewal-failed');
@@ -256,46 +244,47 @@ describe('createRunAdmission', () => {
   it('survives a transient renewal failure', async () => {
     vi.useFakeTimers();
     let calls = 0;
-    const { admission } = setup({
+    const { run } = setup({
       acquire: () => Promise.resolve(lease('l', 200)),
       renew: l =>
         ++calls === 1 ? Promise.reject(new Error('blip')) : Promise.resolve(l),
     });
-    const permit = await admit(admission);
+    const permit = await admit(run);
     await vi.advanceTimersByTimeAsync(1_000);
     expect(permit.signal.aborted).toBe(false);
     await permit.release('completed');
   });
 
-  it('emits cleanup-failed when release fails or hangs', async () => {
-    const { admission, events } = setup({
+  it('emits release-failed when release fails or hangs', async () => {
+    const { run, events } = setup({
       release: () => Promise.reject(new Error('db down')),
     });
-    const permit = await admit(admission);
+    const permit = await admit(run);
     await permit.release('completed');
     expect(types(events)).toEqual([
       'wait-started',
       'acquired',
-      'cleanup-failed',
+      'release-failed',
       'released',
     ]);
 
-    const hanging = setup(
-      { release: () => new Promise<void>(() => undefined) },
-      {},
-      { cleanupTimeoutMs: 20 },
-    );
-    const second = await admit(hanging.admission);
-    await second.release('completed');
-    expect(types(hanging.events)).toContain('cleanup-failed');
+    vi.useFakeTimers();
+    const hanging = setup({
+      release: () => new Promise<void>(() => undefined),
+    });
+    const second = await admit(hanging.run);
+    const released = second.release('completed');
+    await vi.advanceTimersByTimeAsync(5_000);
+    await released;
+    expect(types(hanging.events)).toContain('release-failed');
   });
 
   it('dispose releases outstanding permits', async () => {
     const release = vi.fn(() => Promise.resolve());
-    const { admission, events } = setup({ release });
-    await admit(admission);
-    await admission.dispose();
-    await admission.dispose();
+    const { run, events } = setup({ release });
+    await admit(run);
+    await run.dispose();
+    await run.dispose();
     expect(release).toHaveBeenCalledTimes(1);
     expect(events.at(-1)).toMatchObject({
       type: 'released',
@@ -304,11 +293,9 @@ describe('createRunAdmission', () => {
   });
 
   it('rejects an invalid lease from the adapter', async () => {
-    const { admission } = setup({
-      acquire: () => Promise.resolve({ id: 'x', ttlMs: 0 } as AdmissionLease),
+    const { run } = setup({
+      acquire: () => Promise.resolve({ id: 'x', ttlMs: 0 } as ConcurrencyLease),
     });
-    await expect(admit(admission)).rejects.toBeInstanceOf(
-      AdmissionBackendError,
-    );
+    await expect(admit(run)).rejects.toBeInstanceOf(ConcurrencyLimiterError);
   });
 });
