@@ -16,4 +16,6 @@ the package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   time.
 - Recovery of slots and queue entries from crashed workers.
 - Detection of workers that use different limits for the same name.
+- Safe schema creation when several workers start at the same time on a
+  new database.
 - `postgresConcurrencySchemaSql()` for migrations.

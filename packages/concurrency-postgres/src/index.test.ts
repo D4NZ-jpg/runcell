@@ -1,9 +1,9 @@
 /**
  * Runs the limiter against PGlite (in-process PostgreSQL). PGlite has a
- * single connection, so the test pool hands it to one client at a time:
- * transactions from independent limiter instances ("workers") interleave
- * at transaction boundaries, the way a real database serializes them on the
- * limiter's row lock. Parallel connections are not exercised here.
+ * single connection, so the test pools hand it to one client at a time,
+ * across all pools: transactions from independent limiter instances
+ * ("workers") run one after another. Parallel connections are covered by
+ * multiworker.test.ts against a real PostgreSQL server.
  */
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -27,14 +27,27 @@ import {
 let pg: PGlite;
 let prefixCounter = 0;
 
+/*
+ * PGlite has one connection, so a client must own it for a whole
+ * transaction. The queue is per PGlite instance, not per pool: several
+ * pools (one per simulated worker) share the connection, and statements of
+ * one worker must never run inside another worker's transaction.
+ */
+const connectionQueues = new WeakMap<PGlite, { tail: Promise<void> }>();
+
 function pglitePool(instance: PGlite): PostgresPool & { failConnect?: Error } {
-  let tail: Promise<void> = Promise.resolve();
+  let queue = connectionQueues.get(instance);
+  if (!queue) {
+    queue = { tail: Promise.resolve() };
+    connectionQueues.set(instance, queue);
+  }
+  const shared = queue;
   const pool: PostgresPool & { failConnect?: Error } = {
     async connect() {
       if (pool.failConnect) throw pool.failConnect;
       let unlock!: () => void;
-      const previous = tail;
-      tail = new Promise<void>(resolve => {
+      const previous = shared.tail;
+      shared.tail = new Promise<void>(resolve => {
         unlock = resolve;
       });
       await previous;
@@ -183,12 +196,12 @@ describe('createPostgresConcurrencyLimiter', () => {
     expect(stats.workloads.background.active).toBe(6);
 
     for (const lease of interactive) await a.release(lease);
-    for (const lease of await Promise.all(backlog.slice(0, 6))) {
-      await b.release(lease);
-    }
-    for (const lease of await Promise.all(backlog.slice(6))) {
-      await a.release(lease);
-    }
+    // Grant order follows queue order, not push order: release each
+    // background lease as soon as it is granted.
+    await Promise.all(
+      backlog.map(pending => pending.then(lease => a.release(lease))),
+    );
+    expect(await a.stats()).toMatchObject({ active: 0, queued: 0 });
   }, 30_000);
 
   it('grants by priority across workloads and FIFO within one', async () => {

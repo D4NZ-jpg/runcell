@@ -73,6 +73,9 @@ takes these options:
 
 ## Migrations
 
+Workers that start at the same time on a new database do not conflict.
+The limiter creates its tables under a transaction-scoped advisory lock.
+
 If the database role cannot run DDL, do these steps:
 
 1. Apply the statements from `postgresConcurrencySchemaSql(tablePrefix)`
@@ -93,10 +96,27 @@ expiry cannot stop a request that already runs at the provider. Thus,
 strict physical concurrency during a network partition needs fencing at
 the provider.
 
-The tests run against PGlite, an in-process PostgreSQL, with several
-limiter instances that share one database. PGlite has a single
-connection. Thus, transactions from different workers interleave at
-transaction boundaries. The tests do not use parallel connections to a
-database server.
+## Tests
+
+The default tests run against PGlite, an in-process PostgreSQL. PGlite has
+a single connection, so these tests do not use parallel connections.
+
+When `RUNCELL_PG_TEST_URL` is set, more tests run against that PostgreSQL
+server. Each worker in these tests is a separate Node process with its
+own pool. The tests examine the granted slots in the database directly.
+They cover the limit, workload ceilings, strict reservations, recovery
+after the test kills a worker, and races between grants and cancellation. CI
+runs them against a PostgreSQL service.
+
+```sh
+RUNCELL_PG_TEST_URL=postgres://user:pass@localhost:5432/db npm test
+```
+
+## Database load
+
+Each waiting request runs one short transaction at each poll. Thus, the
+load is approximately the number of waiting requests divided by
+`pollIntervalMs`. With 200 waiting requests, a test measured about 1,800
+commits per second at the default 100 ms, and about 400 at 500 ms.
 
 See the [concurrency guide](https://runcell.run/concurrency).
