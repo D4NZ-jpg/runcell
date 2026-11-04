@@ -2,15 +2,28 @@ import { createPatchedJustBashSandboxSession } from './just-bash-env.js';
 import { shellQuote } from './shell.js';
 import type { HarnessV1NetworkSandboxSession } from '@ai-sdk/harness';
 import type {
+  Experimental_SandboxDirectoryEntry,
+  Experimental_SandboxFileStat,
   Experimental_SandboxProcess,
   Experimental_SandboxSession,
+  Experimental_SandboxSpawnOptions,
+  Experimental_WritableSandboxProcess,
 } from '@ai-sdk/provider-utils';
 import { spawn as spawnChild } from 'node:child_process';
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  stat,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { constants as osConstants } from 'node:os';
 import path from 'node:path';
-import type { Readable } from 'node:stream';
+import { Writable, type Readable } from 'node:stream';
 import { InvalidOptionError } from './errors.js';
 
 const HOST_VIRTUAL_ROOT = '/workspace';
@@ -486,14 +499,78 @@ class HostSandboxSession implements HarnessV1NetworkSandboxSession {
     );
   };
 
+  stat = async (options: {
+    path: string;
+    abortSignal?: AbortSignal;
+  }): Promise<Experimental_SandboxFileStat | null> => {
+    try {
+      // Follows symbolic links, as the contract requires.
+      const info = await stat(this.toHostPath(options.path));
+      return {
+        type: info.isFile()
+          ? 'file'
+          : info.isDirectory()
+            ? 'directory'
+            : 'other',
+        size: info.size,
+      };
+    } catch (error) {
+      if (isNotFound(error)) {
+        return null;
+      }
+      throw error;
+    }
+  };
+
+  listDirectory = async (options: {
+    path: string;
+    abortSignal?: AbortSignal;
+  }): Promise<Experimental_SandboxDirectoryEntry[] | null> => {
+    try {
+      const entries = await readdir(this.toHostPath(options.path), {
+        withFileTypes: true,
+      });
+      return entries.map(entry => ({
+        name: entry.name,
+        type: entry.isSymbolicLink()
+          ? 'symlink'
+          : entry.isFile()
+            ? 'file'
+            : entry.isDirectory()
+              ? 'directory'
+              : 'other',
+      }));
+    } catch (error) {
+      if (isNotFound(error)) {
+        return null;
+      }
+      throw error;
+    }
+  };
+
+  deleteFile = async (options: {
+    path: string;
+    abortSignal?: AbortSignal;
+  }): Promise<boolean> => {
+    const target = this.toHostPath(options.path);
+    try {
+      // lstat: a symbolic link is deleted itself, not its target.
+      if ((await lstat(target)).isDirectory()) {
+        throw new Error(`Cannot delete a directory: ${options.path}`);
+      }
+      await unlink(target);
+      return true;
+    } catch (error) {
+      if (isNotFound(error)) {
+        return false;
+      }
+      throw error;
+    }
+  };
+
   // async (despite no await) so a pre-aborted signal rejects instead of throwing synchronously.
   // eslint-disable-next-line @typescript-eslint/require-await
-  spawn = async (options: {
-    command: string;
-    workingDirectory?: string;
-    env?: Record<string, string>;
-    abortSignal?: AbortSignal;
-  }): Promise<Experimental_SandboxProcess> => {
+  spawn = (async (options: Experimental_SandboxSpawnOptions) => {
     options.abortSignal?.throwIfAborted();
 
     const cwd = this.toHostPath(options.workingDirectory ?? HOST_VIRTUAL_ROOT);
@@ -502,7 +579,7 @@ class HostSandboxSession implements HarnessV1NetworkSandboxSession {
       cwd,
       env: this.createEnv(options.env),
       shell: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [options.stdin === true ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     });
 
     const abort = () => child.kill();
@@ -520,7 +597,12 @@ class HostSandboxSession implements HarnessV1NetworkSandboxSession {
       .catch(() => undefined)
       .finally(() => options.abortSignal?.removeEventListener('abort', abort));
 
-    return {
+    // stdout and stderr are always piped; the check only narrows the type.
+    if (!child.stdout || !child.stderr) {
+      child.kill();
+      throw new Error('Host sandbox process started without output pipes.');
+    }
+    const handle: Experimental_SandboxProcess = {
       ...(child.pid ? { pid: child.pid } : {}),
       stdout: nodeReadableToWeb(child.stdout),
       stderr: nodeReadableToWeb(child.stderr),
@@ -530,7 +612,12 @@ class HostSandboxSession implements HarnessV1NetworkSandboxSession {
         return Promise.resolve();
       },
     };
-  };
+    if (options.stdin === true && child.stdin) {
+      const stdin = Writable.toWeb(child.stdin) as WritableStream<Uint8Array>;
+      return { ...handle, stdin } satisfies Experimental_WritableSandboxProcess;
+    }
+    return handle;
+  }) as HarnessV1NetworkSandboxSession['spawn'];
 
   run = async (options: {
     command: string;
@@ -538,7 +625,7 @@ class HostSandboxSession implements HarnessV1NetworkSandboxSession {
     env?: Record<string, string>;
     abortSignal?: AbortSignal;
   }): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
-    const proc = await this.spawn(options);
+    const proc = await this.spawn({ ...options, stdin: false });
     const [stdout, stderr, waitResult] = await Promise.all([
       collectText(proc.stdout),
       collectText(proc.stderr),
@@ -582,6 +669,9 @@ class HostSandboxSession implements HarnessV1NetworkSandboxSession {
     writeFile: this.writeFile,
     writeBinaryFile: this.writeBinaryFile,
     writeTextFile: this.writeTextFile,
+    stat: this.stat,
+    listDirectory: this.listDirectory,
+    deleteFile: this.deleteFile,
     spawn: this.spawn,
     run: this.run,
   });

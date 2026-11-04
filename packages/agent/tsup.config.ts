@@ -1,7 +1,11 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  entry: { index: 'src/index.ts', pi: 'src/pi.ts' },
+  entry: {
+    index: 'src/index.ts',
+    pi: 'src/pi.ts',
+    concurrency: 'src/concurrency-kit.ts',
+  },
   format: ['esm'],
   target: 'es2022',
   // Inline declarations from the private workspace package so the published

@@ -1,4 +1,9 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
+import type {
+  ConcurrencyEvent,
+  ConcurrencyOptions,
+  RunConcurrencyOptions,
+} from './concurrency.js';
 import type { ExtensionFactory, PiThinkingLevel } from '@local/harness-pi-raw';
 import type { Credentials } from './credentials.js';
 import type { FileInput } from './files.js';
@@ -87,6 +92,12 @@ export interface AgentEvents {
   onFinish?: (info: FinishEvent) => void;
   onError?: (error: unknown) => void;
   onCredentialFallback?: (info: CredentialFallbackEvent) => void;
+  /**
+   * Concurrency-slot events (wait started, acquired, timed out, released,
+   * lease lost, ...). Only emitted when a concurrency limit is configured.
+   * Events never contain prompts or credentials.
+   */
+  onConcurrency?: (event: ConcurrencyEvent) => void;
 }
 
 /**
@@ -114,7 +125,7 @@ export interface PiOptions {
 /**
  * Options for {@link createAgent}.
  */
-export interface AgentOptions {
+export interface AgentOptions<W extends string = string> {
   /** Model identifier, e.g. `anthropic/claude-sonnet-4-5` or `openai/gpt-5.1`. */
   model: string;
   /**
@@ -138,6 +149,13 @@ export interface AgentOptions {
   maxRepairs?: number;
   /** Pi engine escape hatch: extensions and other Pi-specific options. */
   pi?: PiOptions;
+  /**
+   * Opt-in concurrency limit for provider requests. Every provider request
+   * of every run (turns, turns after tools, repairs, retries, compaction,
+   * and agents started from this agent's tools) holds a slot only while the
+   * request is active. See https://runcell.run/concurrency
+   */
+  concurrency?: ConcurrencyOptions<W>;
 }
 
 /**
@@ -163,7 +181,7 @@ export interface UIChatMessage {
  * Options shared by every {@link Agent.run} call. Without a `schema` (see
  * {@link RunOptions}) the run is a plain turn whose output is the model's text.
  */
-export interface RunOptionsBase {
+export interface RunOptionsBase<W extends string = string> {
   /**
    * The task prompt. Provide either `prompt` or `messages`, not both.
    */
@@ -203,6 +221,17 @@ export interface RunOptionsBase {
   /** Abort signal to cancel the run. */
   signal?: AbortSignal;
   /**
+   * Total time budget for the run, in milliseconds. The run is aborted when
+   * it is exceeded. Waiting for a concurrency slot consumes this budget. A run started from
+   * another run's tool also stays within its parent's remaining budget.
+   */
+  timeoutMs?: number;
+  /**
+   * Per-run concurrency selection: a workload, metadata, or a different
+   * limiter. Requires a limiter on the run, the agent, or the parent run.
+   */
+  concurrency?: RunConcurrencyOptions<W>;
+  /**
    * Per-run Pi engine overrides, merged over the agent-level `pi` options.
    * `extensions` intentionally stays agent-level: extensions are loaded once
    * per agent, not per run.
@@ -217,7 +246,8 @@ export interface RunOptionsBase {
  */
 export interface RunOptions<
   TSchema extends AgentSchema,
-> extends RunOptionsBase {
+  W extends string = string,
+> extends RunOptionsBase<W> {
   /** Schema the agent must satisfy via the hidden `submitResult` tool. */
   schema: TSchema;
 }
@@ -366,19 +396,21 @@ export type UIMessageChunk =
   | { type: 'error'; errorText: string };
 
 /**
- * An agent bound to a model, credentials, tools and event callbacks.
+ * An agent bound to a model, credentials, tools and event callbacks. `W` is
+ * the union of workload names of its concurrency limiter (`never` without
+ * one), so `run({ concurrency: { workload } })` only accepts those names.
  */
-export interface Agent {
+export interface Agent<W extends string = string> {
   /** Run with a structured output contract; `result.data` is validated. */
   run<TSchema extends AgentSchema>(
-    options: RunOptions<TSchema>,
+    options: RunOptions<TSchema, W>,
   ): Promise<RunResult<InferSchemaOutput<TSchema>>>;
   /** Run a plain turn; `result.text` is the output and `result.data` is undefined. */
-  run(options: RunOptionsBase): Promise<RunResult<undefined>>;
+  run(options: RunOptionsBase<W>): Promise<RunResult<undefined>>;
   /** Stream a run with a structured output contract. */
   stream<TSchema extends AgentSchema>(
-    options: RunOptions<TSchema>,
+    options: RunOptions<TSchema, W>,
   ): StreamRun<InferSchemaOutput<TSchema>>;
   /** Stream a plain turn; `result.data` is undefined. */
-  stream(options: RunOptionsBase): StreamRun<undefined>;
+  stream(options: RunOptionsBase<W>): StreamRun<undefined>;
 }

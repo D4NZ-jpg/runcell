@@ -60,7 +60,15 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
       })),
     },
     SettingsManager: {
-      inMemory: vi.fn(() => ({})),
+      inMemory: vi.fn(() => {
+        let cacheWarming = 'streaming';
+        return {
+          getCacheWarmingMode: () => cacheWarming,
+          setCacheWarmingMode: (mode: string) => {
+            cacheWarming = mode;
+          },
+        };
+      }),
     },
   };
 });
@@ -101,6 +109,73 @@ describe('createPiSession', () => {
       expect.objectContaining({ allowModelNetwork: false }),
     );
     await session.doDestroy();
+  });
+
+  it('gates the session model runtime, keeps the agent stream function, and turns cache warming off', async () => {
+    const innerStream = vi.fn();
+    const runtime = {
+      getModels: vi.fn(() => []),
+      registerProvider: vi.fn(),
+      setRuntimeApiKey: vi.fn(() => Promise.resolve()),
+      streamSimple: innerStream,
+      stream: innerStream,
+    };
+    piMock.modelRuntimeCreate.mockImplementation(() =>
+      Promise.resolve(runtime),
+    );
+    const streamFunction = vi.fn();
+    const agent = { streamFunction };
+    piMock.session = createPiAgentSession({ agent });
+    let settingsManager: { getCacheWarmingMode(): string } | undefined;
+    piMock.createAgentSession.mockImplementation(async options => {
+      settingsManager = options.settingsManager;
+      return { session: piMock.session };
+    });
+    const admit = vi.fn(() => Promise.reject(new Error('denied')));
+    const session = await createPiSession({
+      sessionId: 'session-gated',
+      sandboxSession: createSandboxSession(),
+      sessionWorkDir: '/sandbox/work',
+      skills: [],
+      settings: { providerRequestGate: { admit } },
+      isResume: false,
+    });
+    const control = await session.doPromptTurn({
+      prompt: 'go',
+      tools: [],
+      emit: vi.fn(),
+    });
+    await control.done;
+
+    // Pi keys compaction auth on the stream function's identity (#11520).
+    expect(agent.streamFunction).toBe(streamFunction);
+    expect(runtime.streamSimple).not.toBe(innerStream);
+    expect(settingsManager?.getCacheWarmingMode()).toBe('off');
+    const result = await (
+      runtime.streamSimple as unknown as (...args: unknown[]) => {
+        result(): Promise<{ errorMessage?: string }>;
+      }
+    )({ id: 'm', provider: 'p', api: 'x' }, {}).result();
+    expect(result.errorMessage).toBe('Provider request was not admitted.');
+    expect(admit).toHaveBeenCalledOnce();
+    expect(innerStream).not.toHaveBeenCalled();
+    await session.doDestroy();
+  });
+
+  it('rejects a gate combined with a caller-supplied model runtime', async () => {
+    await expect(
+      createPiSession({
+        sessionId: 'session-gated-bad',
+        sandboxSession: createSandboxSession(),
+        sessionWorkDir: '/sandbox/work',
+        skills: [],
+        settings: {
+          providerRequestGate: { admit: vi.fn() },
+          modelRuntime: {} as never,
+        },
+        isResume: false,
+      }),
+    ).rejects.toThrow(/caller-supplied modelRuntime/);
   });
 
   it('emits per-turn usage and cost deltas on finish', async () => {

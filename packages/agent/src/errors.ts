@@ -146,6 +146,114 @@ export class CredentialError extends RuncellError {
   }
 }
 
+/** Identifies the provider request a {@link ConcurrencyError} belongs to. */
+export interface ConcurrencyErrorDetails {
+  /** Name of the concurrency limiter. */
+  limiter?: string;
+  workload?: string;
+  runId?: string;
+  rootRunId?: string;
+  parentRunId?: string;
+  requestId?: string;
+}
+
+interface ConcurrencyErrorOptions extends ConcurrencyErrorDetails {
+  cause?: unknown;
+  usage?: RunUsage;
+}
+
+/**
+ * Base class for concurrency-limit failures. RunCell did not send the
+ * provider request, or aborted it ({@link ConcurrencyLeaseLostError}). This
+ * makes these errors different from provider failures ({@link TurnError}).
+ * Failures that the runtime creates carry the run's `usage`.
+ */
+export class ConcurrencyError extends RuncellError {
+  declare readonly usage?: RunUsage;
+  readonly limiter: string | undefined;
+  readonly workload: string | undefined;
+  readonly runId: string | undefined;
+  readonly rootRunId: string | undefined;
+  readonly parentRunId: string | undefined;
+  readonly requestId: string | undefined;
+
+  constructor(message: string, options: ConcurrencyErrorOptions = {}) {
+    super(message, 'cause' in options ? { cause: options.cause } : undefined);
+    this.name = 'ConcurrencyError';
+    this.limiter = options.limiter;
+    this.workload = options.workload;
+    this.runId = options.runId;
+    this.rootRunId = options.rootRunId;
+    this.parentRunId = options.parentRunId;
+    this.requestId = options.requestId;
+    if (options.usage !== undefined) {
+      Object.defineProperty(this, 'usage', {
+        value: options.usage,
+        configurable: true,
+        enumerable: true,
+      });
+    }
+  }
+}
+
+/**
+ * No slot was free before the deadline. The deadline is the workload's
+ * `maxWaitMs` or the end of the run's `timeoutMs`, whichever came first.
+ * RunCell did not call the provider.
+ */
+export class ConcurrencyTimeoutError extends ConcurrencyError {
+  constructor(message: string, options?: ConcurrencyErrorOptions) {
+    super(message, options);
+    this.name = 'ConcurrencyTimeoutError';
+  }
+}
+
+/**
+ * The limiter's queue already holds `maxQueued` waiting requests. RunCell
+ * did not call the provider.
+ */
+export class ConcurrencyQueueFullError extends ConcurrencyError {
+  constructor(message: string, options?: ConcurrencyErrorOptions) {
+    super(message, options);
+    this.name = 'ConcurrencyQueueFullError';
+  }
+}
+
+/**
+ * The limiter failed, for example because RunCell cannot reach its
+ * database. RunCell fails closed and does not call the provider. The
+ * limiter's error is the `cause`.
+ */
+export class ConcurrencyLimiterError extends ConcurrencyError {
+  constructor(message: string, options?: ConcurrencyErrorOptions) {
+    super(message, options);
+    this.name = 'ConcurrencyLimiterError';
+  }
+}
+
+/**
+ * RunCell could not renew a held slot before its lease expired. RunCell
+ * aborted the provider request that held the slot and stopped the run.
+ */
+export class ConcurrencyLeaseLostError extends ConcurrencyError {
+  constructor(message: string, options?: ConcurrencyErrorOptions) {
+    super(message, options);
+    this.name = 'ConcurrencyLeaseLostError';
+  }
+}
+
+/**
+ * The limiter configuration is invalid, or a run selected an unknown
+ * workload. This error also occurs when the limiter's settings conflict
+ * with the settings of other workers that share the limiter.
+ */
+export class ConcurrencyConfigError extends ConcurrencyError {
+  constructor(message: string, options?: ConcurrencyErrorOptions) {
+    super(message, options);
+    this.name = 'ConcurrencyConfigError';
+  }
+}
+
 export class NotImplementedError extends RuncellError {
   constructor(message: string) {
     super(message);

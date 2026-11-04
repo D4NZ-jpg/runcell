@@ -304,6 +304,78 @@ describe('host sandbox provider', () => {
     await expect(
       session.writeTextFile({ path: '/tmp/outside.txt', content: 'nope' }),
     ).rejects.toThrow('escapes rootDir');
+    await expect(session.stat({ path: '/tmp' })).rejects.toThrow(
+      'escapes rootDir',
+    );
+    await expect(
+      session.deleteFile({ path: '/tmp/outside.txt' }),
+    ).rejects.toThrow('escapes rootDir');
+  });
+
+  it('stats, lists, and deletes files', async () => {
+    const rootDir = await mkdtemp(path.join(tmpdir(), 'runcell-host-'));
+    const provider = createSandboxProvider({
+      type: 'host',
+      rootDir,
+      isolation: 'external',
+    });
+    const session = await provider.createSession({ sessionId: 'test-session' });
+    await session.writeTextFile({
+      path: '/workspace/dir/a.txt',
+      content: 'abc',
+    });
+
+    await expect(
+      session.stat({ path: '/workspace/dir/a.txt' }),
+    ).resolves.toEqual({ type: 'file', size: 3 });
+    await expect(
+      session.stat({ path: '/workspace/dir' }),
+    ).resolves.toMatchObject({ type: 'directory' });
+    await expect(
+      session.stat({ path: '/workspace/missing' }),
+    ).resolves.toBeNull();
+
+    await expect(
+      session.listDirectory({ path: '/workspace/dir' }),
+    ).resolves.toEqual([{ name: 'a.txt', type: 'file' }]);
+    await expect(
+      session.listDirectory({ path: '/workspace/missing' }),
+    ).resolves.toBeNull();
+
+    await expect(
+      session.deleteFile({ path: '/workspace/dir' }),
+    ).rejects.toThrow('directory');
+    await expect(
+      session.deleteFile({ path: '/workspace/dir/a.txt' }),
+    ).resolves.toBe(true);
+    await expect(
+      session.deleteFile({ path: '/workspace/dir/a.txt' }),
+    ).resolves.toBe(false);
+    await expect(
+      session.listDirectory({ path: '/workspace/dir' }),
+    ).resolves.toEqual([]);
+  });
+
+  it('keeps stdin open only when requested', async () => {
+    const rootDir = await mkdtemp(path.join(tmpdir(), 'runcell-host-'));
+    const provider = createSandboxProvider({
+      type: 'host',
+      rootDir,
+      isolation: 'external',
+    });
+    const session = await provider.createSession({ sessionId: 'test-session' });
+
+    const proc = await session.spawn({ command: 'cat', stdin: true });
+    const writer = proc.stdin.getWriter();
+    await writer.write(new TextEncoder().encode('piped'));
+    await writer.close();
+    const output = await new Response(proc.stdout).text();
+    await expect(proc.wait()).resolves.toEqual({ exitCode: 0 });
+    expect(output).toBe('piped');
+
+    const closed = await session.spawn({ command: 'cat' });
+    expect('stdin' in closed).toBe(false);
+    await expect(closed.wait()).resolves.toEqual({ exitCode: 0 });
   });
 });
 

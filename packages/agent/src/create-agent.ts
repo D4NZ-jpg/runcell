@@ -1,5 +1,6 @@
 import type { ExtensionFactory, PiThinkingLevel } from '@local/harness-pi-raw';
 import { normalizeCredentials, type CredentialPlan } from './credentials.js';
+import type { ConcurrencyOptions } from './concurrency.js';
 import { InvalidOptionError } from './errors.js';
 import { normalizeFiles } from './files.js';
 import { defaultRuntime, type RuncellRuntime } from './runtime.js';
@@ -127,6 +128,8 @@ export function resolveAgentConfig(
     '"pi.thinkingLevel"',
   );
 
+  validateConcurrencyOptions(options.concurrency);
+
   return {
     model: options.model,
     systemPrompt: options.systemPrompt,
@@ -207,6 +210,104 @@ export function validateRunOptions(
     );
   }
   validateThinkingLevel(options.pi?.thinkingLevel, 'run "pi.thinkingLevel"');
+  if (options.timeoutMs !== undefined) {
+    validatePositiveInt(options.timeoutMs, 'run "timeoutMs"');
+  }
+  if (options.concurrency !== undefined) {
+    validateConcurrencySelection(options.concurrency, 'run "concurrency"');
+  }
+}
+
+function validatePositiveInt(value: unknown, label: string): void {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw new InvalidOptionError(
+      `${label} must be a positive integer, received: ${String(value)}`,
+    );
+  }
+}
+
+function isPlainRecord(value: unknown): boolean {
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+const AGENT_CONCURRENCY_KEYS = ['limiter', 'workload', 'metadata'];
+const RUN_CONCURRENCY_KEYS = ['workload', 'metadata'];
+
+/** Shape checks shared by agent-level and run-level `concurrency`. */
+function validateConcurrencySelection(value: unknown, label: string): void {
+  if (!isPlainRecord(value)) {
+    throw new InvalidOptionError(`${label} must be an object.`);
+  }
+  const options = value as Record<string, unknown>;
+  const isRun = label.startsWith('run');
+  const allowed = isRun ? RUN_CONCURRENCY_KEYS : AGENT_CONCURRENCY_KEYS;
+  const unknownKey = Object.keys(options).find(key => !allowed.includes(key));
+  if (unknownKey !== undefined) {
+    const hint =
+      unknownKey === 'limiter'
+        ? 'To use a different limiter, create an agent configured with it.'
+        : 'Set limits and wait times on the limiter; set the run budget ' +
+          'with "timeoutMs".';
+    throw new InvalidOptionError(
+      `${label} does not accept "${unknownKey}". Supported keys: ` +
+        `${allowed.join(', ')}. ${hint}`,
+    );
+  }
+  const limiter = options['limiter'];
+  if (limiter !== undefined && !isConcurrencyLimiter(limiter)) {
+    throw new InvalidOptionError(
+      `${label}.limiter must be a concurrency limiter (a name plus ` +
+        'acquire, renew, and release), e.g. createConcurrencyLimiter(...).',
+    );
+  }
+  const workload = options['workload'];
+  if (
+    workload !== undefined &&
+    (typeof workload !== 'string' || workload.length === 0)
+  ) {
+    throw new InvalidOptionError(
+      `${label}.workload must be a non-empty string.`,
+    );
+  }
+  if (
+    options['metadata'] !== undefined &&
+    !isPlainRecord(options['metadata'])
+  ) {
+    throw new InvalidOptionError(`${label}.metadata must be an object.`);
+  }
+}
+
+function isConcurrencyLimiter(value: unknown): boolean {
+  if (value == null || typeof value !== 'object') {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate['name'] === 'string' &&
+    typeof candidate['acquire'] === 'function' &&
+    typeof candidate['renew'] === 'function' &&
+    typeof candidate['release'] === 'function'
+  );
+}
+
+/**
+ * Reject unsupported concurrency configurations up front instead of running
+ * without a limit.
+ */
+function validateConcurrencyOptions(
+  value: ConcurrencyOptions | undefined,
+): void {
+  if (value === undefined) {
+    return;
+  }
+  validateConcurrencySelection(value, '"concurrency"');
+  if ((value as Partial<ConcurrencyOptions>).limiter === undefined) {
+    throw new InvalidOptionError(
+      '"concurrency.limiter" is required, e.g. ' +
+        'createConcurrencyLimiter({ maxConcurrent: 4 }).',
+    );
+  }
+  value.limiter.validateWorkload?.(value.workload);
 }
 
 /** Runtime guard for JS callers; deliberately not a type guard so the
@@ -229,14 +330,16 @@ function isAgentSchema(value: unknown): value is AgentSchema {
 
 /**
  * Create an agent bound to a model, credentials, tools and event callbacks.
+ * With `concurrency`, the limiter's workload names type the agent's and its
+ * runs' `workload` options.
  */
-export function createAgent(
-  options: AgentOptions,
+export function createAgent<W extends string = never>(
+  options: AgentOptions<W>,
   context: {
     nodeEnv?: string | undefined;
     runtime?: RuncellRuntime | undefined;
   } = {},
-): Agent {
+): Agent<W> {
   const nodeEnv =
     context.nodeEnv ??
     (typeof process !== 'undefined' ? process.env['NODE_ENV'] : undefined);
@@ -324,7 +427,7 @@ export function createAgent(
     };
   };
 
-  return { run, stream } as Agent;
+  return { run, stream } as Agent<W>;
 }
 
 /**

@@ -126,6 +126,21 @@ content.content[0].type satisfies 'text' | 'image';
 // @ts-expect-error - 'audio' is not a valid part type; if the API ever
 // degrades to \`any\` this suppression becomes unused and tsc reports TS2578.
 toolContent([{ type: 'audio' }]);
+
+// Concurrency workloads are typed end to end through the packed .d.ts.
+import { createConcurrencyLimiter } from 'runcell';
+
+const limiter = createConcurrencyLimiter({
+  maxConcurrent: 4,
+  workloads: { interactive: { reserved: 1 }, background: {} },
+});
+const limited = createAgent({
+  model: 'anthropic/claude-sonnet-4-5',
+  concurrency: { limiter, workload: 'background' },
+});
+void limited.run({ prompt: 'go', concurrency: { workload: 'interactive' } });
+// @ts-expect-error - 'batch' is not a workload of this limiter.
+void limited.run({ prompt: 'go', concurrency: { workload: 'batch' } });
 `;
 
 const TSCONFIG = JSON.stringify(

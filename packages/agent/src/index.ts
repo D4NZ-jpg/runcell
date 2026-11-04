@@ -25,7 +25,32 @@ export {
   CredentialError,
   ExtensionError,
   NotImplementedError,
+  ConcurrencyError,
+  ConcurrencyTimeoutError,
+  ConcurrencyQueueFullError,
+  ConcurrencyLimiterError,
+  ConcurrencyLeaseLostError,
+  ConcurrencyConfigError,
 } from './errors.js';
+export type { ConcurrencyErrorDetails } from './errors.js';
+
+export { createConcurrencyLimiter } from './concurrency-limiter.js';
+export type {
+  ConcurrencyLimiterOptions,
+  InMemoryConcurrencyLimiter,
+} from './concurrency-limiter.js';
+export type {
+  ConcurrencyEvent,
+  ConcurrencyLease,
+  ConcurrencyLimiter,
+  ConcurrencyLimits,
+  ConcurrencyOptions,
+  ConcurrencyReleaseOutcome,
+  ConcurrencyRequest,
+  ConcurrencyStats,
+  ConcurrencyWorkload,
+  RunConcurrencyOptions,
+} from './concurrency.js';
 
 export { assertSafeWorkspacePath } from './paths.js';
 export { normalizeFiles } from './files.js';

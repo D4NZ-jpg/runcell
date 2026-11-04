@@ -1,0 +1,70 @@
+{
+  "name": "@runcell/postgres-concurrency",
+  "version": "0.1.0",
+  "description": "PostgreSQL concurrency limiter for runcell: shared provider-request capacity, workload limits, reservations, and priorities across independent workers.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/D4NZ-jpg/runcell.git",
+    "directory": "packages/concurrency-postgres"
+  },
+  "homepage": "https://runcell.run/concurrency",
+  "bugs": {
+    "url": "https://github.com/D4NZ-jpg/runcell/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "source": "./src/index.ts",
+  "files": [
+    "dist/**/*",
+    "src",
+    "!src/**/*.test.ts",
+    "!src/**/*.fixture.ts",
+    "CHANGELOG.md",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "npm run clean && tsup --tsconfig tsconfig.build.json",
+    "clean": "del-cli dist *.tsbuildinfo",
+    "type-check": "npm run typecheck",
+    "typecheck": "node ../../node_modules/@typescript/native/bin/tsc --noEmit",
+    "test": "vitest --config vitest.node.config.js --run"
+  },
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "peerDependencies": {
+    "runcell": "^1.13.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.15",
+    "@types/node": "^26.6.6",
+    "@types/pg": "^8.11.0",
+    "del-cli": "^8.0.1",
+    "pg": "^8.23.1",
+    "tsup": "^9.0.0",
+    "typescript": "^6.0.3",
+    "vitest": "^5.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "runcell",
+    "concurrency",
+    "concurrency-limit",
+    "postgres",
+    "scheduler",
+    "llm"
+  ]
+}

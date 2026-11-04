@@ -11,7 +11,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @local/harness-pi-raw && npm run build -w runcell && npm run build -w @runcell/postgres-credentials",
+    "build": "npm run build -w @local/harness-pi-raw && npm run build -w runcell && npm run build -w @runcell/postgres-credentials && npm run build -w @runcell/postgres-concurrency",
     "typecheck": "npm run typecheck --workspaces --if-present && node node_modules/@typescript/native/bin/tsc -p examples/tsconfig.json --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -40,13 +40,15 @@
     "release:dry": "npm run build && npm publish -w runcell --dry-run",
     "release": "npm run check && npm publish -w runcell",
     "release:pg:dry": "npm run build && npm publish -w @runcell/postgres-credentials --dry-run",
-    "release:pg": "npm run check && npm publish -w @runcell/postgres-credentials"
+    "release:pg": "npm run check && npm publish -w @runcell/postgres-credentials",
+    "release:pg-concurrency:dry": "npm run build && npm publish -w @runcell/postgres-concurrency --dry-run",
+    "release:pg-concurrency": "npm run check && npm publish -w @runcell/postgres-concurrency"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.4",
     "@commitlint/config-conventional": "^21.2.3",
     "@eslint/js": "^10.0.1",
-    "@types/node": "^26.6.5",
+    "@types/node": "^26.6.6",
     "@typescript/native": "npm:typescript@^7.0.2",
     "eslint": "^10.13.0",
     "eslint-config-prettier": "^10.1.8",
@@ -57,7 +59,7 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.0",
     "vitepress": "^1.6.4",
-    "zod": "3.25.76"
+    "zod": "^4.6.7"
   },
   "lint-staged": {
     "*.{ts,tsx,js,mjs,cjs}": [

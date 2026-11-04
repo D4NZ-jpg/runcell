@@ -35,6 +35,20 @@
 - PDFs: install the optional peers `pdfjs-dist` and `@napi-rs/canvas` to
   enable the built-in `readPdfPages` tool.
 
+## Concurrency limits
+
+- Opt-in: `concurrency: { limiter: createConcurrencyLimiter({ maxConcurrent: 4 }) }`.
+  For several workers, use `createPostgresConcurrencyLimiter({ db, name, maxConcurrent })`
+  from `@runcell/postgres-concurrency`.
+- A slot covers one provider request. RunCell releases it before tools
+  run, so nested agents never deadlock. Children get no exemption.
+- Per run: `concurrency: { workload }` selects a workload. Workload names
+  are types, so a typo fails to compile. `timeoutMs` sets the run budget,
+  and waiting for a slot counts against it.
+- Failure types: `ConcurrencyTimeoutError`, `ConcurrencyQueueFullError`,
+  `ConcurrencyLimiterError` (fails closed), `ConcurrencyLeaseLostError`,
+  `ConcurrencyConfigError`.
+
 ## Docs
 
 - Getting started: https://runcell.run/getting-started
@@ -44,4 +58,5 @@
 - Sandboxes: https://runcell.run/sandboxes
 - Threads: https://runcell.run/threads
 - Structured output: https://runcell.run/structured-output
+- Concurrency limits: https://runcell.run/concurrency
 - API reference: https://runcell.run/api

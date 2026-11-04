@@ -32,6 +32,11 @@ import type {
 } from '@ai-sdk/harness';
 import type { Experimental_SandboxSession } from '@ai-sdk/provider-utils';
 import { resolvePiAuth, type PiAuthOptions } from './pi-auth';
+import {
+  disableCacheWarming,
+  installProviderRequestGate,
+  type PiProviderRequestGate,
+} from './pi-provider-gate';
 import { getPiTerminalError, parseNativeEvent } from './pi-events';
 import { HARNESS_ID } from './pi-harness-id';
 import { createPiModelResolver } from './pi-model-resolver';
@@ -130,7 +135,24 @@ interface PiSessionUsageSource {
   readonly [PI_SESSION_USAGE_TOTALS]: () => PiSessionUsageTotals;
 }
 
-type PiHarnessSession = HarnessV1Session & PiSessionUsageSource;
+/*
+ * Hands a parked, same-process session the resuming run's provider gate.
+ * Returns false when the session cannot honor the gate (it was built
+ * ungated), so the caller cold-starts instead of running unadmitted.
+ */
+const PI_REPLACE_PROVIDER_GATE: unique symbol = Symbol(
+  'runcell.pi.replace-provider-gate',
+);
+
+interface PiProviderGateTarget {
+  readonly [PI_REPLACE_PROVIDER_GATE]: (
+    gate: PiProviderRequestGate | undefined,
+  ) => boolean;
+}
+
+type PiHarnessSession = HarnessV1Session &
+  PiSessionUsageSource &
+  PiProviderGateTarget;
 
 /**
  * Read cumulative usage recorded for this exact Pi session instance. Callers
@@ -400,6 +422,14 @@ export interface PiSessionSettings {
   /** Activate every registered Pi tool after the raw SDK session starts. */
   readonly activateAllExtensionTools?: boolean;
 
+  /**
+   * Admission gate for every provider request in the session. The gate wraps
+   * the session's own `ModelRuntime`, so it cannot be combined with a
+   * caller-supplied `modelRuntime`. Cache warming is turned off on an
+   * adapter-owned settings manager, so background requests take no slots.
+   */
+  readonly providerRequestGate?: PiProviderRequestGate;
+
   /** Opt-in resource discovery. Defaults keep the stock adapter's safe mode. */
   readonly enableExtensions?: boolean;
   readonly enableThemes?: boolean;
@@ -530,7 +560,16 @@ export async function createPiSession(
   if (input.isResume) {
     const key = parkKey(input.sessionId, input.resumeSessionFileName);
     const parkedSession = parkedPiSessions.get(key);
-    if (parkedSession) {
+    if (
+      parkedSession &&
+      !parkedSession[PI_REPLACE_PROVIDER_GATE](
+        input.settings.providerRequestGate,
+      )
+    ) {
+      // Built without a gate; it cannot admit this run's requests.
+      parkedPiSessions.delete(key);
+      await Promise.resolve(parkedSession.doDestroy()).catch(() => {});
+    } else if (parkedSession) {
       parkedPiSessions.delete(key);
       Object.defineProperty(parkedSession, 'isResume', {
         value: true,
@@ -563,6 +602,10 @@ export async function createPiSession(
     : path.join(hostRoot, 'agent');
   const hostSessionDir = path.join(hostRoot, 'sessions');
   const releaseHostRoot = acquireHostRootLease(hostRoot);
+  // Read per request: a parked session can be handed a new run's gate.
+  const gateHolder: { current: PiProviderRequestGate | undefined } = {
+    current: input.settings.providerRequestGate,
+  };
 
   // Pi runs in this host process but must behave as though it lives in the
   // sandbox workspace: its working directory is the real `sessionWorkDir`
@@ -655,6 +698,13 @@ export async function createPiSession(
 
     // Pi auth + model catalog are global to this Pi session. These live on the
     // real host filesystem (`hostAgentDir`), never in the sandbox/workspace.
+    if (input.settings.providerRequestGate && input.settings.modelRuntime) {
+      throw new Error(
+        'providerRequestGate cannot be combined with a caller-supplied ' +
+          'modelRuntime: the gate wraps the runtime, and a shared runtime ' +
+          'would gate other sessions.',
+      );
+    }
     const modelRuntime =
       input.settings.modelRuntime ??
       (await ModelRuntime.create({
@@ -667,8 +717,14 @@ export async function createPiSession(
           ? { credentials: input.settings.piCredentials }
           : {}),
       }));
+    if (input.settings.providerRequestGate) {
+      installProviderRequestGate(modelRuntime, () => gateHolder.current);
+    }
     const settingsManager =
       input.settings.settingsManager ?? SettingsManager.inMemory();
+    if (input.settings.providerRequestGate && !input.settings.settingsManager) {
+      disableCacheWarming(settingsManager);
+    }
 
     // Run-scoped env (for the model resolver's gateway fallback heuristic).
     const resolverEnv = await resolvePiAuth(
@@ -797,6 +853,7 @@ export async function createPiSession(
   } = acquired;
 
   // Per-session mutable state we hold across prompts.
+  const gated = input.settings.providerRequestGate !== undefined;
   let piSession: AgentSession | undefined;
   let unsubscribe: (() => void) | undefined;
   let lastToolsSignature: string | undefined;
@@ -1299,6 +1356,11 @@ export async function createPiSession(
   const sessionImpl: PiHarnessSession = {
     sessionId: input.sessionId,
     [PI_SESSION_USAGE_TOTALS]: () => ({ ...sessionUsageTotals }),
+    [PI_REPLACE_PROVIDER_GATE]: gate => {
+      if (gate && !gated) return false;
+      gateHolder.current = gate;
+      return true;
+    },
     isResume: input.isResume,
     // The model Pi actually resolves to (the configured id, or its default when
     // unset) — `gen_ai.request.model`.

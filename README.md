@@ -170,6 +170,11 @@ export async function POST(req: Request) {
   which serializes token refreshes on a Postgres row lock and can encrypt
   the stored blobs at rest. Pass an array of sources to fall back (for
   example to API keys) when a login stops working.
+- **Shared model capacity**: cap the number of concurrent provider requests
+  for each limiter and workload, with reservations and priorities.
+  [`@runcell/postgres-concurrency`](https://www.npmjs.com/package/@runcell/postgres-concurrency)
+  shares the cap across workers. Nested agents obey the same limits and do
+  not deadlock.
 
 ## Sandboxes
 
@@ -205,6 +210,7 @@ Read the [full documentation](https://runcell.run/).
 | [Files, tools, and events](https://runcell.run/files-tools-events) | Workspace I/O, host tools, callbacks          |
 | [Credentials](https://runcell.run/credentials)                     | env, local, API keys, shared stores, fallback |
 | [Pi extensions](https://runcell.run/pi-extensions)                 | Custom providers, auth extensions, hooks      |
+| [Concurrency limits](https://runcell.run/concurrency)              | Shared capacity, workloads, priorities        |
 | [API reference](https://runcell.run/api)                           | Every export and type                         |
 
 ## Examples

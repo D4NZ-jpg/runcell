@@ -28,6 +28,7 @@ const agent = createAgent({
 | `sandbox`      | `SandboxOption`                  | Agent-level default sandbox mode. Defaults to `'virtual'`.                                                                             |
 | `maxRepairs`   | `number`                         | Repair-turn budget for structured runs. Defaults to `1`.                                                                               |
 | `pi`           | `PiOptions`                      | Pi engine options. See [Pi options](./pi-extensions.md).                                                                               |
+| `concurrency`  | `ConcurrencyOptions`             | Opt-in concurrency limit for provider requests: `{ limiter, workload?, metadata? }`. See [Concurrency limits](./concurrency.md).       |
 
 A configured `model` that is not present in Pi's catalog fails at session
 startup with `Unknown model "…"` and up to five likely catalog matches. Runcell
@@ -67,19 +68,21 @@ run(options: RunOptionsBase): Promise<RunResult<undefined>>;
 
 ### Run options
 
-| Option               | Type                                  | Description                                                                                                                                                                                |
-| -------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `prompt`             | `string`                              | The task prompt. Supply either `prompt` or `messages`.                                                                                                                                     |
-| `messages`           | `readonly UIChatMessage[]`            | A UI chat history (AI SDK `UIMessage` shape). Must end with a user message. Earlier turns replay as context. File parts on every user message become workspace files under `attachments/`. |
-| `maxAttachmentBytes` | `number`                              | Per-attachment size limit for `file` parts in `messages`. Defaults to 20 MB.                                                                                                               |
-| `schema`             | `AgentSchema`                         | Structured output contract ([Standard Schema](https://standardschema.dev)). Omit for a plain turn.                                                                                         |
-| `files`              | `FileInput[]`                         | Files seeded into the workspace before the run. Relative paths only.                                                                                                                       |
-| `sandbox`            | `Sandbox \| SandboxOption`            | A caller-owned handle that Runcell does not destroy, or an ephemeral mode option.                                                                                                          |
-| `thread`             | `Thread`                              | Conversation to continue. A successful run mutates it in place.                                                                                                                            |
-| `events`             | `AgentEvents`                         | Per-run lifecycle callbacks, invoked in addition to the agent-level ones.                                                                                                                  |
-| `pi`                 | `{ thinkingLevel?: PiThinkingLevel }` | Per-run thinking-level override. The only accepted key is `thinkingLevel`. It wins for this run only.                                                                                      |
-| `sessionId`          | `string`                              | Resume a previous session by id.                                                                                                                                                           |
-| `signal`             | `AbortSignal`                         | Cancels the run.                                                                                                                                                                           |
+| Option               | Type                                  | Description                                                                                                                                                                                   |
+| -------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prompt`             | `string`                              | The task prompt. Supply either `prompt` or `messages`.                                                                                                                                        |
+| `messages`           | `readonly UIChatMessage[]`            | A UI chat history (AI SDK `UIMessage` shape). Must end with a user message. Earlier turns replay as context. File parts on every user message become workspace files under `attachments/`.    |
+| `maxAttachmentBytes` | `number`                              | Per-attachment size limit for `file` parts in `messages`. Defaults to 20 MB.                                                                                                                  |
+| `schema`             | `AgentSchema`                         | Structured output contract ([Standard Schema](https://standardschema.dev)). Omit for a plain turn.                                                                                            |
+| `files`              | `FileInput[]`                         | Files seeded into the workspace before the run. Relative paths only.                                                                                                                          |
+| `sandbox`            | `Sandbox \| SandboxOption`            | A caller-owned handle that Runcell does not destroy, or an ephemeral mode option.                                                                                                             |
+| `thread`             | `Thread`                              | Conversation to continue. A successful run mutates it in place.                                                                                                                               |
+| `events`             | `AgentEvents`                         | Per-run lifecycle callbacks, invoked in addition to the agent-level ones.                                                                                                                     |
+| `pi`                 | `{ thinkingLevel?: PiThinkingLevel }` | Per-run thinking-level override. The only accepted key is `thinkingLevel`. It wins for this run only.                                                                                         |
+| `sessionId`          | `string`                              | Resume a previous session by id.                                                                                                                                                              |
+| `signal`             | `AbortSignal`                         | Cancels the run.                                                                                                                                                                              |
+| `timeoutMs`          | `number`                              | Total run budget in milliseconds. The run aborts at the end of the budget. Time spent waiting for a concurrency slot counts against it. Children stay within their parent's remaining budget. |
+| `concurrency`        | `RunConcurrencyOptions`               | Per-run `{ workload?, metadata? }`. The agent's limiter sets the type of `workload`. Needs a limiter on the agent or the parent run. See [Concurrency limits](./concurrency.md).              |
 
 The per-run `pi` object accepts only `thinkingLevel`. Extensions stay
 agent-level. Invalid values make `run()` throw `InvalidOptionError` before the
@@ -381,8 +384,8 @@ through `onError` like other model errors.
 ## Events (`AgentEvents`)
 
 The optional callbacks are `onText`, `onToolCall`, `onToolResult`,
-`onFileChange`, `onRepair`, `onFinish`, `onError`, and
-`onCredentialFallback`. Callbacks registered at the agent and run levels both
+`onFileChange`, `onRepair`, `onFinish`, `onError`, `onCredentialFallback`,
+and `onConcurrency` ([concurrency events](./concurrency.md#monitoring)). Callbacks registered at the agent and run levels both
 fire. See
 [Files, tools, and events](./files-tools-events.md).
 
@@ -399,14 +402,15 @@ Paths must be relative workspace paths (no absolute paths, no `..`).
 
 All runcell errors extend `RuncellError`:
 
-| Error                   | Thrown when                                                                                                                                     |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `InvalidOptionError`    | Options are malformed (bad sandbox option, reserved tool name, foreign thread…).                                                                |
-| `IncompleteResultError` | A structured run exhausted its repair budget without a valid payload. Its `usage` includes every unsuccessful repair turn.                      |
-| `TurnError`             | The engine reported a terminal turn error, such as a provider failure or abort. The original error is `cause`. The reconciled usage is `usage`. |
-| `CredentialError`       | Credential configuration is unsafe or malformed (e.g. `local` in production).                                                                   |
-| `ExtensionError`        | A supplied Pi extension failed to load or registered a colliding tool. Raised before any model request. The original error is `cause`.          |
-| `NotImplementedError`   | Code called a capability that runcell declares but does not implement.                                                                          |
+| Error                   | Thrown when                                                                                                                                                                                                                              |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `InvalidOptionError`    | Options are malformed (bad sandbox option, reserved tool name, foreign thread…).                                                                                                                                                         |
+| `IncompleteResultError` | A structured run exhausted its repair budget without a valid payload. Its `usage` includes every unsuccessful repair turn.                                                                                                               |
+| `TurnError`             | The engine reported a terminal turn error, such as a provider failure or abort. The original error is `cause`. The reconciled usage is `usage`.                                                                                          |
+| `CredentialError`       | Credential configuration is unsafe or malformed (e.g. `local` in production).                                                                                                                                                            |
+| `ExtensionError`        | A supplied Pi extension failed to load or registered a colliding tool. Raised before any model request. The original error is `cause`.                                                                                                   |
+| `NotImplementedError`   | Code called a capability that runcell declares but does not implement.                                                                                                                                                                   |
+| `ConcurrencyError`      | Base class of concurrency-limit failures: `ConcurrencyTimeoutError`, `ConcurrencyQueueFullError`, `ConcurrencyLimiterError`, `ConcurrencyLeaseLostError`, `ConcurrencyConfigError`. See [Concurrency limits](./concurrency.md#failures). |
 
 ```ts
 import { getRunUsage } from 'runcell';
@@ -467,6 +471,20 @@ interface UIChatAttachment {
 `options.maxAttachmentBytes` defaults to 20 MB. Pass the same value as the
 run. The function throws the same `InvalidOptionError` as a run for a file
 part that is not a data URL or that is over the limit.
+
+## Concurrency limits
+
+`createConcurrencyLimiter(options): InMemoryConcurrencyLimiter<W>` creates an
+in-process limiter. The options are `maxConcurrent` and the optional
+`maxQueued`, `workloads`, `defaultWorkload`, `name`, and `leaseTtlMs`.
+
+`W` is the union of the limiter's workload names. Agents that use the
+limiter are `Agent<W>`, so TypeScript makes sure of workload names at
+compile time. `limiter.stats()` returns active and queued counts.
+
+`ConcurrencyLimiter` is the contract for custom limiters.
+`runcell/concurrency` exports the shared allocation algorithm and
+`concurrencyConformanceCases`. See [Concurrency limits](./concurrency.md).
 
 ## Utility exports
 

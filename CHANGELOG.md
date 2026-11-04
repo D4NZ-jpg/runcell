@@ -4,6 +4,49 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Opt-in concurrency limits for provider requests, with
+  `concurrency: { limiter: createConcurrencyLimiter({ maxConcurrent }) }`.
+  Every provider request gets a slot: turns, turns after tools, repairs,
+  Pi retries, compaction, credential fallbacks, and agents that tools
+  start. RunCell holds the slot only while the request is active and
+  releases it before any tool runs. Children inherit the limiter,
+  workload, metadata, cancellation, and budget, and get no exemption.
+- Limiter workloads with ceilings, strict reservations, priorities, a
+  bounded queue, and wait limits, plus `stats()`.
+- Typed workload names. Agents (`Agent<W>`) get the names from their
+  limiter, so agents and runs accept only configured names at compile
+  time.
+- `runcell/concurrency`, which exports the allocation algorithm and
+  `concurrencyConformanceCases` for custom limiters.
+- Typed `ConcurrencyTimeoutError`, `ConcurrencyQueueFullError`,
+  `ConcurrencyLimiterError`, `ConcurrencyLeaseLostError`, and
+  `ConcurrencyConfigError`, and structured `onConcurrency` events.
+- Run option `timeoutMs`: a total run budget that waiting for a slot
+  consumes.
+
+### Changed
+
+- Updated `@ai-sdk/harness` and the sandbox packages to 1.0.173,
+  `@ai-sdk/provider-utils` to 5.0.74, and `ai` to 7.0.162. The optional
+  Vercel sandbox peer is now 1.0.173.
+- The Pi engine dependency now requires `@earendil-works/pi-coding-agent`
+  ^1.5.0.
+- The host sandbox implements the new sandbox session methods `stat`,
+  `listDirectory`, and `deleteFile`, and keeps standard input open for
+  `spawn({ stdin: true })`.
+- The repository develops against Zod 4. Consumers can still use Zod 3
+  or Zod 4.
+- A run whose signal aborts now rejects with a `TurnError`, with the abort
+  reason as `cause`. This also applies when the engine ended the turn
+  quietly. Before, such a run could resolve with an empty result.
+- When you configure a concurrency limit, RunCell turns off Pi cache
+  warming. A limiter cannot see the background requests of the cache
+  warmer.
+
 ## 1.13.0 - 2026-10-27
 
 ### Added
