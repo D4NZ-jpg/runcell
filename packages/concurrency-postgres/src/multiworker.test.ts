@@ -416,8 +416,11 @@ describe.runIf(Boolean(pgUrl))('postgres limiter across processes', () => {
         mode: 'cycle',
         count: 30,
         parallel: 8,
-        holdMs: 5,
-        abortWithinMs: 40,
+        // 24 requests share 3 slots, so each waits up to ~160 ms. Aborts
+        // spread over 300 ms land both while waiting and after the grant,
+        // on fast and slow machines.
+        holdMs: 20,
+        abortWithinMs: 300,
       }),
     );
     await Promise.all(workers.map(w => w.exited));

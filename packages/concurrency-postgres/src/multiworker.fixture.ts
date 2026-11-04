@@ -98,6 +98,9 @@ async function one(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // Connect and create the schema first, so timing-sensitive tests measure
+  // allocation, not startup.
+  await limiter.stats();
   emit({ type: 'ready', t: Date.now() });
   if (config.mode === 'hold') {
     await one();
