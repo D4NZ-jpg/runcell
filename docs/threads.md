@@ -14,6 +14,11 @@ const r = await agent.run({ prompt: 'What is the codename?', thread });
 // r.text mentions Falcon
 ```
 
+Pass only the new `prompt` with a thread. Do not also pass a UI `messages`
+history: Runcell rejects that combination to prevent duplicate context. For
+client-held history without a thread, use `messages` and optionally a stable
+[`conversationId`](./api.md#conversation-cache-identity) for provider cache affinity.
+
 ## What a thread contains
 
 A thread has two parts:

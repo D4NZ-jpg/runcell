@@ -157,7 +157,53 @@ const agent = createAgent({
 | `onRepair`             | a repair turn starts (structured runs only)                                                                         |
 | `onFinish`             | a turn completes, with its finish reason                                                                            |
 | `onError`              | the run fails after the session starts. Runcell attaches usage before the callback. The same object rejects the run |
+| `onModelRequest`       | one provider-runtime call settles, with model, outcome, duration, and reported usage                                |
+| `onEngineEvent`        | Pi schedules/finishes a retry or starts/ends compaction                                                             |
 | `onCredentialFallback` | a credentials chain moves to its next source after a credential error, with `from`, `to`, and `cause`               |
+
+### Request usage and recovery telemetry
+
+```ts
+const agent = createAgent({
+  model: 'openai-codex/gpt-5.5',
+  credentials: 'local',
+  events: {
+    onModelRequest: event => console.log(event),
+    onEngineEvent: event => console.log(event),
+  },
+});
+```
+
+`onModelRequest` receives a `ModelRequestEvent`:
+
+- `requestId`: a unique id for this call.
+- `model`: `{ provider, id }`.
+- `outcome`: `completed`, `failed`, or `cancelled`.
+- `durationMs`: provider duration, excluding concurrency admission wait.
+- `usage`: the same token buckets and API-price estimate as `RunUsage`, including
+  output/reasoning and cache reads/writes. Absent if no provider message was
+  received; error responses can report partial usage.
+
+It observes calls through the session's model runtime, including tool follow-up
+turns, repairs, Pi retries, compaction, and cache warming when enabled and
+supported by the model. Admission denials send no request and emit no request
+observation. Provider-internal HTTP retries are not separate runtime calls and
+are not counted separately. Direct provider calls made by extensions bypass
+this boundary.
+
+`onEngineEvent` reports content-free lifecycle data:
+
+- `type: 'retry'`: `phase` (`scheduled` or `finished`), `source` (`turn` or
+  `summary`), and available `attempt`, `maxAttempts`, `delayMs`, and `success`.
+- `type: 'compaction'`: `phase` (`start` or `end`), `reason` (`manual`,
+  `threshold`, or `overflow`), and available `aborted`, `willRetry`, and
+  `tokensBefore`.
+
+These callbacks contain no prompt, tool content, credentials, or error text.
+They do not change retry, compaction, cache-warming, or reasoning settings.
+Request observations are diagnostic, not additional charges to add to
+`result.usage`; that total still comes from session accounting. Neither the
+API-price estimate nor token counts measure a subscription's remaining quota.
 
 Runcell ignores callback exceptions. In particular, an exception from `onError`
 does not replace the enriched failure object used to reject the run.

@@ -9,6 +9,7 @@ import {
   installProviderRequestGate,
   PI_PROVIDER_REQUEST_DENIED_MESSAGE,
   type PiProviderRequestGate,
+  type PiProviderRequestEvent,
   type PiProviderRequestOutcome,
 } from './pi-provider-gate';
 
@@ -70,6 +71,7 @@ type StreamFn = (
 function gatedRuntime(
   streamSimple: StreamFn,
   gate: PiProviderRequestGate | undefined,
+  observer?: (event: PiProviderRequestEvent) => void,
 ) {
   const runtime = {
     streamSimple,
@@ -82,7 +84,11 @@ function gatedRuntime(
       ).result();
     },
   };
-  installProviderRequestGate(runtime as unknown as ModelRuntime, () => gate);
+  installProviderRequestGate(
+    runtime as unknown as ModelRuntime,
+    () => gate,
+    () => observer,
+  );
   return runtime as unknown as {
     streamSimple: (...args: Parameters<StreamFn>) => Stream;
     stream: (...args: Parameters<StreamFn>) => Stream;
@@ -114,6 +120,115 @@ function replying(
 }
 
 describe('installProviderRequestGate', () => {
+  it('observes every runtime entry point once without changing content, usage, or options', async () => {
+    const observer = vi.fn();
+    const message = assistantMessage();
+    message.usage = {
+      input: 10,
+      output: 20,
+      cacheRead: 30,
+      cacheWrite: 40,
+      totalTokens: 100,
+      cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 },
+    };
+    const inner = vi.fn(() => {
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() =>
+        stream.push({ type: 'done', reason: 'stop', message } as never),
+      );
+      return stream;
+    });
+    const runtime = gatedRuntime(inner, undefined, observer);
+    const context = { messages: [{ role: 'user', content: 'all input' }] };
+    const options = { reasoning: 'high', sessionId: 'stable-key' };
+    for (const method of [
+      'streamSimple',
+      'stream',
+      'completeSimple',
+    ] as const) {
+      const response = runtime[method](model, context, options);
+      expect(
+        await (method === 'completeSimple'
+          ? response
+          : (response as Stream).result()),
+      ).toBe(message);
+    }
+    expect(inner).toHaveBeenCalledTimes(3);
+    expect(inner).toHaveBeenLastCalledWith(model, context, {
+      ...options,
+      signal: undefined,
+    });
+    expect(observer).toHaveBeenCalledTimes(3);
+    expect(observer.mock.calls[0]?.[0]).toMatchObject({
+      model: { provider: 'p', id: 'm' },
+      outcome: 'completed',
+      usage: message.usage,
+    });
+    const ids = observer.mock.calls.map(([event]) => event.requestId);
+    expect(new Set(ids).size).toBe(3);
+    expect(observer.mock.calls[0]?.[0].durationMs).toBeGreaterThanOrEqual(0);
+    expect(observer.mock.calls[0]?.[0].usage).not.toBe(message.usage);
+    expect(JSON.stringify(observer.mock.calls)).not.toContain('all input');
+  });
+
+  it.each(['error', 'aborted'] as const)(
+    'observes partial %s usage',
+    async stopReason => {
+      const observer = vi.fn();
+      const message = assistantMessage(stopReason);
+      message.usage.output = 17;
+      const runtime = gatedRuntime(
+        () => {
+          const stream = createAssistantMessageEventStream();
+          queueMicrotask(() =>
+            stream.push({
+              type: 'error',
+              reason: stopReason,
+              error: message,
+            } as never),
+          );
+          return stream;
+        },
+        undefined,
+        observer,
+      );
+      await runtime.streamSimple(model, {}).result();
+      expect(observer).toHaveBeenCalledOnce();
+      expect(observer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          outcome: stopReason === 'aborted' ? 'cancelled' : 'failed',
+          usage: expect.objectContaining({ output: 17 }),
+        }),
+      );
+    },
+  );
+
+  it('reports unknown usage on a thrown request and ignores throwing observers', async () => {
+    const observer = vi.fn(() => {
+      throw new Error('observer');
+    });
+    const result = await gatedRuntime(
+      () => {
+        throw new Error('provider');
+      },
+      undefined,
+      observer,
+    )
+      .streamSimple(model, {})
+      .result();
+    expect(result).toMatchObject({ errorMessage: 'provider' });
+    expect(observer).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'failed' }),
+    );
+    expect(observer.mock.calls[0]?.[0]).not.toHaveProperty('usage');
+    const rejectedObserver = vi.fn(async () => {
+      throw new Error('observer');
+    });
+    await gatedRuntime(replying(), undefined, rejectedObserver)
+      .streamSimple(model, {})
+      .result();
+  });
+
   it('returns a stream at once, admits first, and releases before the terminal event', async () => {
     const { gate, log, outcomes } = recordingGate();
     const runtime = gatedRuntime(replying(log), gate);
@@ -150,7 +265,8 @@ describe('installProviderRequestGate', () => {
     const gate: PiProviderRequestGate = {
       admit: () => Promise.reject(new Error('no capacity')),
     };
-    const result = await gatedRuntime(inner, gate)
+    const observer = vi.fn();
+    const result = await gatedRuntime(inner, gate, observer)
       .streamSimple(model, {})
       .result();
     expect(result).toMatchObject({
@@ -158,27 +274,37 @@ describe('installProviderRequestGate', () => {
       errorMessage: PI_PROVIDER_REQUEST_DENIED_MESSAGE,
     });
     expect(inner).not.toHaveBeenCalled();
+    expect(observer).not.toHaveBeenCalled();
   });
 
   it('passes virtual-model calls through and gates the routed request once', async () => {
     const { gate } = recordingGate();
     const admit = vi.mocked(gate.admit);
     const physical = replying();
+    const observer = vi.fn();
     // Pi routes a virtual model and then calls streamSimple again.
-    const runtime = gatedRuntime(function (this: unknown, m, c, o) {
-      if (m.api === 'pi-virtual') {
-        return (runtime.streamSimple as StreamFn)(
-          { ...model, id: 'routed' },
-          c,
-          o,
-        );
-      }
-      return physical(m, c, o);
-    }, gate);
+    const runtime = gatedRuntime(
+      function (this: unknown, m, c, o) {
+        if (m.api === 'pi-virtual') {
+          return (runtime.streamSimple as StreamFn)(
+            { ...model, id: 'routed' },
+            c,
+            o,
+          );
+        }
+        return physical(m, c, o);
+      },
+      gate,
+      observer,
+    );
     await runtime
       .streamSimple({ id: 'auto', provider: 'p', api: 'pi-virtual' }, {})
       .result();
     expect(admit).toHaveBeenCalledTimes(1);
+    expect(observer).toHaveBeenCalledOnce();
+    expect(observer).toHaveBeenCalledWith(
+      expect.objectContaining({ model: { provider: 'p', id: 'routed' } }),
+    );
     expect(admit.mock.calls[0]?.[0]).toMatchObject({ model: { id: 'routed' } });
   });
 

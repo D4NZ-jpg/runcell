@@ -114,6 +114,8 @@ export type {
   Agent,
   AgentOptions,
   AgentEvents,
+  ModelRequestEvent,
+  EngineEvent,
   PiOptions,
   AgentSchema,
   InferSchemaOutput,
