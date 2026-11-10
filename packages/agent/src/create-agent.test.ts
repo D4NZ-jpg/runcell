@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { createAgent, resolveAgentConfig } from './create-agent.js';
 import { InvalidOptionError } from './errors.js';
+import { createThread } from './thread.js';
 import type { RuncellRuntime, RuntimeRunInput } from './runtime.js';
 
 describe('resolveAgentConfig', () => {
@@ -277,6 +278,26 @@ describe('createAgent', () => {
 });
 
 describe('messages input', () => {
+  it('rejects messages with a thread before starting the runtime', async () => {
+    const runtime = createRuntimeMock();
+    const agent = createAgent({ model: 'm' }, { runtime });
+    await expect(
+      agent.run({
+        messages: [{ role: 'user', content: 'next' }],
+        thread: createThread(),
+      }),
+    ).rejects.toThrow('either "messages" or "thread"');
+    expect(runtime.calls).toHaveLength(0);
+  });
+
+  it.each(['', '   ', 123])('rejects invalid conversationId %j', async id => {
+    const runtime = createRuntimeMock();
+    const agent = createAgent({ model: 'm' }, { runtime });
+    await expect(
+      agent.run({ prompt: 'go', conversationId: id as string }),
+    ).rejects.toThrow('"conversationId" must be a non-empty string');
+    expect(runtime.calls).toHaveLength(0);
+  });
   it('rejects prompt and messages together', async () => {
     const runtime = createRuntimeMock();
     const agent = createAgent(
@@ -319,6 +340,7 @@ describe('messages input', () => {
       { nodeEnv: 'development', runtime },
     );
     await agent.run({
+      conversationId: 'tenant:chat',
       messages: [
         { role: 'user', parts: [{ type: 'text', text: 'hi' }] },
         { role: 'assistant', parts: [{ type: 'text', text: 'hello' }] },
@@ -330,6 +352,7 @@ describe('messages input', () => {
       'Conversation so far:\nUser: hi\nAssistant: hello\n\nand now?',
     );
     expect(runtime.calls[0]?.runOptions.messages).toBeUndefined();
+    expect(runtime.calls[0]?.runOptions.conversationId).toBe('tenant:chat');
   });
 });
 

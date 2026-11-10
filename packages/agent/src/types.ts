@@ -4,7 +4,11 @@ import type {
   ConcurrencyOptions,
   RunConcurrencyOptions,
 } from './concurrency.js';
-import type { ExtensionFactory, PiThinkingLevel } from '@local/harness-pi-raw';
+import type {
+  ExtensionFactory,
+  PiThinkingLevel,
+  PiEngineEvent,
+} from '@local/harness-pi-raw';
 import type { Credentials } from './credentials.js';
 import type { FileInput } from './files.js';
 import type { SandboxOption } from './sandbox.js';
@@ -79,6 +83,20 @@ export interface CredentialFallbackEvent {
   cause: unknown;
 }
 
+/** One provider-runtime call, not an individual HTTP attempt or subscription-quota measurement. */
+export interface ModelRequestEvent {
+  requestId: string;
+  model: { provider: string; id: string };
+  outcome: 'completed' | 'failed' | 'cancelled';
+  /** Provider duration, excluding concurrency admission wait. */
+  durationMs: number;
+  /** Provider-reported usage; absent when no provider message was received. */
+  usage?: RunUsage;
+}
+
+/** Retry and compaction lifecycle observations supported by the Pi engine. */
+export type EngineEvent = PiEngineEvent;
+
 /**
  * Streaming + lifecycle callbacks. All are optional and best-effort: a
  * throwing callback is swallowed and never affects the run.
@@ -92,6 +110,10 @@ export interface AgentEvents {
   onFinish?: (info: FinishEvent) => void;
   onError?: (error: unknown) => void;
   onCredentialFallback?: (info: CredentialFallbackEvent) => void;
+  /** Includes turns, repairs, retries, compaction, and any cache warming calls. No prompt content. */
+  onModelRequest?: (event: ModelRequestEvent) => void;
+  /** Retry/compaction observations; does not change either policy. No prompt or error text. */
+  onEngineEvent?: (event: EngineEvent) => void;
   /**
    * Concurrency-slot events (wait started, acquired, timed out, released,
    * lease lost, ...). Only emitted when a concurrency limit is configured.
@@ -191,9 +213,17 @@ export interface RunOptionsBase<W extends string = string> {
    * `useChat` and assistant-ui's `useChatRuntime`). The last message must be
    * a user message; it becomes the prompt, and earlier user/assistant turns
    * are replayed as conversation context. Provide either `messages` or
-   * `prompt`, not both.
+   * `prompt`, not both. Cannot be combined with `thread`: use `prompt` for
+   * the new turn when continuing a thread.
    */
   messages?: readonly UIChatMessage[];
+  /**
+   * Stable, application-scoped conversation identity for provider cache affinity.
+   * Reuse it for messages-only requests in the same conversation; use distinct
+   * values across tenants/conversations. It does not store or restore history.
+   * Threads use their own id by default; native resumed sessions keep their id.
+   */
+  conversationId?: string;
   /**
    * Per-attachment size limit in bytes for `file` parts in `messages`.
    * Defaults to 20 MB. Attachments decode in server memory, so raise this

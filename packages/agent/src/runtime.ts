@@ -28,7 +28,7 @@ import {
   type PiSessionUsageTotals,
   type PiThinkingLevel,
 } from '@local/harness-pi-raw';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { ResolvedAgentConfig } from './create-agent.js';
@@ -410,6 +410,8 @@ async function runAttemptWithHarness({
         { ...config, credentials },
         runOptions.pi?.thinkingLevel,
         concurrency?.gate,
+        runOptions.conversationId ?? runOptions.thread?.id,
+        events,
       ),
     ),
     permissionMode: 'allow-all',
@@ -858,6 +860,8 @@ function mergeEvents(
       run.onCredentialFallback,
     ),
     onConcurrency: both(agent.onConcurrency, run.onConcurrency),
+    onModelRequest: both(agent.onModelRequest, run.onModelRequest),
+    onEngineEvent: both(agent.onEngineEvent, run.onEngineEvent),
   };
 }
 
@@ -1504,12 +1508,60 @@ function createPiSettings(
   },
   runThinkingLevel?: PiThinkingLevel,
   providerRequestGate?: PiProviderRequestGate,
+  conversationId?: string,
+  events?: AgentEvents,
 ): PiHarnessSettings {
   const { credentials, model, systemPrompt, extensions } = config;
   const thinkingLevel = runThinkingLevel ?? config.thinkingLevel;
   const base = {
     model,
+    ...(conversationId !== undefined
+      ? {
+          // Keep application identifiers out of provider keys and journal paths.
+          providerSessionId: createHash('sha256')
+            .update('runcell:conversation:v1\0')
+            .update(conversationId)
+            .digest('hex'),
+        }
+      : {}),
     ...(providerRequestGate ? { providerRequestGate } : {}),
+    ...(events?.onModelRequest
+      ? {
+          onProviderRequest: (
+            event: Parameters<
+              NonNullable<PiHarnessSettings['onProviderRequest']>
+            >[0],
+          ) => {
+            const { usage: measured, ...request } = event;
+            const usage = measured
+              ? {
+                  inputTokens: measured.input,
+                  outputTokens: measured.output,
+                  cacheReadTokens: measured.cacheRead,
+                  cacheWriteTokens: measured.cacheWrite,
+                  totalTokens:
+                    measured.input +
+                    measured.output +
+                    measured.cacheRead +
+                    measured.cacheWrite,
+                  costUsd: measured.cost.total,
+                  costMeasured:
+                    measured.cost.total > 0 ||
+                    measured.input +
+                      measured.output +
+                      measured.cacheRead +
+                      measured.cacheWrite ===
+                      0,
+                }
+              : undefined;
+            safeEmit(events.onModelRequest, {
+              ...request,
+              ...(usage ? { usage } : {}),
+            });
+          },
+        }
+      : {}),
+    ...(events?.onEngineEvent ? { onEngineEvent: events.onEngineEvent } : {}),
     ...(thinkingLevel ? { thinkingLevel } : {}),
     ...(systemPrompt
       ? {

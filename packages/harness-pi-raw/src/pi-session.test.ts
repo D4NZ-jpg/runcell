@@ -19,6 +19,8 @@ import {
   PiExtensionError,
 } from './pi-session';
 import { toolContent } from './tool-content';
+import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
+import { SessionManager } from '@earendil-works/pi-coding-agent';
 
 type FakePiTool = Pick<ToolDefinition, 'name' | 'execute'>;
 
@@ -93,6 +95,107 @@ describe('createPiSession', () => {
       piMock.customTools = options.customTools;
       return { session: piMock.session };
     });
+  });
+
+  it('uses the explicit provider identity only for fresh journals', async () => {
+    piMock.session = createPiAgentSession();
+    const session = await createPiSession({
+      sessionId: 'sandbox-isolation-id',
+      sandboxSession: createSandboxSession(),
+      sessionWorkDir: '/sandbox/work',
+      skills: [],
+      settings: { providerSessionId: 'cache-identity' },
+      isResume: false,
+    });
+    const control = await session.doPromptTurn({
+      prompt: 'go',
+      tools: [],
+      emit: vi.fn(),
+    });
+    await control.done;
+    expect(SessionManager.create).toHaveBeenLastCalledWith(
+      '/sandbox/work',
+      expect.any(String),
+      { id: 'cache-identity' },
+    );
+    expect(session.sessionId).toBe('sandbox-isolation-id');
+    await session.doDestroy();
+  });
+
+  it('does not replace a resumed journal identity with a new cache identity', async () => {
+    piMock.session = createPiAgentSession();
+    const sandbox = createSandboxSession();
+    vi.mocked(sandbox.readBinaryFile).mockResolvedValue(Buffer.from('{}\n'));
+    const session = await createPiSession({
+      sessionId: 'resumed-journal-id',
+      sandboxSession: sandbox,
+      sessionWorkDir: '/sandbox/work',
+      skills: [],
+      settings: { providerSessionId: 'different-cache-identity' },
+      isResume: true,
+      resumeSessionFileName: 'resumed.jsonl',
+    });
+    const createCalls = vi.mocked(SessionManager.create).mock.calls.length;
+    const control = await session.doPromptTurn({
+      prompt: 'next',
+      tools: [],
+      emit: vi.fn(),
+    });
+    await control.done;
+    expect(SessionManager.open).toHaveBeenLastCalledWith(
+      expect.stringContaining('resumed.jsonl'),
+      expect.any(String),
+      '/sandbox/work',
+    );
+    expect(vi.mocked(SessionManager.create).mock.calls.length).toBe(
+      createCalls,
+    );
+    await session.doDestroy();
+  });
+
+  it('wires engine telemetry without altering cache warming or the stream function', async () => {
+    piMock.modelRuntimeCreate.mockResolvedValue({
+      getModels: () => [],
+      registerProvider: vi.fn(),
+      setRuntimeApiKey: vi.fn(),
+      streamSimple: vi.fn(),
+      stream: vi.fn(),
+    });
+    const subscribe = vi.fn(() => () => {});
+    const streamFunction = vi.fn();
+    piMock.session = createPiAgentSession({
+      subscribe,
+      agent: { streamFunction },
+    });
+    const onEngineEvent = vi.fn();
+    const session = await createPiSession({
+      sessionId: 'observed-journal-id',
+      sandboxSession: createSandboxSession(),
+      sessionWorkDir: '/sandbox/work',
+      skills: [],
+      settings: { onProviderRequest: vi.fn(), onEngineEvent },
+      isResume: false,
+    });
+    const control = await session.doPromptTurn({
+      prompt: 'next',
+      tools: [],
+      emit: vi.fn(),
+    });
+    await control.done;
+    const listener = subscribe.mock.calls[0]?.[0] as unknown as (
+      event: unknown,
+    ) => void;
+    listener({ type: 'compaction_start', reason: 'threshold' });
+    expect(onEngineEvent).toHaveBeenCalledWith({
+      type: 'compaction',
+      phase: 'start',
+      reason: 'threshold',
+    });
+    expect(
+      piMock.createAgentSession.mock.calls[0]?.[0].settingsManager.getCacheWarmingMode(),
+    ).toBe('streaming');
+    expect(piMock.session.agent.streamFunction).toBe(streamFunction);
+    await session.doDestroy();
   });
 
   it('disables model network access for adapter-created runtimes', async () => {
@@ -203,7 +306,11 @@ describe('createPiSession', () => {
       isResume: false,
     });
     const emit = vi.fn();
-    const control = await session.doPromptTurn({ prompt: 'go', tools: [], emit });
+    const control = await session.doPromptTurn({
+      prompt: 'go',
+      tools: [],
+      emit,
+    });
     await control.done;
 
     const finish = emit.mock.calls
@@ -358,9 +465,7 @@ describe('createPiSession', () => {
     prompt.reject(new DOMException('This operation was aborted', 'AbortError'));
     await control.done;
     expect(settled).toBe(true);
-    expect(
-      emit.mock.calls.some(([part]) => part.type === 'error'),
-    ).toBe(false);
+    expect(emit.mock.calls.some(([part]) => part.type === 'error')).toBe(false);
     await session.doDestroy();
   });
 
@@ -550,6 +655,107 @@ describe('createPiSession', () => {
       }
     `,
     );
+  });
+
+  it('hands parked sessions the new run observers rather than retaining old callbacks', async () => {
+    const toolStarted = createDeferred<void>();
+    const firstRequest = vi.fn();
+    const secondRequest = vi.fn();
+    const firstEngine = vi.fn();
+    const secondEngine = vi.fn();
+    const listeners = new Set<(event: unknown) => void>();
+    const inner = () => {
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() =>
+        stream.push({
+          type: 'done',
+          reason: 'stop',
+          message: {
+            role: 'assistant',
+            content: [],
+            stopReason: 'stop',
+            usage: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 0,
+              cost: { total: 0 },
+            },
+          },
+        } as never),
+      );
+      return stream;
+    };
+    const runtime = {
+      getModels: () => [],
+      registerProvider: vi.fn(),
+      setRuntimeApiKey: vi.fn(),
+      streamSimple: inner,
+      stream: inner,
+    };
+    piMock.modelRuntimeCreate.mockResolvedValue(runtime);
+    piMock.session = createPiAgentSession({
+      subscribe: (callback: (event: unknown) => void) => {
+        listeners.add(callback);
+        return () => {
+          listeners.delete(callback);
+        };
+      },
+      prompt: async () => {
+        const pending = piMock.customTools
+          .find(tool => tool.name === 'weather')!
+          .execute('tool', {}, undefined, undefined, undefined as never);
+        toolStarted.resolve();
+        await pending;
+      },
+    });
+    const input = {
+      sessionId: 'parked-observers',
+      sandboxSession: createSandboxSession(),
+      sessionWorkDir: '/sandbox/observed',
+      skills: [],
+      isResume: false,
+    };
+    const session = await createPiSession({
+      ...input,
+      settings: { onProviderRequest: firstRequest, onEngineEvent: firstEngine },
+    });
+    const control = await session.doPromptTurn({
+      prompt: 'go',
+      tools: [{ name: 'weather' }],
+      emit: vi.fn(),
+    });
+    await toolStarted.promise;
+    await session.doSuspendTurn();
+    const resumed = await createPiSession({
+      ...input,
+      isResume: true,
+      settings: {
+        onProviderRequest: secondRequest,
+        onEngineEvent: secondEngine,
+      },
+    });
+    expect(resumed.doContinueTurn).toBe(session.doContinueTurn);
+    for (const listener of listeners)
+      listener({ type: 'compaction_start', reason: 'manual' });
+    await (
+      runtime.streamSimple as unknown as (
+        ...args: unknown[]
+      ) => ReturnType<typeof inner>
+    )({ id: 'm', provider: 'p', api: 'test' }, {}).result();
+    expect(firstEngine).not.toHaveBeenCalled();
+    expect(firstRequest).not.toHaveBeenCalled();
+    expect(secondEngine).toHaveBeenCalledOnce();
+    expect(secondRequest).toHaveBeenCalledOnce();
+    const continued = await resumed.doContinueTurn({
+      tools: [{ name: 'weather' }],
+      emit: vi.fn(),
+    });
+    await continued.submitToolResult({ toolCallId: 'tool', output: 'done' });
+    await continued.done;
+    await control.done;
+    await resumed.doDestroy();
   });
 
   it('routes a toolContent envelope to a multi-part Pi result', async () => {

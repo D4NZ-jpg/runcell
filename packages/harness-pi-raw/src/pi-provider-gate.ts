@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { emitObservation } from './pi-telemetry';
 import type {
   ModelRuntime,
   SettingsManager,
@@ -11,6 +13,17 @@ type PiAssistantMessage = Awaited<ReturnType<PiEventStream['result']>>;
 
 /** How a gated provider request ended. */
 export type PiProviderRequestOutcome = 'completed' | 'failed' | 'cancelled';
+
+/** One model-runtime call; provider-internal HTTP retries are not separate calls. */
+export interface PiProviderRequestEvent {
+  requestId: string;
+  model: { provider: string; id: string };
+  outcome: PiProviderRequestOutcome;
+  /** Provider time only, excluding admission wait. */
+  durationMs: number;
+  /** Absent if no provider message was received; includes partial error usage. */
+  usage?: PiAssistantMessage['usage'];
+}
 
 /** A permit for one provider request, returned by a {@link PiProviderRequestGate}. */
 export interface PiProviderRequestPermit {
@@ -91,6 +104,8 @@ const PI_VIRTUAL_MODEL_API = 'pi-virtual';
 export function installProviderRequestGate(
   runtime: ModelRuntime,
   getGate: () => PiProviderRequestGate | undefined,
+  getObserver: () =>
+    ((event: PiProviderRequestEvent) => void) | undefined = () => undefined,
 ): void {
   for (const method of ['streamSimple', 'stream'] as const) {
     const inner = (runtime[method] as PiStreamSimple | undefined)?.bind(
@@ -103,10 +118,11 @@ export function installProviderRequestGate(
     }
     const gated: PiStreamSimple = (model, context, options) => {
       const gate = getGate();
-      if (!gate || model.api === PI_VIRTUAL_MODEL_API) {
+      const observer = getObserver();
+      if ((!gate && !observer) || model.api === PI_VIRTUAL_MODEL_API) {
         return inner(model, context, options);
       }
-      return gatedRequest(gate, inner, model, context, options);
+      return gatedRequest(gate, inner, model, context, options, observer);
     };
     Object.defineProperty(runtime, method, {
       value: gated,
@@ -121,11 +137,12 @@ export function installProviderRequestGate(
  * the provider stream into it once the gate admits the request.
  */
 function gatedRequest(
-  gate: PiProviderRequestGate,
+  gate: PiProviderRequestGate | undefined,
   inner: PiStreamSimple,
   model: PiModel,
   context: Parameters<PiStreamSimple>[1],
   options: Parameters<PiStreamSimple>[2],
+  observer: ((event: PiProviderRequestEvent) => void) | undefined,
 ): PiEventStream {
   const forward = new ForwardingStream<PiStreamEvent, PiAssistantMessage>();
   const callerSignal = options?.signal;
@@ -142,9 +159,9 @@ function gatedRequest(
   };
 
   void (async () => {
-    let permit: PiProviderRequestPermit;
+    let permit: PiProviderRequestPermit | undefined;
     try {
-      permit = await gate.admit({
+      permit = await gate?.admit({
         model: { provider: model.provider, id: model.id },
         signal: callerSignal,
       });
@@ -159,39 +176,66 @@ function gatedRequest(
       return;
     }
 
-    const signal = callerSignal
-      ? AbortSignal.any([callerSignal, permit.signal])
-      : permit.signal;
+    const signal = permit
+      ? callerSignal
+        ? AbortSignal.any([callerSignal, permit.signal])
+        : permit.signal
+      : callerSignal;
+    const startedAt = performance.now();
+    const requestId = randomUUID();
+    const observe = (
+      outcome: PiProviderRequestOutcome,
+      message?: PiAssistantMessage,
+    ) => {
+      emitObservation(observer, {
+        requestId,
+        model: { provider: model.provider, id: model.id },
+        outcome,
+        durationMs: Math.max(0, performance.now() - startedAt),
+        ...(message
+          ? { usage: { ...message.usage, cost: { ...message.usage.cost } } }
+          : {}),
+      });
+    };
     // Cancellation must free capacity even if the provider never settles.
     const onCallerAbort = () => {
-      void permit.release('cancelled');
+      void permit?.release('cancelled');
     };
     callerSignal?.addEventListener('abort', onCallerAbort, { once: true });
     try {
       const source = inner(model, context, { ...options, signal });
       for await (const event of source) {
         if (event.type === 'done' || event.type === 'error') {
-          await permit.release(
+          const outcome =
             event.type === 'done'
               ? 'completed'
               : event.reason === 'aborted'
                 ? 'cancelled'
-                : 'failed',
-          );
-          forward.finish(
-            event,
-            event.type === 'done' ? event.message : event.error,
-          );
+                : 'failed';
+          await permit?.release(outcome);
+          const message = event.type === 'done' ? event.message : event.error;
+          observe(outcome, message);
+          forward.finish(event, message);
           return;
         }
         forward.push(event);
       }
       // Ended without a terminal event: settle from the source's result.
-      await permit.release(signal.aborted ? 'cancelled' : 'completed');
-      forward.finish(undefined, await source.result());
+      const message = await source.result();
+      const outcome =
+        signal?.aborted || message.stopReason === 'aborted'
+          ? 'cancelled'
+          : message.stopReason === 'error'
+            ? 'failed'
+            : 'completed';
+      await permit?.release(outcome);
+      observe(outcome, message);
+      forward.finish(undefined, message);
     } catch (error) {
-      await permit.release(signal.aborted ? 'cancelled' : 'failed');
-      fail(error, signal.aborted);
+      const aborted = signal?.aborted === true;
+      await permit?.release(aborted ? 'cancelled' : 'failed');
+      observe(aborted ? 'cancelled' : 'failed');
+      fail(error, aborted);
     } finally {
       callerSignal?.removeEventListener('abort', onCallerAbort);
     }

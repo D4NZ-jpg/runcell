@@ -72,6 +72,7 @@ run(options: RunOptionsBase): Promise<RunResult<undefined>>;
 | -------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `prompt`             | `string`                              | The task prompt. Supply either `prompt` or `messages`.                                                                                                                                        |
 | `messages`           | `readonly UIChatMessage[]`            | A UI chat history (AI SDK `UIMessage` shape). Must end with a user message. Earlier turns replay as context. File parts on every user message become workspace files under `attachments/`.    |
+| `conversationId`     | `string`                              | Stable, application-scoped identity for provider cache affinity. Does not store history or reuse a workspace. See below.                                                                      |
 | `maxAttachmentBytes` | `number`                              | Per-attachment size limit for `file` parts in `messages`. Defaults to 20 MB.                                                                                                                  |
 | `schema`             | `AgentSchema`                         | Structured output contract ([Standard Schema](https://standardschema.dev)). Omit for a plain turn.                                                                                            |
 | `files`              | `FileInput[]`                         | Files seeded into the workspace before the run. Relative paths only.                                                                                                                          |
@@ -87,6 +88,30 @@ run(options: RunOptionsBase): Promise<RunResult<undefined>>;
 The per-run `pi` object accepts only `thinkingLevel`. Extensions stay
 agent-level. Invalid values make `run()` throw `InvalidOptionError` before the
 run starts.
+
+### Conversation cache identity
+
+For client-held history, pass a stable `conversationId` with `messages`:
+
+```ts
+agent.stream({ messages, conversationId: `${tenantId}:${chatId}` });
+```
+
+Use a distinct identity for each tenant and conversation. Runcell hashes it
+before using it as the fresh Pi session's provider cache key. It does not send
+the raw identity as the key, store history, change reasoning, or omit content.
+Without an identity or thread, independent runs keep distinct keys.
+
+Threads default to their own id for fresh sessions. Native thread continuations
+retain the identity in their journal, even if `conversationId` changes. Pass
+`prompt` with `thread` for the new turn. Combining `messages` and `thread` throws
+`InvalidOptionError` rather than replaying the same history twice.
+
+Stable keys do not guarantee cache hits or subscription-quota savings. Provider
+policy and exact prompt prefixes still matter. Sandbox paths remain unchanged:
+reusing sandbox ids or adding a shared logical path could collide with another
+run's workspace or Pi's process-global filesystem mapping. A caller-owned
+sandbox already keeps its workspace path across runs.
 
 With a schema, the first schema-valid `submitResult` call is terminal: runcell
 cancels the active model turn and returns that submission. A trailing stream
@@ -385,7 +410,8 @@ through `onError` like other model errors.
 
 The optional callbacks are `onText`, `onToolCall`, `onToolResult`,
 `onFileChange`, `onRepair`, `onFinish`, `onError`, `onCredentialFallback`,
-and `onConcurrency` ([concurrency events](./concurrency.md#monitoring)). Callbacks registered at the agent and run levels both
+`onModelRequest`, `onEngineEvent`, and `onConcurrency`
+([concurrency events](./concurrency.md#monitoring)). Callbacks registered at the agent and run levels both
 fire. See
 [Files, tools, and events](./files-tools-events.md).
 

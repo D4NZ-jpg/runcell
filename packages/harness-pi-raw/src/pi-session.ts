@@ -36,7 +36,13 @@ import {
   disableCacheWarming,
   installProviderRequestGate,
   type PiProviderRequestGate,
+  type PiProviderRequestEvent,
 } from './pi-provider-gate';
+import {
+  emitObservation,
+  engineObservation,
+  type PiEngineEvent,
+} from './pi-telemetry';
 import { getPiTerminalError, parseNativeEvent } from './pi-events';
 import { HARNESS_ID } from './pi-harness-id';
 import { createPiModelResolver } from './pi-model-resolver';
@@ -147,6 +153,8 @@ const PI_REPLACE_PROVIDER_GATE: unique symbol = Symbol(
 interface PiProviderGateTarget {
   readonly [PI_REPLACE_PROVIDER_GATE]: (
     gate: PiProviderRequestGate | undefined,
+    onRequest: PiSessionSettings['onProviderRequest'],
+    onEngineEvent: PiSessionSettings['onEngineEvent'],
   ) => boolean;
 }
 
@@ -367,12 +375,7 @@ export type PiCredentialStore = NonNullable<
 >;
 
 export type PiThinkingLevel =
-  | 'off'
-  | 'minimal'
-  | 'low'
-  | 'medium'
-  | 'high'
-  | 'xhigh';
+  'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 
 export type PiResourceLoaderOptions = Partial<
   Omit<
@@ -385,6 +388,8 @@ export interface PiSessionSettings {
   readonly auth?: PiAuthOptions;
   readonly model?: string;
   readonly thinkingLevel?: PiThinkingLevel;
+  /** Cache/session identity for fresh Pi journals only; resumes retain their id. */
+  readonly providerSessionId?: string;
 
   /**
    * Use a specific Pi agent directory instead of the adapter's isolated temp
@@ -429,6 +434,9 @@ export interface PiSessionSettings {
    * adapter-owned settings manager, so background requests take no slots.
    */
   readonly providerRequestGate?: PiProviderRequestGate;
+  /** Content-free, best-effort observations. Requires an adapter-owned runtime. */
+  readonly onProviderRequest?: (event: PiProviderRequestEvent) => void;
+  readonly onEngineEvent?: (event: PiEngineEvent) => void;
 
   /** Opt-in resource discovery. Defaults keep the stock adapter's safe mode. */
   readonly enableExtensions?: boolean;
@@ -444,8 +452,7 @@ export interface CreatePiSessionInput {
    * session without the network surface. Only `restricted()` is network-only.
    */
   readonly sandboxSession:
-    | HarnessV1NetworkSandboxSession
-    | Experimental_SandboxSession;
+    HarnessV1NetworkSandboxSession | Experimental_SandboxSession;
   readonly sessionWorkDir: string;
   readonly skills: ReadonlyArray<HarnessV1Skill>;
   readonly settings: PiSessionSettings;
@@ -564,6 +571,8 @@ export async function createPiSession(
       parkedSession &&
       !parkedSession[PI_REPLACE_PROVIDER_GATE](
         input.settings.providerRequestGate,
+        input.settings.onProviderRequest,
+        input.settings.onEngineEvent,
       )
     ) {
       // Built without a gate; it cannot admit this run's requests.
@@ -603,8 +612,10 @@ export async function createPiSession(
   const hostSessionDir = path.join(hostRoot, 'sessions');
   const releaseHostRoot = acquireHostRootLease(hostRoot);
   // Read per request: a parked session can be handed a new run's gate.
-  const gateHolder: { current: PiProviderRequestGate | undefined } = {
+  const gateHolder = {
     current: input.settings.providerRequestGate,
+    onRequest: input.settings.onProviderRequest,
+    onEngineEvent: input.settings.onEngineEvent,
   };
 
   // Pi runs in this host process but must behave as though it lives in the
@@ -698,9 +709,13 @@ export async function createPiSession(
 
     // Pi auth + model catalog are global to this Pi session. These live on the
     // real host filesystem (`hostAgentDir`), never in the sandbox/workspace.
-    if (input.settings.providerRequestGate && input.settings.modelRuntime) {
+    if (
+      (input.settings.providerRequestGate ||
+        input.settings.onProviderRequest) &&
+      input.settings.modelRuntime
+    ) {
       throw new Error(
-        'providerRequestGate cannot be combined with a caller-supplied ' +
+        'providerRequestGate/onProviderRequest cannot be combined with a caller-supplied ' +
           'modelRuntime: the gate wraps the runtime, and a shared runtime ' +
           'would gate other sessions.',
       );
@@ -717,8 +732,15 @@ export async function createPiSession(
           ? { credentials: input.settings.piCredentials }
           : {}),
       }));
-    if (input.settings.providerRequestGate) {
-      installProviderRequestGate(modelRuntime, () => gateHolder.current);
+    if (
+      input.settings.providerRequestGate ||
+      input.settings.onProviderRequest
+    ) {
+      installProviderRequestGate(
+        modelRuntime,
+        () => gateHolder.current,
+        () => gateHolder.onRequest,
+      );
     }
     const settingsManager =
       input.settings.settingsManager ?? SettingsManager.inMemory();
@@ -854,6 +876,7 @@ export async function createPiSession(
 
   // Per-session mutable state we hold across prompts.
   const gated = input.settings.providerRequestGate !== undefined;
+  const observed = gated || input.settings.onProviderRequest !== undefined;
   let piSession: AgentSession | undefined;
   let unsubscribe: (() => void) | undefined;
   let lastToolsSignature: string | undefined;
@@ -1070,7 +1093,13 @@ export async function createPiSession(
             hostSessionDir,
             sessionWorkDir,
           )
-        : SessionManager.create(sessionWorkDir, hostSessionDir);
+        : SessionManager.create(
+            sessionWorkDir,
+            hostSessionDir,
+            input.settings.providerSessionId
+              ? { id: input.settings.providerSessionId }
+              : undefined,
+          );
 
     const { session } = await createAgentSession({
       cwd: sessionWorkDir,
@@ -1111,6 +1140,8 @@ export async function createPiSession(
     });
 
     unsubscribe = piSession.subscribe(rawEvent => {
+      const observation = engineObservation(rawEvent);
+      if (observation) emitObservation(gateHolder.onEngineEvent, observation);
       if (!translatorState) return;
       const event = parseNativeEvent(rawEvent);
       if (!event) return;
@@ -1223,7 +1254,12 @@ export async function createPiSession(
         // `finish-step` populates the step's finishReason + usage (the
         // agent's result builder reads this); `finish` marks the turn end
         // with totalUsage.
-        currentEmit?.({ type: 'finish-step', finishReason, usage, harnessMetadata });
+        currentEmit?.({
+          type: 'finish-step',
+          finishReason,
+          usage,
+          harnessMetadata,
+        });
         currentEmit?.({
           type: 'finish',
           finishReason,
@@ -1356,9 +1392,11 @@ export async function createPiSession(
   const sessionImpl: PiHarnessSession = {
     sessionId: input.sessionId,
     [PI_SESSION_USAGE_TOTALS]: () => ({ ...sessionUsageTotals }),
-    [PI_REPLACE_PROVIDER_GATE]: gate => {
-      if (gate && !gated) return false;
+    [PI_REPLACE_PROVIDER_GATE]: (gate, onRequest, onEngineEvent) => {
+      if ((gate && !gated) || (onRequest && !observed)) return false;
       gateHolder.current = gate;
+      gateHolder.onRequest = onRequest;
+      gateHolder.onEngineEvent = onEngineEvent;
       return true;
     },
     isResume: input.isResume,

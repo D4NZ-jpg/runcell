@@ -148,7 +148,21 @@ export function resolveAgentConfig(
 export function validateRunOptions(
   options: RunOptionsBase & { schema?: AgentSchema },
 ): void {
+  if (
+    options.conversationId !== undefined &&
+    (typeof options.conversationId !== 'string' ||
+      options.conversationId.trim().length === 0)
+  ) {
+    throw new InvalidOptionError(
+      'run "conversationId" must be a non-empty string.',
+    );
+  }
   if (options.messages !== undefined) {
+    if (options.thread !== undefined) {
+      throw new InvalidOptionError(
+        'run accepts either "messages" or "thread", not both. Use "prompt" with "thread" for the new turn.',
+      );
+    }
     if (options.prompt !== undefined) {
       throw new InvalidOptionError(
         'run accepts either "prompt" or "messages", not both.',

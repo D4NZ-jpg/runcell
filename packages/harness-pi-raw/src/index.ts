@@ -28,9 +28,11 @@ export {
 } from './pi-provider-gate';
 export type {
   PiProviderRequestGate,
+  PiProviderRequestEvent,
   PiProviderRequestOutcome,
   PiProviderRequestPermit,
 } from './pi-provider-gate';
+export type { PiEngineEvent } from './pi-telemetry';
 export { isToolContent, toolContent, TOOL_CONTENT_TYPE } from './tool-content';
 export type {
   ToolContent,

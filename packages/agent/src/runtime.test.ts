@@ -18,6 +18,7 @@ import type {
   AgentSchema,
   ChangedFile,
   FinishEvent,
+  ModelRequestEvent,
   RepairEvent,
   RunOptions,
   ToolCallEvent,
@@ -621,6 +622,121 @@ describe('defaultRuntime', () => {
 
     expect(result.data).toEqual({ ok: true });
     expect(errors).toEqual([]);
+  });
+
+  it('keeps cache identities stable without reusing sandbox session ids', async () => {
+    const state = installRuntimeMocks(
+      Array.from({ length: 3 }, () => agent => {
+        agent.submit({ ok: true });
+        return [];
+      }),
+    );
+    const runtime = await loadRuntime();
+    const sessionIds: string[] = [];
+    for (const conversationId of [
+      'tenant:chat',
+      'tenant:chat',
+      'another:chat',
+    ]) {
+      const result = await runtime.run(
+        createRuntimeInput(z.object({ ok: z.boolean() }), {
+          runOptions: { conversationId, sessionId: undefined },
+        }),
+      );
+      sessionIds.push(result.sessionId);
+    }
+    expect(new Set(sessionIds).size).toBe(3);
+    const keys = state.piSettings.map(
+      settings => (settings as { providerSessionId: string }).providerSessionId,
+    );
+    expect(keys[0]).toMatch(/^[a-f0-9]{64}$/);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[0]);
+  });
+
+  it('merges request and engine observers without adding their usage to run totals', async () => {
+    const onModelRequest = vi.fn((_event: ModelRequestEvent) => undefined);
+    const onEngineEvent = vi.fn();
+    const runRequest = vi.fn(() => {
+      throw new Error('observer');
+    });
+    const runEngine = vi.fn(() => {
+      throw new Error('observer');
+    });
+    const state = installRuntimeMocks([
+      agent => {
+        const settings = state.piSettings[0] as {
+          onProviderRequest(event: unknown): void;
+          onEngineEvent(event: unknown): void;
+        };
+        settings.onProviderRequest({
+          requestId: 'request-1',
+          model: { provider: 'p', id: 'm' },
+          outcome: 'completed',
+          durationMs: 12,
+          usage: {
+            input: 10,
+            output: 20,
+            cacheRead: 30,
+            cacheWrite: 40,
+            totalTokens: 100,
+            cost: { total: 0.5 },
+          },
+        });
+        settings.onProviderRequest({
+          requestId: 'request-2',
+          model: { provider: 'p', id: 'm' },
+          outcome: 'failed',
+          durationMs: 1,
+        });
+        settings.onProviderRequest({
+          requestId: 'request-3',
+          model: { provider: 'p', id: 'm' },
+          outcome: 'completed',
+          durationMs: 1,
+          usage: {
+            input: 1,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 1,
+            cost: { total: 0 },
+          },
+        });
+        settings.onEngineEvent({
+          type: 'compaction',
+          phase: 'start',
+          reason: 'threshold',
+        });
+        agent.submit({ ok: true });
+        return [];
+      },
+    ]);
+    const runtime = await loadRuntime();
+    const result = await runtime.run(
+      createRuntimeInput(z.object({ ok: z.boolean() }), {
+        agentOptions: { events: { onModelRequest, onEngineEvent } },
+        runOptions: {
+          events: { onModelRequest: runRequest, onEngineEvent: runEngine },
+        },
+      }),
+    );
+    expect(onModelRequest).toHaveBeenCalledTimes(3);
+    expect(runRequest).toHaveBeenCalledTimes(3);
+    expect(onModelRequest.mock.calls[0]?.[0].usage).toEqual({
+      inputTokens: 10,
+      outputTokens: 20,
+      cacheReadTokens: 30,
+      cacheWriteTokens: 40,
+      totalTokens: 100,
+      costUsd: 0.5,
+      costMeasured: true,
+    });
+    expect(onModelRequest.mock.calls[1]?.[0]).not.toHaveProperty('usage');
+    expect(onModelRequest.mock.calls[2]?.[0].usage?.costMeasured).toBe(false);
+    expect(onEngineEvent).toHaveBeenCalledOnce();
+    expect(runEngine).toHaveBeenCalledOnce();
+    expect(result.usage.totalTokens).toBe(0);
   });
 
   it('wires pi extensions into the harness settings', async () => {
