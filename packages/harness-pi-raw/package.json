@@ -39,7 +39,7 @@
     "@ai-sdk/harness": "1.0.173",
     "@ai-sdk/provider-utils": "5.0.74",
     "@earendil-works/pi-coding-agent": "^1.5.0",
-    "typebox": "^1.4.4",
+    "typebox": "^1.4.7",
     "zod": "^3.25.76 || ^4.1.8"
   },
   "devDependencies": {
