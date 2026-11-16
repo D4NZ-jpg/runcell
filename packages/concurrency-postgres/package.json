@@ -47,7 +47,7 @@
     "runcell": "^1.14.0"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.5.15",
+    "@electric-sql/pglite": "^0.5.16",
     "@types/node": "^26.6.6",
     "@types/pg": "^8.11.0",
     "del-cli": "^8.0.1",

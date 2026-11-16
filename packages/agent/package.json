@@ -54,7 +54,7 @@
   },
   "devDependencies": {
     "@ai-sdk/sandbox-vercel": "1.0.173",
-    "@napi-rs/canvas": "^1.1.0",
+    "@napi-rs/canvas": "^1.1.1",
     "@types/node": "^26.6.6",
     "ai": "7.0.162",
     "del-cli": "^8.0.1",
