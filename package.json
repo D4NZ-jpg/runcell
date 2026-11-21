@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Monorepo for the runcell TypeScript agent runtime.",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.19.0"
   },
   "workspaces": [
     "packages/*"
@@ -46,18 +46,18 @@
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.4",
-    "@commitlint/config-conventional": "^21.2.3",
+    "@commitlint/config-conventional": "^21.2.4",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.6.6",
     "@typescript/native": "npm:typescript@^7.0.2",
-    "eslint": "^10.13.0",
+    "eslint": "^10.15.0",
     "eslint-config-prettier": "^10.1.8",
     "husky": "^9.1.7",
-    "lint-staged": "^17.6.0",
-    "prettier": "^3.9.10",
+    "lint-staged": "^17.6.1",
+    "prettier": "^3.10.1",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.72.0",
+    "typescript-eslint": "^8.73.0",
     "vitepress": "^1.6.4",
     "zod": "^4.6.7"
   },

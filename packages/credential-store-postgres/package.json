@@ -14,7 +14,7 @@
     "url": "https://github.com/D4NZ-jpg/runcell/issues"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.19.0"
   },
   "sideEffects": false,
   "main": "./dist/index.js",
@@ -52,7 +52,7 @@
     "pg": "^8.23.1",
     "tsup": "^9.0.0",
     "typescript": "^6.0.3",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.1"
   },
   "publishConfig": {
     "access": "public"

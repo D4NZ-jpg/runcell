@@ -14,7 +14,7 @@
     "url": "https://github.com/D4NZ-jpg/runcell/issues"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.19.0"
   },
   "sideEffects": false,
   "main": "./dist/index.js",
@@ -47,14 +47,14 @@
     "runcell": "^1.14.0"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.5.15",
+    "@electric-sql/pglite": "^0.5.17",
     "@types/node": "^26.6.6",
     "@types/pg": "^8.11.0",
     "del-cli": "^8.0.1",
     "pg": "^8.23.1",
     "tsup": "^9.0.0",
     "typescript": "^6.0.3",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.1"
   },
   "publishConfig": {
     "access": "public"

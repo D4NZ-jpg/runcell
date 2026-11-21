@@ -36,10 +36,10 @@
     }
   },
   "dependencies": {
-    "@ai-sdk/harness": "1.0.173",
-    "@ai-sdk/provider-utils": "5.0.74",
-    "@earendil-works/pi-coding-agent": "^1.5.0",
-    "typebox": "^1.4.4",
+    "@ai-sdk/harness": "1.0.190",
+    "@ai-sdk/provider-utils": "5.0.83",
+    "@earendil-works/pi-coding-agent": "^1.6.0",
+    "typebox": "^1.4.7",
     "zod": "^3.25.76 || ^4.1.8"
   },
   "devDependencies": {
@@ -47,10 +47,10 @@
     "del-cli": "^8.0.1",
     "tsup": "^9.0.0",
     "typescript": "^6.0.3",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.1"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.19.0"
   },
   "keywords": [
     "ai",
