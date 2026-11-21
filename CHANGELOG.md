@@ -4,16 +4,30 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 1.15.0 - 2026-11-21
+
+### Added
+
+- Run option `conversationId`: a stable, application-scoped identity for
+  provider cache affinity. Pass it with client-held `messages` so repeated
+  requests in one conversation share a cache key. Runcell hashes it before
+  use and does not store history. Threads use their own id by default.
+  Combining `messages` and `thread` now throws `InvalidOptionError`.
+- Event hook `onModelRequest`, called when a provider-runtime call settles,
+  with the model, outcome, duration, and reported usage.
+- Event hook `onEngineEvent`, called when Pi schedules or finishes a retry or
+  starts or ends compaction. Neither hook carries prompt, tool, credential,
+  or error text.
 
 ### Changed
 
+- **Node.js 22.19 or later is now required** (`engines.node` is
+  `>=22.19.0`), because `@earendil-works/pi-coding-agent` 1.6.0 requires it.
 - Updated `@ai-sdk/harness` and the sandbox packages to 1.0.190,
   `@ai-sdk/provider-utils` to 5.0.83, and `ai` to 7.0.179. The optional
   Vercel sandbox peer is now 1.0.190.
 - The Pi engine dependency now requires `@earendil-works/pi-coding-agent`
-  ^1.6.0, which requires Node.js 22.19 or later. The `engines.node` field of
-  every package is now `>=22.19.0`.
+  ^1.6.0.
 
 ### Fixed
 
