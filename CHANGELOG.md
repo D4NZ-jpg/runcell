@@ -4,6 +4,23 @@ All notable changes to `runcell` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- Updated `@ai-sdk/harness` and the sandbox packages to 1.0.190,
+  `@ai-sdk/provider-utils` to 5.0.83, and `ai` to 7.0.179. The optional
+  Vercel sandbox peer is now 1.0.190.
+- The Pi engine dependency now requires `@earendil-works/pi-coding-agent`
+  ^1.6.0, which requires Node.js 22.19 or later. The `engines.node` field of
+  every package is now `>=22.19.0`.
+
+### Fixed
+
+- A Standard Schema validator that returned both `issues` and a `value` was
+  treated as valid. `submitResult` and host tool input validation now reject
+  any result that has `issues`.
+
 ## 1.14.0 - 2026-11-04
 
 ### Added

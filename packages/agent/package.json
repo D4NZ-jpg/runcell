@@ -30,7 +30,7 @@
     }
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.19.0"
   },
   "scripts": {
     "build": "del-cli dist && tsup",
@@ -40,28 +40,28 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "@ai-sdk/sandbox-vercel": "1.0.173",
+    "@ai-sdk/sandbox-vercel": "1.0.190",
     "@napi-rs/canvas": ">=1",
     "pdfjs-dist": ">=5"
   },
   "dependencies": {
-    "@ai-sdk/harness": "1.0.173",
-    "@ai-sdk/provider-utils": "5.0.74",
-    "@ai-sdk/sandbox-just-bash": "1.0.173",
-    "@earendil-works/pi-coding-agent": "^1.5.0",
+    "@ai-sdk/harness": "1.0.190",
+    "@ai-sdk/provider-utils": "5.0.83",
+    "@ai-sdk/sandbox-just-bash": "1.0.190",
+    "@earendil-works/pi-coding-agent": "^1.6.0",
     "@standard-schema/spec": "^1.1.0",
     "zod": "^3.25.76 || ^4.1.8"
   },
   "devDependencies": {
-    "@ai-sdk/sandbox-vercel": "1.0.173",
-    "@napi-rs/canvas": "^1.1.0",
+    "@ai-sdk/sandbox-vercel": "1.0.190",
+    "@napi-rs/canvas": "^1.1.1",
     "@types/node": "^26.6.6",
-    "ai": "7.0.162",
+    "ai": "7.0.179",
     "del-cli": "^8.0.1",
     "pdfjs-dist": "^6.5.438",
     "tsup": "^9.0.0",
     "typescript": "^6.0.3",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.1"
   },
   "keywords": [
     "ai",
