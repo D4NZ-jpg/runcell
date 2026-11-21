@@ -950,6 +950,48 @@ describe('defaultRuntime', () => {
     expect(result.data).toEqual({ ok: true });
   });
 
+  it.each([{ async: false }, { async: true }])(
+    'rejects a Standard Schema result that has issues even when it also has a value (async: $async)',
+    async ({ async: isAsync }) => {
+      const schema: AgentSchema<{ ok: boolean }> = {
+        '~standard': {
+          version: 1,
+          vendor: 'issues-with-value-test',
+          validate(value) {
+            const ok = (value as { ok?: unknown }).ok === true;
+            const result = ok
+              ? { value: { ok: true } }
+              : {
+                  value: { ok: false },
+                  issues: [{ message: 'ok must be true' }],
+                };
+            return isAsync ? Promise.resolve(result) : result;
+          },
+        },
+      };
+      let signal: AbortSignal | undefined;
+      installRuntimeMocks([
+        (agent, input) => ({
+          async *[Symbol.asyncIterator]() {
+            signal = input.abortSignal;
+            await agent.submitAsync({ ok: false });
+            expect(signal?.aborted).toBe(false);
+            yield { type: 'text-delta', text: 'correcting' };
+            await agent.submitAsync({ ok: true });
+            expect(signal?.aborted).toBe(true);
+          },
+        }),
+      ]);
+      const runtime = await loadRuntime();
+
+      const result = await runtime.run(
+        createRuntimeInput(schema, { config: { maxRepairs: 0 } }),
+      );
+
+      expect(result.data).toEqual({ ok: true });
+    },
+  );
+
   it('maps environment credentials to Pi auth settings', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', 'env-anthropic');
     vi.stubEnv('OPENAI_BASE_URL', 'https://openai.example.test/v1');

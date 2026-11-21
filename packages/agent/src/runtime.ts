@@ -1078,7 +1078,7 @@ function createTools({
         // Harness before their tool result is submitted to Pi.
         const validation = schema['~standard'].validate(input);
         const accept = (result: StandardSchemaV1.Result<unknown>) => {
-          if (!('value' in result)) {
+          if (result.issues !== undefined) {
             throw new Error(formatStandardSchemaIssues(result.issues));
           }
           onSubmit(result.value);
@@ -1164,10 +1164,10 @@ async function validateAgentSchema<TSchema extends AgentSchema>(
   | { success: false; issues: readonly StandardSchemaV1.Issue[] }
 > {
   const result = await schema['~standard'].validate(value);
-  if ('value' in result) {
-    return { success: true, data: result.value as InferSchemaOutput<TSchema> };
+  if (result.issues !== undefined) {
+    return { success: false, issues: result.issues };
   }
-  return { success: false, issues: result.issues };
+  return { success: true, data: result.value as InferSchemaOutput<TSchema> };
 }
 
 function isZodSchema(schema: AgentSchema): boolean {
